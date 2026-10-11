@@ -600,43 +600,85 @@ export class PostgresStore implements Store {
   async clearExpiredSeatLocks(): Promise<void> {
     const { db, ordersTable, driverQueueTable } = await this.database();
     const now = Date.now();
-    const rows = await db.select().from(ordersTable).where(eq(ordersTable.status, "en_route_to_c"));
-    for (const row of rows) {
-      const order = asOrder(row as unknown as Record<string, unknown>);
-      if (!order.seatLockExpiresAt || order.seatLockExpiresAt > now) continue;
-      if (order.driverId) {
-        const [queueRow] = await db.select().from(driverQueueTable)
-          .where(eq(driverQueueTable.driverId, order.driverId)).limit(1);
-        if (queueRow) {
-          const entry = asQueueEntry(queueRow as unknown as Record<string, unknown>);
-          const activeOrderIds = (entry.activeOrderIds ?? (entry.currentOrderId ? [entry.currentOrderId] : []))
-            .filter((id) => id !== order.id);
-          await this.updateQueueEntry(order.driverId, activeOrderIds.length > 0 ? {
-            status: "in_transit",
-            priorityLock: true,
-            inFifo: false,
-            activeOrderIds,
-            currentOrderId: activeOrderIds[0],
-            seatLockExpiresAt: undefined,
-            availableSeats: entry.availableSeats + order.seats,
-          } : {
-            status: "searching",
-            priorityLock: false,
-            inFifo: true,
-            activeOrderIds: [],
-            currentOrderId: undefined,
-            seatLockExpiresAt: undefined,
-            availableSeats: entry.availableSeats + order.seats,
-          });
+
+    // Find candidates without holding locks for the whole scan. Each candidate
+    // is re-read and locked in a transaction before any seats are restored.
+    const candidates = await db.select({ id: ordersTable.id }).from(ordersTable)
+      .where(eq(ordersTable.status, "en_route_to_c"));
+
+    for (const candidate of candidates) {
+      await db.transaction(async (tx) => {
+        const [orderRow] = await tx.select().from(ordersTable)
+          .where(and(
+            eq(ordersTable.id, candidate.id),
+            eq(ordersTable.status, "en_route_to_c"),
+          ))
+          .for("update")
+          .limit(1);
+        if (!orderRow) return;
+
+        const order = asOrder(orderRow as unknown as Record<string, unknown>);
+        if (!order.seatLockExpiresAt || order.seatLockExpiresAt > now) return;
+
+        if (order.driverId) {
+          const [queueRow] = await tx.select().from(driverQueueTable)
+            .where(eq(driverQueueTable.driverId, order.driverId))
+            .for("update")
+            .limit(1);
+
+          if (queueRow) {
+            const entry = asQueueEntry(queueRow as unknown as Record<string, unknown>);
+            const activeOrderIds = (
+              entry.activeOrderIds ??
+              (entry.currentOrderId ? [entry.currentOrderId] : [])
+            ).filter((id) => id !== order.id);
+            const restoredSeats = entry.availableSeats + order.seats;
+            const queuePatch = activeOrderIds.length > 0
+              ? {
+                  status: "in_transit" as const,
+                  priorityLock: true,
+                  inFifo: false,
+                  activeOrderIds,
+                  currentOrderId: activeOrderIds[0] ?? null,
+                  seatLockExpiresAt: null,
+                  availableSeats: restoredSeats,
+                }
+              : {
+                  status: "searching" as const,
+                  priorityLock: false,
+                  inFifo: true,
+                  activeOrderIds: [],
+                  currentOrderId: null,
+                  seatLockExpiresAt: null,
+                  availableSeats: restoredSeats,
+                };
+            await tx.update(driverQueueTable)
+              .set(queuePatch)
+              .where(eq(driverQueueTable.driverId, order.driverId));
+          }
         }
-      }
-      await this.updateOrder(order.id, {
-        seatLockExpiresAt: undefined,
-        driverId: undefined,
-        offeredDriverId: undefined,
-        status: "searching",
+
+        const reopened: Order = {
+          ...order,
+          status: "searching",
+          driverId: undefined,
+          offeredDriverId: undefined,
+          seatLockExpiresAt: undefined,
+          updatedAt: new Date().toISOString(),
+        };
+        await tx.update(ordersTable).set({
+          driverId: null,
+          offeredDriverId: null,
+          status: "searching",
+          updatedAt: reopened.updatedAt,
+          payload: reopened as unknown as Record<string, unknown>,
+        }).where(eq(ordersTable.id, order.id));
       });
     }
+
+    // Expired queue-only locks can be cleared independently. This cleanup does
+    // not restore seats; seat restoration is handled only by the locked order
+    // transaction above.
     await db.update(driverQueueTable).set({ seatLockExpiresAt: null })
       .where(lte(driverQueueTable.seatLockExpiresAt, now));
   }
