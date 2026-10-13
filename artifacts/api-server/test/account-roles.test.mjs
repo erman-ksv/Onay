@@ -426,6 +426,44 @@ test("HTTP switching authenticates, rotates one session, enforces active authori
   assert.equal((await request("/orders/availability", { token: passenger.body.access_token })).status, 200);
 });
 
+test("HTTP admin passenger directory is protected and includes passengers in driver mode", async t => {
+  const f = await fixture(t);
+  const passenger = await f.createUser("passenger");
+  const switched = await f.createUser("passenger");
+  const driver = await f.createUser("driver");
+  const administrator = await f.createUser("admin");
+  await store.activateUserRole(switched.id, "driver");
+
+  const anonymous = await request("/admin/passengers");
+  assert.equal(anonymous.status, 401);
+
+  const passengerLogin = await login(passenger.phoneNumber, "passenger");
+  assert.equal(passengerLogin.status, 200);
+  const forbidden = await request("/admin/passengers", { token: passengerLogin.body.access_token });
+  assert.equal(forbidden.status, 403);
+  assert.equal(forbidden.body.error.code, "FORBIDDEN");
+
+  await store.saveOtp({
+    phoneNumber: administrator.phoneNumber, code: "654321", role: "admin",
+    locale: "ru", expiresAt: Date.now() + 60_000,
+  });
+  const adminLogin = await request("/auth/verify-otp", {
+    method: "POST", body: { phone_number: administrator.phoneNumber, code: "654321" },
+  });
+  assert.equal(adminLogin.status, 200, JSON.stringify(adminLogin.body));
+  const listing = await request("/admin/passengers", { token: adminLogin.body.access_token });
+  assert.equal(listing.status, 200, JSON.stringify(listing.body));
+  assert.ok(Array.isArray(listing.body.passengers));
+  const byId = new Map(listing.body.passengers.map(user => [user.id, user]));
+  assert.equal(byId.get(passenger.id)?.role, "passenger");
+  assert.equal(byId.get(switched.id)?.role, "driver");
+  assert.deepEqual([...byId.get(switched.id).roles].sort(), ["driver", "passenger"]);
+  assert.equal(byId.has(driver.id), false);
+  assert.equal(byId.has(administrator.id), false);
+  assert.equal(byId.get(passenger.id).phone_number, passenger.phoneNumber);
+  assert.equal(byId.get(passenger.id).sessionVersion, undefined);
+});
+
 test("HTTP verified OTP selects the requested mode, preserves the profile, and increments once on both login routes", async t => {
   const f = await fixture(t);
   const phone = freshPhone();
