@@ -79,6 +79,16 @@ export async function listRoutes(_request: Request, response: Response): Promise
   response.json({ routes: await store.listRoutes() });
 }
 
+/** Read one route and its administrator-configured stops without modifying it. */
+export async function getAdminRoute(request: Request, response: Response): Promise<void> {
+  const id = requiredString(request.params["routeId"], "route_id", 80);
+  const route = await store.getRoute(id);
+  if (!route) {
+    throw new AppError(404, "Route not found", "ROUTE_NOT_FOUND");
+  }
+  response.json({ route });
+}
+
 export async function createRoute(request: Request, response: Response): Promise<void> {
   let route;
   try {

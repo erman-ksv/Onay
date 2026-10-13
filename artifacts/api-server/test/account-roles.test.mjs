@@ -426,6 +426,44 @@ test("HTTP switching authenticates, rotates one session, enforces active authori
   assert.equal((await request("/orders/availability", { token: passenger.body.access_token })).status, 200);
 });
 
+test("HTTP admin route detail protects access, returns stops, and handles missing routes", async t => {
+  const f = await fixture(t);
+  const passenger = await f.createUser("passenger");
+  const admin = await f.createUser("admin");
+  const routeId = `admin-route-${randomUUID()}`;
+  const created = await store.createRoute({
+    id: routeId, name: "Test admin route", pricePerStopKzt: 700, active: true,
+  });
+  t.after(async () => { await store.deleteRoute(routeId); });
+  const stop = await store.addRouteStop(routeId, { code: "A", name: "Admin stop A", sequence: 1, position: 1 });
+
+  const path = `/admin/routes/${routeId}`;
+  assert.equal((await request(path)).status, 401);
+  const passengerLogin = await login(passenger.phoneNumber, "passenger");
+  assert.equal(passengerLogin.status, 200);
+  assert.equal((await request(path, { token: passengerLogin.body.access_token })).status, 403);
+
+  await store.saveOtp({ phoneNumber: admin.phoneNumber, code: "276583", role: "admin", locale: "ru", expiresAt: Date.now() + 60_000 });
+  const adminLogin = await request("/auth/verify-otp", { method: "POST", body: { phone_number: admin.phoneNumber, code: "276583" } });
+  assert.equal(adminLogin.status, 200, JSON.stringify(adminLogin.body));
+  const token = adminLogin.body.access_token;
+  const before = await store.getRoute(routeId);
+  const response = await request(path, { token });
+  assert.equal(response.status, 200, JSON.stringify(response.body));
+  assert.equal(response.body.route.id, routeId);
+  assert.equal(response.body.route.name, created.name);
+  assert.equal(response.body.route.pricePerStopKzt, 700);
+  assert.ok(response.body.route.stops.some(item => item.id === stop.id && item.code === "A"));
+  assert.deepEqual(await store.getRoute(routeId), before, "a read must not change the route or stops");
+
+  const unknown = await request(`/admin/routes/admin-missing-${randomUUID()}`, { token });
+  assert.equal(unknown.status, 404);
+  assert.equal(unknown.body.error.code, "ROUTE_NOT_FOUND");
+  const invalid = await request("/admin/routes/%20", { token });
+  assert.equal(invalid.status, 400);
+  assert.equal(invalid.body.error.code, "VALIDATION_ERROR");
+});
+
 test("HTTP admin FIFO queue is private, FIFO-ordered and hides location data", async t => {
   const f = await fixture(t);
   const one = await f.approvedDriver();
