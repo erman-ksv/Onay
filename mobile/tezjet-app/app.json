@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "TezJet",
+    "slug": "tezjet",
+    "scheme": "tezjet",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "plugins": [
+      "expo-router",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "TezJet использует местоположение только по запросу, чтобы оформить поездку."
+        }
+      ]
+    ],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "uz.tezjet.app"
+    },
+    "android": {
+      "package": "uz.tezjet.app",
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
+    },
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

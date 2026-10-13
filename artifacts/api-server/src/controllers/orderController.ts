@@ -123,7 +123,7 @@ export async function createOrder(
     destination: requiredString(request.body?.destination, "destination", 240),
     seats: boundedInteger(request.body?.seats ?? 1, "seats", 1, 8),
     status: "searching",
-  });
+  }, request.auth?.user.sessionVersion);
 
   if (!order) {
     throw new AppError(409, "Водителей пока нет", "NO_DRIVERS");

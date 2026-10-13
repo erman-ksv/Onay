@@ -100,7 +100,7 @@ export async function joinQueue(request: Request, response: Response): Promise<v
     activeOrderIds: existing?.activeOrderIds,
     currentOrderId: existing?.currentOrderId,
     seatLockExpiresAt: existing?.seatLockExpiresAt,
-  });
+  }, request.auth?.user.sessionVersion);
   await processOrderDispatch(request.app.locals.io);
   const entry = await store.getQueueEntry(driverId);
   await emitQueueUpdate(request.app.locals.io, {

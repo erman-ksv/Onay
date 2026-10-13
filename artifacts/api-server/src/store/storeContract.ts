@@ -38,6 +38,8 @@ export interface Store {
     patch: Partial<Pick<User, "locale" | "lastLocation">>,
   ): MaybePromise<User>;
   invalidateSessions(userId: string): MaybePromise<User>;
+  /** Activate a non-admin mode and invalidate the previous session atomically. */
+  activateUserRole(userId: string, nextRole: "passenger" | "driver", expectedSessionVersion?: number): MaybePromise<User>;
 
   saveOtp(challenge: OtpChallenge): MaybePromise<void>;
   consumeOtp(phoneNumber: string, code: string): MaybePromise<OtpChallenge | undefined>;
@@ -45,7 +47,7 @@ export interface Store {
   getQueueEntry(driverId: string): MaybePromise<QueueEntry | undefined>;
   removeDriverFromFifo(driverId: string): MaybePromise<QueueEntry | undefined>;
   returnDriverToFifo(driverId: string): MaybePromise<QueueEntry | undefined>;
-  joinQueue(entry: QueueEntry): MaybePromise<QueueEntry>;
+  joinQueue(entry: QueueEntry, expectedSessionVersion?: number): MaybePromise<QueueEntry>;
   updateQueueEntry(
     driverId: string,
     patch: Partial<QueueEntry>,
@@ -56,9 +58,9 @@ export interface Store {
   getFirstEligibleDriver(seats: number): MaybePromise<QueueEntry | undefined>;
   getOrderAvailability(pickupPoint: PickupPoint, seats: number): MaybePromise<{ available: boolean; eligibleDriverCount: number }>;
 
-  createOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt">): MaybePromise<Order>;
+  createOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number): MaybePromise<Order>;
   /** Create and reserve an offer atomically; unavailable requests persist no order. */
-  createOrderWithOffer(input: Omit<Order, "id" | "createdAt" | "updatedAt">): MaybePromise<Order | undefined>;
+  createOrderWithOffer(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number): MaybePromise<Order | undefined>;
   getOrder(orderId: string): MaybePromise<Order | undefined>;
   updateOrder(orderId: string, patch: Partial<Order>): MaybePromise<Order | undefined>;
   /** Reserve seats and the next eligible driver's single pending offer atomically. */

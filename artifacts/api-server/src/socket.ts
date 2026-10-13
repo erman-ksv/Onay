@@ -41,6 +41,7 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
       }
       socket.data.userId = user.id;
       socket.data.role = user.role;
+      socket.data.sessionVersion = user.sessionVersion;
       next();
     } catch (err) {
       logger.error({ err, socketId: socket.id }, "Socket authentication failed");
@@ -104,6 +105,10 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
       }
       try {
         const driver = await store.getUser(userId);
+        if (!driver || driver.role !== "driver" || driver.sessionVersion !== socket.data.sessionVersion) {
+          socket.disconnect(true);
+          return;
+        }
         if (
           REQUIRE_DRIVER_APPROVAL &&
           driver?.driverApprovalStatus !== "approved"

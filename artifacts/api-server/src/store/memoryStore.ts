@@ -59,6 +59,7 @@ class MemoryStore implements Store {
     const user: User = {
       id: randomUUID(),
       role: input.role,
+      roles: [input.role],
       fullName: input.fullName,
       phoneNumber: input.phoneNumber,
       locale: input.locale,
@@ -74,16 +75,17 @@ class MemoryStore implements Store {
     };
     this.users.set(user.id, user);
     this.usersByPhone.set(user.phoneNumber, user.id);
-    return user;
+    return structuredClone(user);
   }
 
   getUser(userId: string): User | undefined {
-    return this.users.get(userId);
+    const user = this.users.get(userId);
+    return user ? structuredClone(user) : undefined;
   }
 
   getUserByPhone(phoneNumber: string): User | undefined {
     const userId = this.usersByPhone.get(phoneNumber);
-    return userId ? this.users.get(userId) : undefined;
+    return userId ? this.getUser(userId) : undefined;
   }
 
   updateUser(userId: string, patch: Partial<Pick<User, "locale" | "lastLocation">>): User {
@@ -92,7 +94,7 @@ class MemoryStore implements Store {
       throw new Error(`User ${userId} not found`);
     }
     Object.assign(user, patch);
-    return user;
+    return structuredClone(user);
   }
 
   invalidateSessions(userId: string): User {
@@ -101,11 +103,46 @@ class MemoryStore implements Store {
       throw new Error(`User ${userId} not found`);
     }
     user.sessionVersion += 1;
-    return user;
+    return structuredClone(user);
   }
 
   saveOtp(challenge: OtpChallenge): void {
     this.otpChallenges.set(challenge.phoneNumber, challenge);
+  }
+
+  activateUserRole(userId: string, nextRole: "passenger" | "driver", expectedSessionVersion?: number): User {
+    if (nextRole !== "passenger" && nextRole !== "driver") {
+      throw new AppError(400, "Only passenger and driver modes are available", "INVALID_ROLE");
+    }
+    const user = this.users.get(userId);
+    if (!user) throw new AppError(401, "Account is not available", "UNAUTHORIZED");
+    if (expectedSessionVersion !== undefined && user.sessionVersion !== expectedSessionVersion) {
+      throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+    }
+    if (user.role === "admin" || user.roles.includes("admin")) {
+      throw new AppError(403, "Admin accounts cannot switch modes", "ADMIN_ROLE_FORBIDDEN");
+    }
+    if (this.queueEntries.has(userId) || [...this.orders.values()].some(order =>
+      order.status !== "completed" && order.status !== "cancelled" &&
+      (order.passengerId === userId || order.driverId === userId || order.offeredDriverId === userId),
+    )) {
+      throw new AppError(409, "Finish active orders and leave the driver queue before switching modes", "ROLE_BUSY");
+    }
+    if (!user.roles.includes(nextRole)) {
+      user.roles.push(nextRole);
+      if (nextRole === "driver") user.driverApprovalStatus = "pending";
+    }
+    user.role = nextRole;
+    user.sessionVersion += 1;
+    return structuredClone(user);
+  }
+
+  private requireCurrentRole(userId: string, role: "passenger" | "driver", expectedSessionVersion?: number): void {
+    const user = this.users.get(userId);
+    if (!user || (expectedSessionVersion !== undefined && user.sessionVersion !== expectedSessionVersion)) {
+      throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+    }
+    if (user.role !== role) throw new AppError(403, `${role} mode is required`, "FORBIDDEN");
   }
 
   consumeOtp(phoneNumber: string, code: string): OtpChallenge | undefined {
@@ -133,7 +170,8 @@ class MemoryStore implements Store {
     return this.updateQueueEntry(driverId, { inFifo: true });
   }
 
-  joinQueue(entry: QueueEntry): QueueEntry {
+  joinQueue(entry: QueueEntry, expectedSessionVersion?: number): QueueEntry {
+    this.requireCurrentRole(entry.driverId, "driver", expectedSessionVersion);
     const current = this.queueEntries.get(entry.driverId);
     if (current && (hasActiveOrders(current) || current.pendingOfferOrderId || current.inFifo === false)) {
       throw new AppError(409, "Driver cannot rejoin while an order or route is active", "QUEUE_BUSY");
@@ -191,7 +229,8 @@ class MemoryStore implements Store {
 
   private eligibleOfferEntries(): QueueEntry[] {
     return [...this.queueEntries.values()].filter(entry =>
-      !REQUIRE_DRIVER_APPROVAL || this.users.get(entry.driverId)?.driverApprovalStatus === "approved",
+      this.users.get(entry.driverId)?.role === "driver" &&
+      (!REQUIRE_DRIVER_APPROVAL || this.users.get(entry.driverId)?.driverApprovalStatus === "approved"),
     );
   }
 
@@ -200,7 +239,8 @@ class MemoryStore implements Store {
     return { available: eligibleDriverCount > 0, eligibleDriverCount };
   }
 
-  createOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt">): Order {
+  createOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number): Order {
+    this.requireCurrentRole(input.passengerId, "passenger", expectedSessionVersion);
     const now = new Date().toISOString();
     const order: Order = {
       ...input,
@@ -212,7 +252,8 @@ class MemoryStore implements Store {
     return order;
   }
 
-  createOrderWithOffer(input: Omit<Order, "id" | "createdAt" | "updatedAt">): Order | undefined {
+  createOrderWithOffer(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number): Order | undefined {
+    this.requireCurrentRole(input.passengerId, "passenger", expectedSessionVersion);
     const now = Date.now();
     const next = orderedOfferCandidates(
       { pickupPoint: input.pickupPoint, seats: input.seats }, this.eligibleOfferEntries(), now,
@@ -406,7 +447,7 @@ class MemoryStore implements Store {
   }
 
   listUsers(role?: User["role"]): User[] {
-    return [...this.users.values()].filter((user) => !role || user.role === role);
+    return [...this.users.values()].filter((user) => !role || user.roles.includes(role)).map(user => structuredClone(user));
   }
 
   setDriverApproval(
@@ -414,11 +455,11 @@ class MemoryStore implements Store {
     status: DriverApprovalStatus,
   ): User | undefined {
     const user = this.users.get(userId);
-    if (!user || user.role !== "driver") {
+    if (!user || !user.roles.includes("driver")) {
       return undefined;
     }
     user.driverApprovalStatus = status;
-    return user;
+    return structuredClone(user);
   }
 
   listRoutes(): RouteDefinition[] {

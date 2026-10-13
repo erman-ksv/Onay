@@ -77,6 +77,8 @@ export interface FareQuote {
 export interface User {
   id: string;
   role: UserRole;
+  /** Account capabilities; role remains the currently active mode. */
+  roles: UserRole[];
   fullName: string;
   phoneNumber: string;
   locale: Locale;

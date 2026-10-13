@@ -86,6 +86,14 @@ services.
   used as the pickup and destination stop, with a minimum one-stop fare.
 - `POST /api/orders/:orderId/accept` — the driver holding the live offer accepts; Point C gets a 7-minute seat lock.
 - `POST /api/orders/:orderId/reject` — the driver holding the live offer rejects it, returning its reserved seats and offering the order to the next eligible driver.
+
+One phone number can use passenger and driver modes. `POST /api/auth/switch-role`
+with `{ "role": "passenger" }` or `{ "role": "driver" }` returns a new access
+token and a user containing `active_role` and `roles`; previous tokens and
+connected sessions are invalidated. A newly enabled driver awaits administrator
+approval. Switching is blocked with `ROLE_BUSY` while an order is unfinished or
+the driver is still in the queue. The driver must finish/cancel the trip and leave
+the queue first. Switching never grants administrator access.
 - `PATCH /api/orders/:orderId/status` — driver advances `en_route_to_c` → `arrived_at_c` → `in_transit` → `completed`.
 - `POST /api/orders/:orderId/cancel` — passenger or assigned driver cancels. A driver with a pending offer must use `/reject`; `/cancel` returns HTTP 409 `USE_REJECT`.
 
