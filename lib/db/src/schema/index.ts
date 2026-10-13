@@ -23,6 +23,7 @@ export const usersTable = pgTable(
   {
     id: text("id").primaryKey(),
     role: text("role").notNull(),
+    roles: jsonb("roles").$type<string[]>().notNull().default(["passenger"]),
     fullName: text("full_name").notNull(),
     phoneNumber: text("phone_number").notNull(),
     locale: text("locale").notNull(),

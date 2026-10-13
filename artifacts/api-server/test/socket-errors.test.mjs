@@ -18,6 +18,8 @@ const sockets = new Set();
 let moduleDirectory;
 let store;
 let createAccessToken;
+let switchRole;
+let logout;
 let httpServer;
 let realtime;
 let serverUrl;
@@ -37,6 +39,7 @@ before(async () => {
         'export { store } from "./src/store";',
         'export { MemoryStore } from "./src/store/memoryStore";',
         'export { createAccessToken } from "./src/utils/token";',
+        'export { switchRole, logout } from "./src/controllers/authController";',
       ].join("\n"),
       resolveDir: apiRoot, loader: "ts",
     },
@@ -47,6 +50,8 @@ before(async () => {
   const production = await import(pathToFileURL(entry).href);
   store = production.store;
   createAccessToken = production.createAccessToken;
+  switchRole = production.switchRole;
+  logout = production.logout;
   assert.ok(store instanceof production.MemoryStore, "Socket rejection regressions must be independent of PostgreSQL.");
   await store.initialize();
   httpServer = createServer((_request, response) => response.end("healthy"));
@@ -174,3 +179,31 @@ test("Socket driver lookup rejection drops its location and later valid location
   assert.equal(driver.connected, true);
   assert.equal((await fetch(serverUrl)).status, 200);
 });
+
+for (const action of ["invalidate", "switch", "logout"]) {
+  test(`Socket ${action} revokes the previous driver's location access`, { timeout: 15_000 }, async t => {
+    const { socket: observer } = await client(t);
+    const { socket: driver, user } = await client(t, "driver");
+    await Promise.all([connect(observer), connect(driver)]);
+    const locations = [];
+    observer.on("driver:location", payload => locations.push(payload));
+    const disconnected = waitForEvent(driver, "disconnect");
+    if (action === "invalidate") {
+      await store.invalidateSessions(user.id);
+      driver.emit("driver:location", { lat: 41.3111, lng: 69.2797, timestamp: Date.now() });
+    } else {
+      const request = {
+        body: { role: "passenger" },
+        auth: { userId: user.id, role: user.role, user: await store.getUser(user.id), locale: "ru" },
+        app: { locals: { io: realtime } },
+      };
+      const response = { json() {}, status() { return this; }, send() {} };
+      await (action === "switch" ? switchRole(request, response) : logout(request, response));
+    }
+    assert.equal(await disconnected, "io server disconnect");
+    assert.equal(driver.connected, false);
+    assert.deepEqual(locations, []);
+    assert.equal(observer.connected, true);
+    assert.equal((await fetch(serverUrl)).status, 200);
+  });
+}

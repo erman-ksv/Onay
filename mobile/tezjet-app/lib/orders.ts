@@ -1,0 +1,63 @@
+export type RideStatus = "searching" | "en_route_to_c" | "arrived_at_c" | "in_transit" | "completed" | "cancelled";
+export type RideOrder = {
+  id: string;
+  status: RideStatus;
+  pickup_point: string;
+  destination?: string;
+  seats: number;
+  passenger_id?: string;
+  driver_id?: string;
+  offered_driver_id?: string;
+  offer_expires_at?: number;
+  seat_lock_expires_at?: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export function isClosed(order: RideOrder): boolean {
+  return order.status === "completed" || order.status === "cancelled";
+}
+
+export function isLiveOffer(order: RideOrder, driverId: string, now = Date.now()): boolean {
+  return order.status === "searching" && !order.driver_id && order.offered_driver_id === driverId &&
+    order.offer_expires_at !== undefined && order.offer_expires_at > now;
+}
+
+export function mergeOrder(orders: RideOrder[], incoming: RideOrder): RideOrder[] {
+  const existing = orders.find(order => order.id === incoming.id);
+  if (existing?.updated_at && incoming.updated_at && existing.updated_at > incoming.updated_at) return orders;
+  return [incoming, ...orders.filter(order => order.id !== incoming.id)]
+    .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
+}
+
+/** Reconcile a full GET response without overwriting events received while it was in flight. */
+export function mergeOrderSnapshot(orders: RideOrder[], snapshot: RideOrder[], changedAfterRequest: ReadonlySet<string> = new Set()): RideOrder[] {
+  const visibleIds = new Set(snapshot.map(order => order.id));
+  let merged = orders.filter(order => visibleIds.has(order.id) || changedAfterRequest.has(order.id));
+  for (const incoming of snapshot) {
+    if (!changedAfterRequest.has(incoming.id)) merged = mergeOrder(merged, incoming);
+  }
+  return merged;
+}
+
+export const statusLabels: Record<RideStatus, string> = {
+  searching: "Ищем водителя",
+  en_route_to_c: "Водитель едет к точке подачи",
+  arrived_at_c: "Водитель прибыл",
+  in_transit: "Поездка началась",
+  completed: "Поездка завершена",
+  cancelled: "Заказ отменён",
+};
+
+export function nextTripStatus(order: RideOrder): RideStatus | null {
+  return order.status === "en_route_to_c" ? "arrived_at_c"
+    : order.status === "arrived_at_c" ? "in_transit"
+    : order.status === "in_transit" ? "completed" : null;
+}
+
+export function nextTripLabel(order: RideOrder): string {
+  const next = nextTripStatus(order);
+  return next === "arrived_at_c" ? "Я прибыл на точку"
+    : next === "in_transit" ? "Начать поездку"
+    : next === "completed" ? "Завершить поездку" : "";
+}

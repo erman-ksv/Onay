@@ -36,6 +36,7 @@ function asUser(row: Record<string, unknown>): User {
   return {
     id: String(row.id),
     role: row.role as UserRole,
+    roles: (row.roles ?? [row.role]) as UserRole[],
     fullName: String(row.fullName),
     phoneNumber: String(row.phoneNumber),
     locale: row.locale as Locale,
@@ -181,6 +182,7 @@ export class PostgresStore implements Store {
     const user: User = {
       id: randomUUID(),
       role: input.role,
+      roles: [input.role],
       fullName: input.fullName,
       phoneNumber: input.phoneNumber,
       locale: input.locale,
@@ -197,6 +199,7 @@ export class PostgresStore implements Store {
     const [row] = await db.insert(usersTable).values({
       id: user.id,
       role: user.role,
+      roles: user.roles,
       fullName: user.fullName,
       phoneNumber: user.phoneNumber,
       locale: user.locale,
@@ -265,6 +268,50 @@ export class PostgresStore implements Store {
     });
   }
 
+  async activateUserRole(userId: string, nextRole: "passenger" | "driver", expectedSessionVersion?: number): Promise<User> {
+    if (nextRole !== "passenger" && nextRole !== "driver") {
+      throw new AppError(400, "Only passenger and driver modes are available", "INVALID_ROLE");
+    }
+    const { db, usersTable, driverQueueTable, ordersTable } = await this.database();
+    return db.transaction(async tx => {
+      // Offer operations lock order -> queue -> users. Never acquire a queue
+      // or order lock after the user lock in this operation.
+      const [queued] = await tx.select({ id: driverQueueTable.driverId }).from(driverQueueTable)
+        .where(eq(driverQueueTable.driverId, userId)).for("update").limit(1);
+      const [userRow] = await tx.select().from(usersTable)
+        .where(eq(usersTable.id, userId)).for("update").limit(1);
+      if (!userRow) throw new AppError(401, "Account is not available", "UNAUTHORIZED");
+      const user = asUser(userRow as unknown as Record<string, unknown>);
+      if (expectedSessionVersion !== undefined && user.sessionVersion !== expectedSessionVersion) {
+        throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+      }
+      if (user.role === "admin" || user.roles.includes("admin")) {
+        throw new AppError(403, "Admin accounts cannot switch modes", "ADMIN_ROLE_FORBIDDEN");
+      }
+      // If a concurrent join inserted a previously absent queue row and held
+      // the user SHARE lock first, it has committed before this UPDATE lock.
+      // Re-read without a queue lock; a join that lost the user lock must
+      // recheck the role/session before it can commit its inserted queue row.
+      const [newQueue] = queued ? [queued] : await tx.select({ id: driverQueueTable.driverId }).from(driverQueueTable)
+        .where(eq(driverQueueTable.driverId, userId)).limit(1);
+      const [activeOrder] = await tx.select({ id: ordersTable.id }).from(ordersTable).where(and(
+        sql`${ordersTable.status} NOT IN ('completed', 'cancelled')`,
+        or(eq(ordersTable.passengerId, userId), eq(ordersTable.driverId, userId), eq(ordersTable.offeredDriverId, userId)),
+      )).limit(1);
+      if (newQueue || activeOrder) {
+        throw new AppError(409, "Finish active orders and leave the driver queue before switching modes", "ROLE_BUSY");
+      }
+      const roles = user.roles.includes(nextRole) ? user.roles : [...user.roles, nextRole];
+      const [updated] = await tx.update(usersTable).set({
+        role: nextRole,
+        roles,
+        sessionVersion: sql`${usersTable.sessionVersion} + 1`,
+        ...(nextRole === "driver" && !user.roles.includes("driver") ? { driverApprovalStatus: "pending" } : {}),
+      }).where(eq(usersTable.id, userId)).returning();
+      return asUser(updated as unknown as Record<string, unknown>);
+    });
+  }
+
   async consumeOtp(phoneNumber: string, code: string): Promise<OtpChallenge | undefined> {
     const { db, otpChallengesTable } = await this.database();
     const [row] = await db.delete(otpChallengesTable).where(and(
@@ -296,31 +343,41 @@ export class PostgresStore implements Store {
     return this.updateQueueEntry(driverId, { inFifo: true });
   }
 
-  async joinQueue(entry: QueueEntry): Promise<QueueEntry> {
-    const { db, driverQueueTable } = await this.database();
+  async joinQueue(entry: QueueEntry, expectedSessionVersion?: number): Promise<QueueEntry> {
+    const { db, driverQueueTable, usersTable } = await this.database();
     const initial = joinQueueEntry(entry);
-    const [row] = await db.insert(driverQueueTable).values({
-      driverId: initial.driverId,
-      ...queueValues(initial),
-    }).onConflictDoUpdate({
-      target: driverQueueTable.driverId,
-      // PostgreSQL evaluates this condition on the locked conflicting row.
-      // A stale controller snapshot cannot overwrite a newly accepted order.
-      setWhere: and(
-        eq(driverQueueTable.inFifo, true),
-        isNull(driverQueueTable.currentOrderId),
-        isNull(driverQueueTable.pendingOfferOrderId),
-        sql`${driverQueueTable.activeOrderIds} = '[]'::jsonb`,
-      ),
-      set: {
-        availableSeats: entry.availableSeats,
-        lastLocation: entry.lastLocation as unknown as Record<string, unknown>,
-      },
-    }).returning();
-    if (!row) {
-      throw new AppError(409, "Driver cannot rejoin while an order or route is active", "QUEUE_BUSY");
-    }
-    return asQueueEntry(row as unknown as Record<string, unknown>);
+    return db.transaction(async tx => {
+      // Lock (or insert) the queue row before the user SHARE lock. A failed
+      // role/session check rolls back the inserted row and seat updates.
+      const [row] = await tx.insert(driverQueueTable).values({
+        driverId: initial.driverId,
+        ...queueValues(initial),
+      }).onConflictDoUpdate({
+        target: driverQueueTable.driverId,
+        // PostgreSQL evaluates this condition on the locked conflicting row.
+        // A stale controller snapshot cannot overwrite a newly accepted order.
+        setWhere: and(
+          eq(driverQueueTable.inFifo, true),
+          isNull(driverQueueTable.currentOrderId),
+          isNull(driverQueueTable.pendingOfferOrderId),
+          sql`${driverQueueTable.activeOrderIds} = '[]'::jsonb`,
+        ),
+        set: {
+          availableSeats: entry.availableSeats,
+          lastLocation: entry.lastLocation as unknown as Record<string, unknown>,
+        },
+      }).returning();
+      if (!row) {
+        throw new AppError(409, "Driver cannot rejoin while an order or route is active", "QUEUE_BUSY");
+      }
+      const [user] = await tx.select().from(usersTable)
+        .where(eq(usersTable.id, entry.driverId)).for("share").limit(1);
+      if (!user || (expectedSessionVersion !== undefined && user.sessionVersion !== expectedSessionVersion)) {
+        throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+      }
+      if (user.role !== "driver") throw new AppError(403, "driver mode is required", "FORBIDDEN");
+      return asQueueEntry(row as unknown as Record<string, unknown>);
+    });
   }
 
   async updateQueueEntry(driverId: string, patch: Partial<QueueEntry>): Promise<QueueEntry | undefined> {
@@ -420,7 +477,7 @@ export class PostgresStore implements Store {
     return { available: eligibleDriverCount > 0, eligibleDriverCount };
   }
 
-  async createOrderWithOffer(input: Omit<Order, "id" | "createdAt" | "updatedAt">): Promise<Order | undefined> {
+  async createOrderWithOffer(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number): Promise<Order | undefined> {
     const { db, driverQueueTable, usersTable, ordersTable } = await this.database();
     return db.transaction(async tx => {
       // This order does not exist yet. Locking queue rows before inserting its
@@ -430,14 +487,18 @@ export class PostgresStore implements Store {
         input.pickupPoint === "D" ? eq(driverQueueTable.status, "in_transit") : eq(driverQueueTable.inFifo, true),
       )).orderBy(asc(driverQueueTable.driverId)).for("update");
       const entries = queueRows.map(row => asQueueEntry(row as unknown as Record<string, unknown>));
-      const approvedRows = entries.length
-        ? await tx.select({ id: usersTable.id }).from(usersTable).where(and(
-          inArray(usersTable.id, entries.map(entry => entry.driverId)),
-          eq(usersTable.role, "driver"),
-          REQUIRE_DRIVER_APPROVAL ? eq(usersTable.driverApprovalStatus, "approved") : undefined,
-        )).orderBy(asc(usersTable.id)).for("share")
-        : [];
-      const approvedIds = new Set(approvedRows.map(row => row.id));
+      // Hold the passenger's mode/session through the insert, together with
+      // driver eligibility. All queue locks precede all user locks.
+      const users = await tx.select().from(usersTable).where(
+        inArray(usersTable.id, [...new Set([input.passengerId, ...entries.map(entry => entry.driverId)])]),
+      ).orderBy(asc(usersTable.id)).for("share");
+      const passenger = users.find(user => user.id === input.passengerId);
+      if (!passenger || (expectedSessionVersion !== undefined && passenger.sessionVersion !== expectedSessionVersion)) {
+        throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+      }
+      if (passenger.role !== "passenger") throw new AppError(403, "passenger mode is required", "FORBIDDEN");
+      const approvedIds = new Set(users.filter(user => user.role === "driver" &&
+        (!REQUIRE_DRIVER_APPROVAL || user.driverApprovalStatus === "approved")).map(user => user.id));
       const now = Date.now();
       const candidate = orderedOfferCandidates(
         { pickupPoint: input.pickupPoint, seats: input.seats, attemptedDriverIds: [] },
@@ -472,22 +533,32 @@ export class PostgresStore implements Store {
     });
   }
 
-  async createOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt">): Promise<Order> {
-    const { db, ordersTable } = await this.database();
-    const now = new Date().toISOString();
-    const order: Order = { ...input, id: randomUUID(), createdAt: now, updatedAt: now };
-    const [row] = await db.insert(ordersTable).values({
-      id: order.id,
-      passengerId: order.passengerId,
-      driverId: order.driverId ?? null,
-      offeredDriverId: order.offeredDriverId ?? null,
-      offerExpiresAt: order.offerExpiresAt ?? null,
-      status: order.status,
-      createdAt: order.createdAt,
-      updatedAt: order.updatedAt,
-      payload: order as unknown as Record<string, unknown>,
-    }).returning();
-    return asOrder(row as unknown as Record<string, unknown>);
+  async createOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number): Promise<Order> {
+    const { db, ordersTable, usersTable } = await this.database();
+    return db.transaction(async tx => {
+      // The inserted UUID is new; this acquires no existing order/queue lock
+      // after the user SHARE lock and keeps its role valid through commit.
+      const [passenger] = await tx.select().from(usersTable)
+        .where(eq(usersTable.id, input.passengerId)).for("share").limit(1);
+      if (!passenger || (expectedSessionVersion !== undefined && passenger.sessionVersion !== expectedSessionVersion)) {
+        throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+      }
+      if (passenger.role !== "passenger") throw new AppError(403, "passenger mode is required", "FORBIDDEN");
+      const now = new Date().toISOString();
+      const order: Order = { ...input, id: randomUUID(), createdAt: now, updatedAt: now };
+      const [row] = await tx.insert(ordersTable).values({
+        id: order.id,
+        passengerId: order.passengerId,
+        driverId: order.driverId ?? null,
+        offeredDriverId: order.offeredDriverId ?? null,
+        offerExpiresAt: order.offerExpiresAt ?? null,
+        status: order.status,
+        createdAt: order.createdAt,
+        updatedAt: order.updatedAt,
+        payload: order as unknown as Record<string, unknown>,
+      }).returning();
+      return asOrder(row as unknown as Record<string, unknown>);
+    });
   }
 
   async getOrder(orderId: string): Promise<Order | undefined> {
@@ -818,7 +889,7 @@ export class PostgresStore implements Store {
   async listUsers(role?: User["role"]): Promise<User[]> {
     const { db, usersTable } = await this.database();
     const rows = role
-      ? await db.select().from(usersTable).where(eq(usersTable.role, role))
+      ? await db.select().from(usersTable).where(sql`${usersTable.roles} ? ${role}`)
       : await db.select().from(usersTable);
     return rows.map((row) => asUser(row as unknown as Record<string, unknown>));
   }
@@ -826,7 +897,7 @@ export class PostgresStore implements Store {
   async setDriverApproval(userId: string, status: DriverApprovalStatus): Promise<User | undefined> {
     const { db, usersTable } = await this.database();
     const [row] = await db.update(usersTable).set({ driverApprovalStatus: status })
-      .where(and(eq(usersTable.id, userId), eq(usersTable.role, "driver"))).returning();
+      .where(and(eq(usersTable.id, userId), sql`${usersTable.roles} ? 'driver'`)).returning();
     return row ? asUser(row as unknown as Record<string, unknown>) : undefined;
   }
 

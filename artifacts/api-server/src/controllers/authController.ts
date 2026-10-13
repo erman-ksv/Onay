@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { randomInt, randomUUID } from "node:crypto";
 import { store } from "../store";
-import type { Locale, UserRole } from "../types/domain";
+import type { Locale, User } from "../types/domain";
 import { createAccessToken } from "../utils/token";
 import { normalizePhone } from "../utils/phone";
 import { serializeUser } from "../utils/serialize";
@@ -17,8 +17,11 @@ function getLocale(request: Request, value: unknown): Locale {
   return pickEnum(value ?? request.auth?.locale ?? "ru", "locale", locales);
 }
 
-async function issueToken(userId: string): Promise<string> {
-  const user = await store.invalidateSessions(userId);
+function disconnectPreviousSessions(request: Request, userId: string): void {
+  request.app?.locals.io?.in(`user:${userId}`).disconnectSockets(true);
+}
+
+function issueToken(user: User): string {
   return createAccessToken({
     sub: user.id,
     role: user.role,
@@ -74,13 +77,35 @@ export async function verifyOtp(request: Request, response: Response): Promise<v
       phoneNumber,
       locale: challenge.locale,
     });
-  } else if (user.role !== challenge.role && challenge.role === "admin") {
-    throw new AppError(403, "Admin role cannot be assigned to this account", "ADMIN_ROLE_FORBIDDEN");
+    user = await store.invalidateSessions(user.id);
+  } else if (user.role !== challenge.role) {
+    if (challenge.role === "admin" || user.role === "admin") {
+      throw new AppError(403, "Admin role cannot be assigned or changed on this account", "ADMIN_ROLE_FORBIDDEN");
+    }
+    user = await store.activateUserRole(user.id, challenge.role);
+  } else {
+    user = await store.invalidateSessions(user.id);
   }
 
-  const token = await issueToken(user.id);
+  const token = issueToken(user);
+  disconnectPreviousSessions(request, user.id);
   response.json({
     access_token: token,
+    token_type: "Bearer",
+    user: serializeUser(user),
+    session_policy: "previous_tokens_invalidated",
+  });
+}
+
+export async function switchRole(request: Request, response: Response): Promise<void> {
+  if (!request.auth) {
+    throw new AppError(401, translate("ru", "unauthorized"), "UNAUTHORIZED");
+  }
+  const role = pickEnum(request.body?.role, "role", ["passenger", "driver"] as const);
+  const user = await store.activateUserRole(request.auth.userId, role, request.auth.user.sessionVersion);
+  disconnectPreviousSessions(request, user.id);
+  response.json({
+    access_token: issueToken(user),
     token_type: "Bearer",
     user: serializeUser(user),
     session_policy: "previous_tokens_invalidated",
@@ -122,6 +147,7 @@ export async function updateProfile(request: Request, response: Response): Promi
 export async function logout(request: Request, response: Response): Promise<void> {
   if (request.auth) {
     await store.invalidateSessions(request.auth.userId);
+    disconnectPreviousSessions(request, request.auth.userId);
   }
   response.status(204).send();
 }

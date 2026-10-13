@@ -553,8 +553,9 @@ test("PostgreSQL a fresh join cannot restore trip fields from a deleted queue sn
 
 test("MemoryStore enforces the same queue join and leave ownership boundaries", () => {
   const memory = new MemoryStore();
+  const driver = memory.createUser({ role: "driver", fullName: "Memory queue driver", phoneNumber: "memory-queue-driver", locale: "ru" });
   const input = {
-    driverId: "memory-driver", joinedAt: 1, availableSeats: 8, lastLocation: location,
+    driverId: driver.id, joinedAt: 1, availableSeats: 8, lastLocation: location,
     status: "in_transit", priorityLock: true, inFifo: false,
     activeOrderIds: ["old-order"], currentOrderId: "old-order", seatLockExpiresAt: Date.now() + 60_000,
   };

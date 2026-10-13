@@ -5,6 +5,8 @@ export function serializeUser(user: User) {
   return {
     id: user.id,
     role: user.role,
+    active_role: user.role,
+    roles: user.roles,
     full_name: user.fullName,
     phone_number: user.phoneNumber,
     locale: user.locale,

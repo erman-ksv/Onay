@@ -4,6 +4,7 @@ import {
   getCurrentUser,
   logout,
   requestOtp,
+  switchRole,
   updateProfile,
   verifyOtp,
 } from "../controllers/authController";
@@ -16,5 +17,6 @@ router.post("/auth/login", verifyOtp);
 router.get("/auth/me", authenticate, getCurrentUser);
 router.patch("/auth/profile", authenticate, updateProfile);
 router.post("/auth/logout", authenticate, logout);
+router.post("/auth/switch-role", authenticate, switchRole);
 
 export default router;
