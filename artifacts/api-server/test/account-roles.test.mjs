@@ -431,12 +431,16 @@ test("HTTP admin FIFO queue is private, FIFO-ordered and hides location data", a
   const one = await f.approvedDriver();
   const two = await f.approvedDriver();
   const admin = await f.createUser("admin");
-  const first = f.queueInput(one);
-  const second = f.queueInput(two);
-  first.joinedAt = 100;
-  second.joinedAt = 200;
-  await store.joinQueue(first);
-  await store.joinQueue(second);
+  await store.joinQueue(f.queueInput(one));
+  await store.joinQueue(f.queueInput(two));
+  // Join normalizes its timestamp; set deterministic FIFO order using the
+  // production store API, then snapshot the actual persisted row shape.
+  await store.updateQueueEntry(one.id, { joinedAt: 100 });
+  await store.updateQueueEntry(two.id, { joinedAt: 200 });
+  const firstBefore = await store.getQueueEntry(one.id);
+  const secondBefore = await store.getQueueEntry(two.id);
+  assert.equal(firstBefore?.joinedAt, 100);
+  assert.equal(secondBefore?.joinedAt, 200);
 
   assert.equal((await request("/admin/queue")).status, 401);
   const driverLogin = await login(one.phoneNumber, "driver");
@@ -460,8 +464,8 @@ test("HTTP admin FIFO queue is private, FIFO-ordered and hides location data", a
   assert.ok(!JSON.stringify(response.body).includes(one.phoneNumber));
   assert.ok(!JSON.stringify(response.body).includes('"lastLocation"'));
   assert.ok(!JSON.stringify(response.body).includes('"lat"'));
-  assert.deepEqual(await store.getQueueEntry(one.id), first);
-  assert.deepEqual(await store.getQueueEntry(two.id), second);
+  assert.deepEqual(await store.getQueueEntry(one.id), firstBefore);
+  assert.deepEqual(await store.getQueueEntry(two.id), secondBefore);
 });
 
 test("HTTP admin order overview is read-only and rejects non-admin callers", async t => {
