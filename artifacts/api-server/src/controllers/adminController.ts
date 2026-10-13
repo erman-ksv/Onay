@@ -196,10 +196,21 @@ export async function deleteStop(request: Request, response: Response): Promise<
 }
 
 /** View existing orders without changing dispatch or trip state. */
-export async function listAdminOrders(_request: Request, response: Response): Promise<void> {
-  response.json({
-    orders: (await store.listOrders()).map((order) => serializeOrder(order)),
-  });
+export async function listAdminOrders(request: Request, response: Response): Promise<void> {
+  const status = request.query["status"] === undefined
+    ? "all"
+    : pickEnum(request.query["status"], "status", [
+        "all", "active", "searching", "en_route_to_c", "arrived_at_c",
+        "in_transit", "completed", "cancelled",
+      ] as const);
+  const orders = await store.listOrders();
+  const visible = orders.filter((order) =>
+    status === "all" ||
+    (status === "active"
+      ? order.status !== "completed" && order.status !== "cancelled"
+      : order.status === status),
+  );
+  response.json({ orders: visible.map((order) => serializeOrder(order)) });
 }
 
 /** List accounts that have passenger capability, including users in driver mode. */
