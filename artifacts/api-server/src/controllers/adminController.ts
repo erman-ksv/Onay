@@ -5,7 +5,7 @@ import type { DriverApprovalStatus } from "../types/domain";
 import { PYATAK_ZONE, updatePyatakCenter } from "../utils/config";
 import { isValidCoordinates } from "../utils/geo";
 import { AppError } from "../utils/errors";
-import { serializeUser } from "../utils/serialize";
+import { serializeOrder, serializeUser } from "../utils/serialize";
 import { boundedInteger, optionalString, pickEnum, requiredString } from "../utils/validation";
 
 function routeId(value: unknown): string {
@@ -193,6 +193,13 @@ export async function deleteStop(request: Request, response: Response): Promise<
     throw new AppError(404, "Route stop not found", "STOP_NOT_FOUND");
   }
   response.status(204).send();
+}
+
+/** View existing orders without changing dispatch or trip state. */
+export async function listAdminOrders(_request: Request, response: Response): Promise<void> {
+  response.json({
+    orders: (await store.listOrders()).map((order) => serializeOrder(order)),
+  });
 }
 
 /** List accounts that have passenger capability, including users in driver mode. */

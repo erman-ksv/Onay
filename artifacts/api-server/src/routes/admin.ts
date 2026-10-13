@@ -6,6 +6,7 @@ import {
   deleteRoute,
   deleteStop,
   getQueuePoint,
+  listAdminOrders,
   listDrivers,
   listPassengers,
   listRoutes,
@@ -25,6 +26,7 @@ router.delete("/admin/routes/:routeId", ...adminOnly, deleteRoute);
 router.post("/admin/routes/:routeId/stops", ...adminOnly, addStop);
 router.patch("/admin/routes/:routeId/stops/:stopId", ...adminOnly, updateStop);
 router.delete("/admin/routes/:routeId/stops/:stopId", ...adminOnly, deleteStop);
+router.get("/admin/orders", ...adminOnly, listAdminOrders);
 router.get("/admin/drivers", ...adminOnly, listDrivers);
 router.get("/admin/passengers", ...adminOnly, listPassengers);
 router.get("/admin/queue-point", ...adminOnly, getQueuePoint);

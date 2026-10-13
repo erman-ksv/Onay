@@ -426,6 +426,47 @@ test("HTTP switching authenticates, rotates one session, enforces active authori
   assert.equal((await request("/orders/availability", { token: passenger.body.access_token })).status, 200);
 });
 
+test("HTTP admin order overview is read-only and rejects non-admin callers", async t => {
+  const f = await fixture(t);
+  const passenger = await f.createUser("passenger");
+  const driver = await f.createUser("driver");
+  const administrator = await f.createUser("admin");
+  const order = await store.createOrder(f.orderInput(passenger));
+
+  const anonymous = await request("/admin/orders");
+  assert.equal(anonymous.status, 401);
+
+  const passengerLogin = await login(passenger.phoneNumber, "passenger");
+  assert.equal(passengerLogin.status, 200);
+  const passengerDenied = await request("/admin/orders", { token: passengerLogin.body.access_token });
+  assert.equal(passengerDenied.status, 403);
+  assert.equal(passengerDenied.body.error.code, "FORBIDDEN");
+
+  const driverLogin = await login(driver.phoneNumber, "driver");
+  assert.equal(driverLogin.status, 200);
+  assert.equal((await request("/admin/orders", { token: driverLogin.body.access_token })).status, 403);
+
+  await store.saveOtp({
+    phoneNumber: administrator.phoneNumber, code: "593821", role: "admin",
+    locale: "ru", expiresAt: Date.now() + 60_000,
+  });
+  const adminLogin = await request("/auth/verify-otp", {
+    method: "POST", body: { phone_number: administrator.phoneNumber, code: "593821" },
+  });
+  assert.equal(adminLogin.status, 200, JSON.stringify(adminLogin.body));
+  const listing = await request("/admin/orders", { token: adminLogin.body.access_token });
+  assert.equal(listing.status, 200, JSON.stringify(listing.body));
+  assert.ok(Array.isArray(listing.body.orders));
+  const listed = listing.body.orders.find(item => item.id === order.id);
+  assert.ok(listed, "admin must see orders across user accounts");
+  assert.equal(listed.passenger_id, passenger.id);
+  assert.equal(listed.passenger_phone, passenger.phoneNumber);
+  assert.equal(listed.status, "searching");
+  assert.equal(listed.seats, 2);
+  assert.equal(listed.sessionVersion, undefined);
+  assert.deepEqual(await store.getOrder(order.id), order, "listing must not modify orders");
+});
+
 test("HTTP admin passenger directory is protected and includes passengers in driver mode", async t => {
   const f = await fixture(t);
   const passenger = await f.createUser("passenger");
