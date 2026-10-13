@@ -359,10 +359,10 @@ test("covers OTP auth, FIFO offers, Point C locks, Point D pooling, and realtime
   assert.equal(driverPendingOrders.body.orders.find(order => order.id === pointCOrder.id)?.offer_expires_at, pointCOrder.offer_expires_at);
   for (const [path, method, body, code] of [
     ["/queue/leave", "DELETE", undefined, "ACTIVE_ORDER"],
-    ["/queue/join", "POST", { location: queueLocation, available_seats: 8 }, "QUEUE_BUSY"],
+    ["/queue/join", "POST", { location: { ...queueLocation, timestamp: Date.now() }, available_seats: 8 }, "QUEUE_BUSY"],
   ]) {
     const blocked = await request(path, { method, body, token: driverOneToken });
-    assert.equal(blocked.response.status, 409);
+    assert.equal(blocked.response.status, 409, JSON.stringify(blocked.body));
     assert.equal(blocked.body.error.code, code);
   }
 
