@@ -195,6 +195,13 @@ export async function deleteStop(request: Request, response: Response): Promise<
   response.status(204).send();
 }
 
+/** List accounts that have passenger capability, including users in driver mode. */
+export async function listPassengers(_request: Request, response: Response): Promise<void> {
+  response.json({
+    passengers: (await store.listUsers("passenger")).map((user) => serializeUser(user)),
+  });
+}
+
 export async function listDrivers(_request: Request, response: Response): Promise<void> {
   response.json({
     drivers: (await store.listUsers("driver")).map((user) => serializeUser(user)),
