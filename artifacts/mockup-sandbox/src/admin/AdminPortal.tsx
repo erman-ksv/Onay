@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { ArrowRight, CheckCircle2, CircleAlert, LockKeyhole, LogOut, RefreshCw, Search, ShieldCheck, Smartphone, Users, UserRound, CarTaxiFront } from "lucide-react";
 import {
   AdminApiError, closeAdminSession, loadDirectories, sendAdminOtp, verifyAdminOtp,
@@ -22,7 +22,7 @@ function statusLabel(status?: string): string {
     default: return "—";
   }
 }
-function IconBadge({ children }: { children: React.ReactNode }) {
+function IconBadge({ children }: { children: ReactNode }) {
   return <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-900 text-white">{children}</span>;
 }
 
@@ -137,7 +137,7 @@ export default function AdminPortal() {
               <input type="tel" autoComplete="tel" required maxLength={32} value={phone} onChange={e => setPhone(e.target.value)} placeholder="+7 777 000 00 00" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-base outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100" />
             </label>
             <label className="block text-sm font-medium text-slate-700">Имя
-              <input type="text" autoComplete="name" maxLength={120} value={name} onChange={e => setName(e.target.value)} placeholder="Имя администратора" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-base outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100" />
+              <input type="text" autoComplete="name" required maxLength={120} value={name} onChange={e => setName(e.target.value)} placeholder="Имя администратора" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-base outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100" />
             </label>
             <button disabled={busy} type="submit" className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-3.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60">{busy ? "Отправляем…" : "Получить код"}<ArrowRight size={17}/></button>
           </form> : <form className="mt-8 space-y-5" onSubmit={confirmCode}>
