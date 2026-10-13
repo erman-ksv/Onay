@@ -234,7 +234,13 @@ test("PostgreSQL failed order rewrite rolls back the associated seat restoration
     END $$`);
   await database.query(`CREATE TRIGGER "${triggerName}" BEFORE UPDATE ON "${schema}".tezjet_orders FOR EACH ROW EXECUTE FUNCTION "${schema}"."${triggerName}"()`);
   try {
-    await assert.rejects(store.clearExpiredSeatLocks(), /injected seat restoration rollback/);
+    await assert.rejects(store.clearExpiredSeatLocks(), error => {
+      // Drizzle wraps the PostgreSQL exception in a query error. Require the
+      // exact trigger failure, rather than accepting any failed SQL statement.
+      assert.equal(error.cause?.code, "P0001");
+      assert.match(error.cause?.message ?? "", /injected seat restoration rollback/);
+      return true;
+    });
     assert.deepEqual(await store.getQueueEntry(f.driver.id), beforeQueue);
     assert.deepEqual(await store.getOrder(f.orders[0].id), beforeOrder);
   } finally {
@@ -401,4 +407,23 @@ test("PostgreSQL concurrent cancellation of two orders preserves both seat credi
   assert.deepEqual(current.activeOrderIds, []);
   assert.equal(current.status, "searching");
   assert.equal(current.currentOrderId, undefined);
+});
+
+test("PostgreSQL lifecycle checks the live actor and completion restores seats only once", async t => {
+  const f = await fixture(t, { expired: false });
+  const outsider = await f.createUser("passenger");
+  const orderId = f.orders[0].id;
+  assert.equal(await store.transitionOrder(orderId, outsider.id, "cancelled"), undefined);
+  assert.equal(await store.transitionOrder(orderId, f.passenger.id, "arrived_at_c"), undefined);
+  assert.equal((await store.getQueueEntry(f.driver.id)).availableSeats, 6);
+  assert.equal((await store.transitionOrder(orderId, f.driver.id, "arrived_at_c", "en_route_to_c"))?.status, "arrived_at_c");
+  assert.equal((await store.transitionOrder(orderId, f.driver.id, "in_transit", "arrived_at_c"))?.status, "in_transit");
+  assert.equal((await store.transitionOrder(orderId, f.driver.id, "completed", "in_transit"))?.status, "completed");
+  assert.equal(await store.transitionOrder(orderId, f.driver.id, "completed"), undefined);
+  assert.equal(await store.transitionOrder(orderId, f.passenger.id, "cancelled"), undefined);
+  const current = await store.getQueueEntry(f.driver.id);
+  assert.equal(current.availableSeats, 8);
+  assert.deepEqual(current.activeOrderIds, []);
+  assert.equal(current.currentOrderId, undefined);
+  assert.equal((await store.getOrder(orderId)).driverId, f.driver.id, "Completed trips retain the assigned driver for history.");
 });

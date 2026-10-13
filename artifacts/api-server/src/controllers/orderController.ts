@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import type { Server } from "socket.io";
 import { logger } from "../lib/logger";
 import { store } from "../store";
+import { statusTransitions } from "../store/orderLifecycle";
 import type { Coordinates, Order, OrderStatus, PickupPoint } from "../types/domain";
 import { SEAT_LOCK_TTL_MS } from "../utils/config";
 import { AppError } from "../utils/errors";
@@ -11,15 +12,6 @@ import { serializeOrder } from "../utils/serialize";
 import { calculateRouteFare, parseRouteStopCodes } from "../utils/fare";
 import { boundedInteger, optionalString, pickEnum, requiredString } from "../utils/validation";
 import { normalizeNaturalLanguageAddress } from "../services/geminiAddressService";
-
-const statusTransitions: Record<OrderStatus, readonly OrderStatus[]> = {
-  searching: ["en_route_to_c", "cancelled"],
-  en_route_to_c: ["arrived_at_c", "cancelled"],
-  arrived_at_c: ["in_transit", "cancelled"],
-  in_transit: ["completed", "cancelled"],
-  completed: [],
-  cancelled: [],
-};
 
 function getSocket(request: Request): Server | undefined {
   return request.app.locals.io as Server | undefined;
@@ -195,29 +187,11 @@ export async function acceptOrder(request: Request, response: Response): Promise
   const seatLockExpiresAt =
     order.pickupPoint === "C" ? Date.now() + SEAT_LOCK_TTL_MS : undefined;
   const status: OrderStatus = order.pickupPoint === "C" ? "en_route_to_c" : "in_transit";
-  const activeOrderIds = [
-    ...(queueEntry.activeOrderIds ??
-      (queueEntry.currentOrderId ? [queueEntry.currentOrderId] : [])),
-    order.id,
-  ];
-  const remainingSeats = queueEntry.availableSeats - order.seats;
-  const staysInFifo =
-    queueEntry.inFifo !== false &&
-    status !== "in_transit" &&
-    remainingSeats > 0;
   const updated = await store.claimOrderForDriver(
     order.id,
     driverId,
     { status, seatLockExpiresAt },
-    {
-      status: order.pickupPoint === "C" ? "en_route_to_c" : "in_transit",
-      priorityLock: true,
-      currentOrderId: order.id,
-      activeOrderIds: [...new Set(activeOrderIds)],
-      inFifo: staysInFifo,
-      availableSeats: remainingSeats,
-      seatLockExpiresAt,
-    },
+    {}, // The store derives reservation fields from the queue under its lock.
   );
   if (!updated) {
     throw new AppError(409, "Order is no longer available", "ORDER_UNAVAILABLE");
@@ -265,53 +239,9 @@ export async function updateOrderStatus(request: Request, response: Response): P
     );
   }
 
-  const updated = await store.updateOrder(order.id, {
-    status: nextStatus,
-    seatLockExpiresAt: nextStatus === "in_transit" ? undefined : order.seatLockExpiresAt,
-  }) as Order;
-  if (nextStatus === "arrived_at_c" || nextStatus === "en_route_to_c") {
-    await store.updateQueueEntry(driverId, {
-      status: nextStatus,
-      priorityLock: true,
-    });
-  } else if (nextStatus === "in_transit") {
-    await store.updateQueueEntry(driverId, {
-      status: "in_transit",
-      priorityLock: true,
-      inFifo: false,
-      seatLockExpiresAt: undefined,
-    });
-  } else if (nextStatus === "completed" || nextStatus === "cancelled") {
-    const entry = await store.getQueueEntry(driverId);
-    if (entry) {
-      const activeOrderIds = (
-        entry.activeOrderIds ??
-        (entry.currentOrderId ? [entry.currentOrderId] : [])
-      ).filter((orderId) => orderId !== order.id);
-      const availableSeats = entry.availableSeats + order.seats;
-      await store.updateQueueEntry(
-        driverId,
-        activeOrderIds.length > 0
-          ? {
-              status: "in_transit",
-              priorityLock: true,
-              inFifo: false,
-              activeOrderIds,
-              currentOrderId: activeOrderIds[0],
-              seatLockExpiresAt: undefined,
-              availableSeats,
-            }
-          : {
-              status: "searching",
-              priorityLock: false,
-              inFifo: true,
-              activeOrderIds: [],
-              currentOrderId: undefined,
-              seatLockExpiresAt: undefined,
-              availableSeats,
-            },
-      );
-    }
+  const updated = await store.transitionOrder(order.id, driverId, nextStatus, order.status);
+  if (!updated) {
+    throw new AppError(409, "Order changed before the status update", "ORDER_UNAVAILABLE");
   }
 
   emitOrderUpdate(getSocket(request), updated);
@@ -327,43 +257,9 @@ export async function cancelOrder(request: Request, response: Response): Promise
   if (order.status === "completed" || order.status === "cancelled") {
     throw new AppError(409, "Order is already closed", "ORDER_CLOSED");
   }
-  const updated = await store.updateOrder(order.id, {
-    status: "cancelled",
-    cancelledBy: request.auth?.userId,
-    driverId: order.driverId,
-    seatLockExpiresAt: undefined,
-  }) as Order;
-  if (order.driverId) {
-    const entry = await store.getQueueEntry(order.driverId);
-    if (entry) {
-      const activeOrderIds = (
-        entry.activeOrderIds ??
-        (entry.currentOrderId ? [entry.currentOrderId] : [])
-      ).filter((orderId) => orderId !== order.id);
-      const availableSeats = entry.availableSeats + order.seats;
-      await store.updateQueueEntry(
-        order.driverId,
-        activeOrderIds.length > 0
-          ? {
-              status: "in_transit",
-              priorityLock: true,
-              inFifo: false,
-              activeOrderIds,
-              currentOrderId: activeOrderIds[0],
-              seatLockExpiresAt: undefined,
-              availableSeats,
-            }
-          : {
-              status: "searching",
-              priorityLock: false,
-              inFifo: true,
-              activeOrderIds: [],
-              currentOrderId: undefined,
-              seatLockExpiresAt: undefined,
-              availableSeats,
-            },
-      );
-    }
+  const updated = await store.transitionOrder(order.id, request.auth?.userId ?? "", "cancelled", order.status);
+  if (!updated) {
+    throw new AppError(409, "Order changed before cancellation", "ORDER_UNAVAILABLE");
   }
   emitOrderUpdate(getSocket(request), updated);
   await emitQueueUpdate(getSocket(request), {

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { REQUIRE_DRIVER_APPROVAL } from "../utils/config";
 import type { Store } from "./storeContract";
+import { canTransitionOrder, claimQueueEntry, releaseQueueEntry, transitionQueueEntry } from "./orderLifecycle";
 import type {
   Coordinates,
   DeviceRegistration,
@@ -213,11 +214,24 @@ class MemoryStore implements Store {
     return order;
   }
 
+  transitionOrder(orderId: string, actorId: string, nextStatus: OrderStatus, expectedStatus?: OrderStatus): Order | undefined {
+    const order = this.orders.get(orderId);
+    if (!order || !canTransitionOrder(order, actorId, nextStatus, expectedStatus)) return undefined;
+    const entry = order.driverId ? this.queueEntries.get(order.driverId) : undefined;
+    if (entry) this.queueEntries.set(entry.driverId, transitionQueueEntry(entry, order, nextStatus));
+    return this.updateOrder(orderId, {
+      status: nextStatus,
+      ...(nextStatus === "cancelled" ? { cancelledBy: actorId } : {}),
+      seatLockExpiresAt: nextStatus === "in_transit" || nextStatus === "completed" || nextStatus === "cancelled"
+        ? undefined : order.seatLockExpiresAt,
+    });
+  }
+
   claimOrderForDriver(
     orderId: string,
     driverId: string,
     orderPatch: Partial<Order>,
-    queuePatch: Partial<QueueEntry>,
+    _queuePatch: Partial<QueueEntry>,
   ): Order | undefined {
     const order = this.orders.get(orderId);
     const entry = this.queueEntries.get(driverId);
@@ -239,13 +253,16 @@ class MemoryStore implements Store {
     if (!activePoolOffer && this.getQueuePosition(driverId) !== 1) {
       return undefined;
     }
+    const expectedStatus = order.pickupPoint === "C" ? "en_route_to_c" : "in_transit";
+    if (orderPatch.status !== undefined && orderPatch.status !== expectedStatus) return undefined;
     const updated = this.updateOrder(orderId, {
       ...orderPatch,
+      status: expectedStatus,
       driverId,
       offeredDriverId: driverId,
     });
     if (!updated) return undefined;
-    this.updateQueueEntry(driverId, queuePatch);
+    this.queueEntries.set(driverId, claimQueueEntry(entry, updated));
     return updated;
   }
 
@@ -417,32 +434,7 @@ class MemoryStore implements Store {
         if (driverId) {
           const entry = this.queueEntries.get(driverId);
           if (entry) {
-            const activeOrderIds = (
-              entry.activeOrderIds ??
-              (entry.currentOrderId ? [entry.currentOrderId] : [])
-            ).filter((orderId) => orderId !== order.id);
-            Object.assign(
-              entry,
-              activeOrderIds.length > 0
-                ? {
-                    status: "in_transit",
-                    priorityLock: true,
-                    inFifo: false,
-                    activeOrderIds,
-                    currentOrderId: activeOrderIds[0],
-                    seatLockExpiresAt: undefined,
-                    availableSeats: entry.availableSeats + order.seats,
-                  }
-                : {
-                    status: "searching",
-                    priorityLock: false,
-                    inFifo: true,
-                    activeOrderIds: [],
-                    currentOrderId: undefined,
-                    seatLockExpiresAt: undefined,
-                    availableSeats: entry.availableSeats + order.seats,
-                  },
-            );
+            this.queueEntries.set(driverId, releaseQueueEntry(entry, order));
           }
         }
         order.seatLockExpiresAt = undefined;

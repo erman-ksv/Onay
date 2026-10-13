@@ -3,6 +3,7 @@ import type {
   DriverApprovalStatus,
   Locale,
   Order,
+  OrderStatus,
   OtpChallenge,
   QueueEntry,
   RouteDefinition,
@@ -54,6 +55,13 @@ export interface Store {
   createOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt">): MaybePromise<Order>;
   getOrder(orderId: string): MaybePromise<Order | undefined>;
   updateOrder(orderId: string, patch: Partial<Order>): MaybePromise<Order | undefined>;
+  /** Validate the live actor/state and update its seat reservation atomically. */
+  transitionOrder(
+    orderId: string,
+    actorId: string,
+    nextStatus: OrderStatus,
+    expectedStatus?: OrderStatus,
+  ): MaybePromise<Order | undefined>;
   claimOrderForDriver(
     orderId: string,
     driverId: string,
@@ -103,3 +111,4 @@ export interface Store {
   clearExpiredSeatLocks(): MaybePromise<void>;
   queueSnapshot(): MaybePromise<Array<QueueEntry & { position: number }>>;
 }
+
