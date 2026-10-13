@@ -142,6 +142,7 @@ Admin JWTs can manage the route catalog:
 - `POST /api/admin/routes/:routeId/stops`
 - `PATCH|DELETE /api/admin/routes/:routeId/stops/:stopId`
 - `GET /api/admin/drivers`
+- `GET /api/admin/passengers` — admin-only list of accounts with passenger capability (including driver-mode accounts); includes personal data and must not be exposed publicly.
 - `PATCH /api/admin/drivers/:driverId/approval` with
   `{ "status": "pending|approved|rejected" }`
 - `GET /api/admin/queue-point` — read the current Pyatak center and 150-meter geofence.
