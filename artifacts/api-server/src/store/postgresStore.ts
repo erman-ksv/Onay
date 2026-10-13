@@ -1,7 +1,8 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, isNull, lte, or, sql } from "drizzle-orm";
 import type { Store } from "./storeContract";
-import { canTransitionOrder, claimQueueEntry, releaseQueueEntry, transitionQueueEntry } from "./orderLifecycle";
+import { canTransitionOrder, claimQueueEntry, hasActiveOrders, joinQueueEntry, releaseQueueEntry, transitionQueueEntry } from "./orderLifecycle";
+import { AppError } from "../utils/errors";
 import type {
   Coordinates,
   DeviceRegistration,
@@ -270,31 +271,27 @@ export class PostgresStore implements Store {
 
   async joinQueue(entry: QueueEntry): Promise<QueueEntry> {
     const { db, driverQueueTable } = await this.database();
+    const initial = joinQueueEntry(entry);
     const [row] = await db.insert(driverQueueTable).values({
-      driverId: entry.driverId,
-      joinedAt: entry.joinedAt,
-      status: entry.status,
-      availableSeats: entry.availableSeats,
-      lastLocation: entry.lastLocation as unknown as Record<string, unknown>,
-      priorityLock: entry.priorityLock,
-      inFifo: entry.inFifo !== false,
-      activeOrderIds: entry.activeOrderIds ?? [],
-      currentOrderId: entry.currentOrderId ?? null,
-      seatLockExpiresAt: entry.seatLockExpiresAt ?? null,
+      driverId: initial.driverId,
+      ...queueValues(initial),
     }).onConflictDoUpdate({
       target: driverQueueTable.driverId,
+      // PostgreSQL evaluates this condition on the locked conflicting row.
+      // A stale controller snapshot cannot overwrite a newly accepted order.
+      setWhere: and(
+        eq(driverQueueTable.inFifo, true),
+        isNull(driverQueueTable.currentOrderId),
+        sql`${driverQueueTable.activeOrderIds} = '[]'::jsonb`,
+      ),
       set: {
-        joinedAt: entry.joinedAt,
-        status: entry.status,
         availableSeats: entry.availableSeats,
         lastLocation: entry.lastLocation as unknown as Record<string, unknown>,
-        priorityLock: entry.priorityLock,
-        inFifo: entry.inFifo !== false,
-        activeOrderIds: entry.activeOrderIds ?? [],
-        currentOrderId: entry.currentOrderId ?? null,
-        seatLockExpiresAt: entry.seatLockExpiresAt ?? null,
       },
     }).returning();
+    if (!row) {
+      throw new AppError(409, "Driver cannot rejoin while an order or route is active", "QUEUE_BUSY");
+    }
     return asQueueEntry(row as unknown as Record<string, unknown>);
   }
 
@@ -327,7 +324,15 @@ export class PostgresStore implements Store {
 
   async leaveQueue(driverId: string): Promise<void> {
     const { db, driverQueueTable } = await this.database();
-    await db.delete(driverQueueTable).where(eq(driverQueueTable.driverId, driverId));
+    await db.transaction(async tx => {
+      const [row] = await tx.select().from(driverQueueTable)
+        .where(eq(driverQueueTable.driverId, driverId)).for("update").limit(1);
+      if (!row) return;
+      if (hasActiveOrders(asQueueEntry(row as unknown as Record<string, unknown>))) {
+        throw new AppError(409, "Driver cannot leave the queue while an order is active", "ACTIVE_ORDER");
+      }
+      await tx.delete(driverQueueTable).where(eq(driverQueueTable.driverId, driverId));
+    });
   }
 
   async getQueue(): Promise<QueueEntry[]> {

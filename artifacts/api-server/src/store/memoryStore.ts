@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { REQUIRE_DRIVER_APPROVAL } from "../utils/config";
 import type { Store } from "./storeContract";
-import { canTransitionOrder, claimQueueEntry, releaseQueueEntry, transitionQueueEntry } from "./orderLifecycle";
+import { canTransitionOrder, claimQueueEntry, hasActiveOrders, joinQueueEntry, releaseQueueEntry, transitionQueueEntry } from "./orderLifecycle";
+import { AppError } from "../utils/errors";
 import type {
   Coordinates,
   DeviceRegistration,
@@ -140,8 +141,13 @@ class MemoryStore implements Store {
   }
 
   joinQueue(entry: QueueEntry): QueueEntry {
-    this.queueEntries.set(entry.driverId, entry);
-    return entry;
+    const current = this.queueEntries.get(entry.driverId);
+    if (current && (hasActiveOrders(current) || current.inFifo === false)) {
+      throw new AppError(409, "Driver cannot rejoin while an order or route is active", "QUEUE_BUSY");
+    }
+    const joined = joinQueueEntry(entry, current);
+    this.queueEntries.set(entry.driverId, joined);
+    return joined;
   }
 
   updateQueueEntry(
@@ -157,6 +163,10 @@ class MemoryStore implements Store {
   }
 
   leaveQueue(driverId: string): void {
+    const current = this.queueEntries.get(driverId);
+    if (current && hasActiveOrders(current)) {
+      throw new AppError(409, "Driver cannot leave the queue while an order is active", "ACTIVE_ORDER");
+    }
     this.queueEntries.delete(driverId);
   }
 

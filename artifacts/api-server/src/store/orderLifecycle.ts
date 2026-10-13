@@ -1,5 +1,26 @@
 import type { Order, OrderStatus, QueueEntry } from "../types/domain";
 
+export function hasActiveOrders(entry: QueueEntry): boolean {
+  return Boolean(entry.currentOrderId || entry.activeOrderIds?.length);
+}
+
+/** Rejoining updates request fields, while queue ownership stays authoritative. */
+export function joinQueueEntry(input: QueueEntry, current?: QueueEntry): QueueEntry {
+  if (current) {
+    return { ...current, availableSeats: input.availableSeats, lastLocation: input.lastLocation };
+  }
+  return {
+    ...input,
+    joinedAt: Date.now(),
+    status: "searching",
+    priorityLock: false,
+    inFifo: true,
+    activeOrderIds: [],
+    currentOrderId: undefined,
+    seatLockExpiresAt: undefined,
+  };
+}
+
 export const statusTransitions: Record<OrderStatus, readonly OrderStatus[]> = {
   searching: ["en_route_to_c", "cancelled"],
   en_route_to_c: ["arrived_at_c", "cancelled"],
