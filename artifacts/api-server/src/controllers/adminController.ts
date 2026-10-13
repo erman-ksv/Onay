@@ -75,8 +75,14 @@ export function updateQueuePoint(request: Request, response: Response): void {
   });
 }
 
-export async function listRoutes(_request: Request, response: Response): Promise<void> {
-  response.json({ routes: await store.listRoutes() });
+export async function listRoutes(request: Request, response: Response): Promise<void> {
+  const active = request.query["active"] === undefined
+    ? undefined
+    : pickEnum(request.query["active"], "active", ["true", "false"] as const) === "true";
+  const routes = await store.listRoutes();
+  response.json({
+    routes: active === undefined ? routes : routes.filter((route) => route.active === active),
+  });
 }
 
 /** Read one route and its administrator-configured stops without modifying it. */
