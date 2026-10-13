@@ -7,6 +7,7 @@ import {
   deleteStop,
   getQueuePoint,
   listDrivers,
+  listPassengers,
   listRoutes,
   updateDriverApproval,
   updateQueuePoint,
@@ -25,6 +26,7 @@ router.post("/admin/routes/:routeId/stops", ...adminOnly, addStop);
 router.patch("/admin/routes/:routeId/stops/:stopId", ...adminOnly, updateStop);
 router.delete("/admin/routes/:routeId/stops/:stopId", ...adminOnly, deleteStop);
 router.get("/admin/drivers", ...adminOnly, listDrivers);
+router.get("/admin/passengers", ...adminOnly, listPassengers);
 router.get("/admin/queue-point", ...adminOnly, getQueuePoint);
 router.patch("/admin/queue-point", ...adminOnly, updateQueuePoint);
 router.patch(
