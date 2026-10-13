@@ -144,6 +144,7 @@ Admin JWTs can manage the route catalog:
 - `GET /api/admin/queue` — admin-only FIFO snapshot: driver ID, position, join time, status and available seats; never includes GPS, phone numbers, or private locks. Read-only.
 - `GET /api/admin/drivers`
 - `GET /api/admin/passengers` — admin-only list of accounts with passenger capability (including driver-mode accounts); includes personal data and must not be exposed publicly.
+- `GET /api/admin/statistics/trips` — admin-only aggregate total, active, completed, cancelled and per-status trip counts. No personal data or revenue calculations.
 - `GET /api/admin/orders` — admin-only read-only overview of all orders, including personal data. No order status changes or dispatch side effects.
   Optional `?status=active` selects nonterminal orders, `?status=all` selects all (default), and exact statuses `searching`, `en_route_to_c`, `arrived_at_c`, `in_transit`, `completed`, `cancelled` are supported. Invalid values return HTTP 400.
 - `PATCH /api/admin/drivers/:driverId/approval` with

@@ -468,6 +468,45 @@ test("HTTP admin FIFO queue is private, FIFO-ordered and hides location data", a
   assert.deepEqual(await store.getQueueEntry(two.id), secondBefore);
 });
 
+test("HTTP admin trip statistics counts statuses without exposing personal data", async t => {
+  const f = await fixture(t);
+  const passenger = await f.createUser("passenger");
+  const administrator = await f.createUser("admin");
+  assert.equal((await request("/admin/statistics/trips")).status, 401);
+  const passengerLogin = await login(passenger.phoneNumber, "passenger");
+  assert.equal(passengerLogin.status, 200);
+  assert.equal((await request("/admin/statistics/trips", { token: passengerLogin.body.access_token })).status, 403);
+  await store.saveOtp({
+    phoneNumber: administrator.phoneNumber, code: "584296", role: "admin",
+    locale: "ru", expiresAt: Date.now() + 60_000,
+  });
+  const adminLogin = await request("/auth/verify-otp", {
+    method: "POST", body: { phone_number: administrator.phoneNumber, code: "584296" },
+  });
+  assert.equal(adminLogin.status, 200, JSON.stringify(adminLogin.body));
+  const token = adminLogin.body.access_token;
+  const before = await request("/admin/statistics/trips", { token });
+  assert.equal(before.status, 200);
+  const a = await store.createOrder(f.orderInput(passenger, { status: "searching" }));
+  const b = await store.createOrder(f.orderInput(passenger, { status: "completed" }));
+  const c = await store.createOrder(f.orderInput(passenger, { status: "cancelled" }));
+  const after = await request("/admin/statistics/trips", { token });
+  assert.equal(after.status, 200, JSON.stringify(after.body));
+  assert.equal(after.body.statistics.total, before.body.statistics.total + 3);
+  assert.equal(after.body.statistics.active, before.body.statistics.active + 1);
+  assert.equal(after.body.statistics.completed, before.body.statistics.completed + 1);
+  assert.equal(after.body.statistics.cancelled, before.body.statistics.cancelled + 1);
+  for (const status of ["searching", "completed", "cancelled"]) {
+    assert.equal(after.body.statistics.by_status[status], before.body.statistics.by_status[status] + 1);
+  }
+  assert.equal(Object.values(after.body.statistics.by_status).reduce((x, y) => x + y, 0), after.body.statistics.total);
+  assert.equal(JSON.stringify(after.body).includes(passenger.phoneNumber), false);
+  assert.equal(JSON.stringify(after.body).includes(passenger.id), false);
+  assert.deepEqual(await store.getOrder(a.id), a);
+  assert.deepEqual(await store.getOrder(b.id), b);
+  assert.deepEqual(await store.getOrder(c.id), c);
+});
+
 test("HTTP admin order overview is read-only and rejects non-admin callers", async t => {
   const f = await fixture(t);
   const passenger = await f.createUser("passenger");

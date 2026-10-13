@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { randomUUID } from "node:crypto";
 import { store } from "../store";
-import type { DriverApprovalStatus } from "../types/domain";
+import type { DriverApprovalStatus, OrderStatus } from "../types/domain";
 import { PYATAK_ZONE, updatePyatakCenter } from "../utils/config";
 import { isValidCoordinates } from "../utils/geo";
 import { AppError } from "../utils/errors";
@@ -225,6 +225,31 @@ export async function listAdminQueue(_request: Request, response: Response): Pro
       status: entry.status,
       available_seats: entry.availableSeats,
     })),
+  });
+}
+
+/** Return aggregate trip counts without exposing order or passenger details. */
+export async function getTripStatistics(_request: Request, response: Response): Promise<void> {
+  const byStatus: Record<OrderStatus, number> = {
+    searching: 0,
+    en_route_to_c: 0,
+    arrived_at_c: 0,
+    in_transit: 0,
+    completed: 0,
+    cancelled: 0,
+  };
+  const orders = await store.listOrders();
+  for (const order of orders) {
+    byStatus[order.status] += 1;
+  }
+  response.json({
+    statistics: {
+      total: orders.length,
+      active: orders.length - byStatus.completed - byStatus.cancelled,
+      completed: byStatus.completed,
+      cancelled: byStatus.cancelled,
+      by_status: byStatus,
+    },
   });
 }
 
