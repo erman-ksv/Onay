@@ -138,6 +138,7 @@ the queue. Admin OTP registration is enabled only when `ADMIN_PHONE` is set.
 Admin JWTs can manage the route catalog:
 
 - `GET|POST /api/admin/routes`
+  `GET` accepts optional `?active=true` or `?active=false`; omitted returns all routes, invalid values return HTTP 400. Does not modify routes.
 - `GET /api/admin/routes/:routeId` — read one route and its configured stops (admin-only, 404 if absent).
 - `PATCH|DELETE /api/admin/routes/:routeId`
 - `POST /api/admin/routes/:routeId/stops`

@@ -426,6 +426,46 @@ test("HTTP switching authenticates, rotates one session, enforces active authori
   assert.equal((await request("/orders/availability", { token: passenger.body.access_token })).status, 200);
 });
 
+test("HTTP admin route listing filters active and inactive routes without modifying them", async t => {
+  const f = await fixture(t);
+  const passenger = await f.createUser("passenger");
+  const admin = await f.createUser("admin");
+  const activeId = `active-${randomUUID()}`;
+  const inactiveId = `inactive-${randomUUID()}`;
+  await store.createRoute({ id: activeId, name: "Active test route", pricePerStopKzt: 500, active: true });
+  await store.createRoute({ id: inactiveId, name: "Inactive test route", pricePerStopKzt: 500, active: false });
+  t.after(async () => { await store.deleteRoute(activeId); await store.deleteRoute(inactiveId); });
+  const activeBefore = await store.getRoute(activeId);
+  const inactiveBefore = await store.getRoute(inactiveId);
+  assert.equal((await request("/admin/routes?active=true")).status, 401);
+  const passengerLogin = await login(passenger.phoneNumber, "passenger");
+  assert.equal(passengerLogin.status, 200);
+  assert.equal((await request("/admin/routes?active=false", { token: passengerLogin.body.access_token })).status, 403);
+  await store.saveOtp({ phoneNumber: admin.phoneNumber, code: "627495", role: "admin", locale: "ru", expiresAt: Date.now() + 60_000 });
+  const signedIn = await request("/auth/verify-otp", { method: "POST", body: { phone_number: admin.phoneNumber, code: "627495" } });
+  assert.equal(signedIn.status, 200, JSON.stringify(signedIn.body));
+  const token = signedIn.body.access_token;
+  const all = await request("/admin/routes", { token });
+  assert.equal(all.status, 200);
+  assert.ok(all.body.routes.some(route => route.id === activeId));
+  assert.ok(all.body.routes.some(route => route.id === inactiveId));
+  const enabled = await request("/admin/routes?active=true", { token });
+  assert.equal(enabled.status, 200);
+  assert.ok(enabled.body.routes.some(route => route.id === activeId));
+  assert.ok(enabled.body.routes.every(route => route.active === true));
+  const disabled = await request("/admin/routes?active=false", { token });
+  assert.equal(disabled.status, 200);
+  assert.ok(disabled.body.routes.some(route => route.id === inactiveId));
+  assert.ok(disabled.body.routes.every(route => route.active === false));
+  for (const invalid of ["", "yes", "1", "TRUE"]) {
+    const response = await request(`/admin/routes?active=${encodeURIComponent(invalid)}`, { token });
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error.code, "VALIDATION_ERROR");
+  }
+  assert.deepEqual(await store.getRoute(activeId), activeBefore);
+  assert.deepEqual(await store.getRoute(inactiveId), inactiveBefore);
+});
+
 test("HTTP admin route detail protects access, returns stops, and handles missing routes", async t => {
   const f = await fixture(t);
   const passenger = await f.createUser("passenger");
