@@ -426,6 +426,44 @@ test("HTTP switching authenticates, rotates one session, enforces active authori
   assert.equal((await request("/orders/availability", { token: passenger.body.access_token })).status, 200);
 });
 
+test("HTTP admin FIFO queue is private, FIFO-ordered and hides location data", async t => {
+  const f = await fixture(t);
+  const one = await f.approvedDriver();
+  const two = await f.approvedDriver();
+  const admin = await f.createUser("admin");
+  const first = f.queueInput(one);
+  const second = f.queueInput(two);
+  first.joinedAt = 100;
+  second.joinedAt = 200;
+  await store.joinQueue(first);
+  await store.joinQueue(second);
+
+  assert.equal((await request("/admin/queue")).status, 401);
+  const driverLogin = await login(one.phoneNumber, "driver");
+  assert.equal(driverLogin.status, 200);
+  assert.equal((await request("/admin/queue", { token: driverLogin.body.access_token })).status, 403);
+
+  await store.saveOtp({ phoneNumber: admin.phoneNumber, code: "438216", role: "admin", locale: "ru", expiresAt: Date.now() + 60_000 });
+  const signedIn = await request("/auth/verify-otp", { method: "POST", body: { phone_number: admin.phoneNumber, code: "438216" } });
+  assert.equal(signedIn.status, 200, JSON.stringify(signedIn.body));
+  const response = await request("/admin/queue", { token: signedIn.body.access_token });
+  assert.equal(response.status, 200, JSON.stringify(response.body));
+  assert.equal(response.body.total_queued, response.body.queue.length);
+  const firstResult = response.body.queue.find(item => item.driver_id === one.id);
+  const secondResult = response.body.queue.find(item => item.driver_id === two.id);
+  assert.ok(firstResult);
+  assert.ok(secondResult);
+  assert.ok(firstResult.position < secondResult.position);
+  assert.equal(firstResult.available_seats, 4);
+  assert.equal(firstResult.status, "searching");
+  assert.deepEqual(Object.keys(firstResult).sort(), ["available_seats", "driver_id", "joined_at", "position", "status"]);
+  assert.ok(!JSON.stringify(response.body).includes(one.phoneNumber));
+  assert.ok(!JSON.stringify(response.body).includes('"lastLocation"'));
+  assert.ok(!JSON.stringify(response.body).includes('"lat"'));
+  assert.deepEqual(await store.getQueueEntry(one.id), first);
+  assert.deepEqual(await store.getQueueEntry(two.id), second);
+});
+
 test("HTTP admin order overview is read-only and rejects non-admin callers", async t => {
   const f = await fixture(t);
   const passenger = await f.createUser("passenger");
