@@ -58,6 +58,8 @@ export default defineConfig({
   server: {
     port,
     host: "0.0.0.0",
+    // Dev-only same-origin bridge. Production reverse proxy must forward /api.
+    proxy: { "/api": { target: process.env.API_PROXY_TARGET || "http://127.0.0.1:5000", changeOrigin: false } },
     allowedHosts: true,
     fs: {
       strict: true,
