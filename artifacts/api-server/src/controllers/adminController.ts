@@ -213,6 +213,21 @@ export async function listAdminOrders(request: Request, response: Response): Pro
   response.json({ orders: visible.map((order) => serializeOrder(order)) });
 }
 
+/** Read the current FIFO snapshot without exposing driver GPS or private queue locks. */
+export async function listAdminQueue(_request: Request, response: Response): Promise<void> {
+  const entries = await store.queueSnapshot();
+  response.json({
+    total_queued: entries.length,
+    queue: entries.map((entry) => ({
+      driver_id: entry.driverId,
+      position: entry.position,
+      joined_at: entry.joinedAt,
+      status: entry.status,
+      available_seats: entry.availableSeats,
+    })),
+  });
+}
+
 /** List accounts that have passenger capability, including users in driver mode. */
 export async function listPassengers(_request: Request, response: Response): Promise<void> {
   response.json({
