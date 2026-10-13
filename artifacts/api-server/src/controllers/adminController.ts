@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { randomUUID } from "node:crypto";
-import { store } from "../store/memoryStore";
+import { store } from "../store";
 import type { DriverApprovalStatus } from "../types/domain";
 import { PYATAK_ZONE, updatePyatakCenter } from "../utils/config";
 import { isValidCoordinates } from "../utils/geo";
@@ -75,14 +75,14 @@ export function updateQueuePoint(request: Request, response: Response): void {
   });
 }
 
-export function listRoutes(_request: Request, response: Response): void {
-  response.json({ routes: store.listRoutes() });
+export async function listRoutes(_request: Request, response: Response): Promise<void> {
+  response.json({ routes: await store.listRoutes() });
 }
 
-export function createRoute(request: Request, response: Response): void {
+export async function createRoute(request: Request, response: Response): Promise<void> {
   let route;
   try {
-    route = store.createRoute({
+    route = await store.createRoute({
       id: routeId(request.body?.route_id),
       name: requiredString(request.body?.name, "name", 120),
       pricePerStopKzt: boundedInteger(
@@ -102,7 +102,7 @@ export function createRoute(request: Request, response: Response): void {
   response.status(201).json({ route });
 }
 
-export function updateRoute(request: Request, response: Response): void {
+export async function updateRoute(request: Request, response: Response): Promise<void> {
   const routeIdParam = requiredString(request.params["routeId"], "route_id", 80);
   const patch: {
     name?: string;
@@ -123,27 +123,27 @@ export function updateRoute(request: Request, response: Response): void {
   if (request.body?.active !== undefined) {
     patch.active = optionalBoolean(request.body.active, "active", true);
   }
-  const route = store.updateRoute(routeIdParam, patch);
+  const route = await store.updateRoute(routeIdParam, patch);
   if (!route) {
     throw new AppError(404, "Route not found", "ROUTE_NOT_FOUND");
   }
   response.json({ route });
 }
 
-export function deleteRoute(request: Request, response: Response): void {
+export async function deleteRoute(request: Request, response: Response): Promise<void> {
   const routeIdParam = requiredString(request.params["routeId"], "route_id", 80);
-  if (!store.deleteRoute(routeIdParam)) {
+  if (!(await store.deleteRoute(routeIdParam))) {
     throw new AppError(404, "Route not found", "ROUTE_NOT_FOUND");
   }
   response.status(204).send();
 }
 
-export function addStop(request: Request, response: Response): void {
-  const route = store.getRoute(requiredString(request.params["routeId"], "route_id", 80));
+export async function addStop(request: Request, response: Response): Promise<void> {
+  const route = await store.getRoute(requiredString(request.params["routeId"], "route_id", 80));
   if (!route) {
     throw new AppError(404, "Route not found", "ROUTE_NOT_FOUND");
   }
-  const stop = store.addRouteStop(route.id, {
+  const stop = await store.addRouteStop(route.id, {
     code: requiredString(request.body?.code, "code", 40).toUpperCase(),
     name: requiredString(request.body?.name, "name", 120),
     sequence:
@@ -158,7 +158,7 @@ export function addStop(request: Request, response: Response): void {
   response.status(201).json({ stop });
 }
 
-export function updateStop(request: Request, response: Response): void {
+export async function updateStop(request: Request, response: Response): Promise<void> {
   const routeIdParam = requiredString(request.params["routeId"], "route_id", 80);
   const stopId = requiredString(request.params["stopId"], "stop_id", 80);
   const patch: {
@@ -179,35 +179,35 @@ export function updateStop(request: Request, response: Response): void {
   if (request.body?.position !== undefined) {
     patch.position = boundedInteger(request.body.position, "position", 1, 100_000);
   }
-  const stop = store.updateRouteStop(routeIdParam, stopId, patch);
+  const stop = await store.updateRouteStop(routeIdParam, stopId, patch);
   if (!stop) {
     throw new AppError(404, "Route stop not found", "STOP_NOT_FOUND");
   }
   response.json({ stop });
 }
 
-export function deleteStop(request: Request, response: Response): void {
+export async function deleteStop(request: Request, response: Response): Promise<void> {
   const routeIdParam = requiredString(request.params["routeId"], "route_id", 80);
   const stopId = requiredString(request.params["stopId"], "stop_id", 80);
-  if (!store.deleteRouteStop(routeIdParam, stopId)) {
+  if (!(await store.deleteRouteStop(routeIdParam, stopId))) {
     throw new AppError(404, "Route stop not found", "STOP_NOT_FOUND");
   }
   response.status(204).send();
 }
 
-export function listDrivers(_request: Request, response: Response): void {
+export async function listDrivers(_request: Request, response: Response): Promise<void> {
   response.json({
-    drivers: store.listUsers("driver").map((user) => serializeUser(user)),
+    drivers: (await store.listUsers("driver")).map((user) => serializeUser(user)),
   });
 }
 
-export function updateDriverApproval(request: Request, response: Response): void {
+export async function updateDriverApproval(request: Request, response: Response): Promise<void> {
   const status = pickEnum(
     request.body?.status,
     "status",
     ["pending", "approved", "rejected"] as const,
   ) as DriverApprovalStatus;
-  const user = store.setDriverApproval(
+  const user = await store.setDriverApproval(
     requiredString(request.params["driverId"], "driver_id", 80),
     status,
   );

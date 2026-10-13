@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { randomInt, randomUUID } from "node:crypto";
-import { store } from "../store/memoryStore";
+import { store } from "../store";
 import type { Locale, UserRole } from "../types/domain";
 import { createAccessToken } from "../utils/token";
 import { normalizePhone } from "../utils/phone";
@@ -17,8 +17,8 @@ function getLocale(request: Request, value: unknown): Locale {
   return pickEnum(value ?? request.auth?.locale ?? "ru", "locale", locales);
 }
 
-function issueToken(userId: string): string {
-  const user = store.invalidateSessions(userId);
+async function issueToken(userId: string): Promise<string> {
+  const user = await store.invalidateSessions(userId);
   return createAccessToken({
     sub: user.id,
     role: user.role,
@@ -28,7 +28,7 @@ function issueToken(userId: string): string {
   });
 }
 
-export function requestOtp(request: Request, response: Response): void {
+export async function requestOtp(request: Request, response: Response): Promise<void> {
   const phoneNumber = normalizePhone(requiredString(request.body?.phone_number, "phone_number", 32));
   const role = pickEnum(request.body?.role ?? "passenger", "role", roles);
   if (
@@ -41,7 +41,7 @@ export function requestOtp(request: Request, response: Response): void {
   const fullName = optionalString(request.body?.full_name, "full_name", 120);
   const code = String(randomInt(100000, 1_000_000));
 
-  store.saveOtp({
+  await store.saveOtp({
     phoneNumber,
     code,
     role,
@@ -57,18 +57,18 @@ export function requestOtp(request: Request, response: Response): void {
   });
 }
 
-export function verifyOtp(request: Request, response: Response): void {
+export async function verifyOtp(request: Request, response: Response): Promise<void> {
   const phoneNumber = normalizePhone(requiredString(request.body?.phone_number, "phone_number", 32));
   const code = requiredString(request.body?.code, "code", 12);
-  const challenge = store.consumeOtp(phoneNumber, code);
+  const challenge = await store.consumeOtp(phoneNumber, code);
   if (!challenge) {
     throw new AppError(401, translate("ru", "invalidOtp"), "INVALID_OTP");
   }
 
-  let user = store.getUserByPhone(phoneNumber);
+  let user = await store.getUserByPhone(phoneNumber);
   if (!user) {
     const fullName = requiredString(challenge.fullName ?? request.body?.full_name, "full_name", 120);
-    user = store.createUser({
+    user = await store.createUser({
       role: challenge.role,
       fullName,
       phoneNumber,
@@ -78,7 +78,7 @@ export function verifyOtp(request: Request, response: Response): void {
     throw new AppError(403, "Admin role cannot be assigned to this account", "ADMIN_ROLE_FORBIDDEN");
   }
 
-  const token = issueToken(user.id);
+  const token = await issueToken(user.id);
   response.json({
     access_token: token,
     token_type: "Bearer",
@@ -94,7 +94,7 @@ export function getCurrentUser(request: Request, response: Response): void {
   response.json({ user: serializeUser(request.auth.user) });
 }
 
-export function updateProfile(request: Request, response: Response): void {
+export async function updateProfile(request: Request, response: Response): Promise<void> {
   if (!request.auth) {
     throw new AppError(401, translate("ru", "unauthorized"), "UNAUTHORIZED");
   }
@@ -115,13 +115,13 @@ export function updateProfile(request: Request, response: Response): void {
   const locale = request.body?.locale
     ? getLocale(request, request.body.locale)
     : request.auth.user.locale;
-  const user = store.updateUser(request.auth.userId, { locale });
+  const user = await store.updateUser(request.auth.userId, { locale });
   response.json({ user: serializeUser(user) });
 }
 
-export function logout(request: Request, response: Response): void {
+export async function logout(request: Request, response: Response): Promise<void> {
   if (request.auth) {
-    store.invalidateSessions(request.auth.userId);
+    await store.invalidateSessions(request.auth.userId);
   }
   response.status(204).send();
 }

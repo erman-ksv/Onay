@@ -151,8 +151,8 @@ async function createOrder(token, pickupPoint, seats = 1) {
   return result.body.order;
 }
 
-before(async () => {
-  serverProcess = spawn(process.execPath, ["--enable-source-maps", "./dist/index.mjs"], {
+function startApiServer() {
+  return spawn(process.execPath, ["--enable-source-maps", "./dist/index.mjs"], {
     cwd: new URL("..", import.meta.url),
     env: {
       ...process.env,
@@ -163,6 +163,10 @@ before(async () => {
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+}
+
+before(async () => {
+  serverProcess = startApiServer();
   await waitForServer();
 });
 
@@ -252,11 +256,27 @@ test("covers OTP auth, FIFO queue, Point C locks, Point D pooling, and realtime 
   assert.equal(reservedForFirstDriver.response.status, 409);
   assert.equal(reservedForFirstDriver.body.error.code, "ORDER_RESERVED");
 
-  const pointCAccepted = await request(`/orders/${pointCOrder.id}/accept`, {
-    method: "POST",
-    token: driverOneToken,
-  });
-  assert.equal(pointCAccepted.response.status, 200);
+  const competingAccepts = await Promise.all([
+    request(`/orders/${pointCOrder.id}/accept`, {
+      method: "POST",
+      token: driverOneToken,
+    }),
+    request(`/orders/${pointCOrder.id}/accept`, {
+      method: "POST",
+      token: driverOneToken,
+    }),
+  ]);
+  assert.equal(
+    competingAccepts.filter((result) => result.response.status === 200).length,
+    1,
+    "only one concurrent acceptance may claim an order",
+  );
+  assert.equal(
+    competingAccepts.filter((result) => result.response.status === 409).length,
+    1,
+    "the duplicate acceptance must receive a conflict",
+  );
+  const pointCAccepted = competingAccepts.find((result) => result.response.status === 200);
   assert.equal(pointCAccepted.body.order.status, "en_route_to_c");
   assert.equal(pointCAccepted.body.order.seat_lock_expires_at > Date.now(), true);
   assert.equal(pointCAccepted.body.seat_lock_minutes, 7);
@@ -343,4 +363,23 @@ test("covers OTP auth, FIFO queue, Point C locks, Point D pooling, and realtime 
   assert.equal(pooling.response.status, 200);
   assert.equal(pooling.body.smart_pooling, true);
   assert.equal(pooling.body.order.offered_driver_id, firstJoin.body.entry.driverId);
+
+  // The CI job provisions PostgreSQL and enables the durable adapter. Restart
+  // the API process to prove that user sessions and orders survive process loss.
+  const previousProcess = serverProcess;
+  await new Promise((resolve) => {
+    previousProcess.once("exit", resolve);
+    previousProcess.kill("SIGTERM");
+  });
+  serverProcess = startApiServer();
+  await waitForServer();
+
+  const userAfterRestart = await request("/auth/me", { token: passengerLoginToken });
+  assert.equal(userAfterRestart.response.status, 200, "user and session version must persist after restart");
+  const ordersAfterRestart = await request("/orders", { token: passengerLoginToken });
+  assert.equal(ordersAfterRestart.response.status, 200);
+  assert.ok(
+    ordersAfterRestart.body.orders.some((order) => order.id === pointDOrder.id),
+    "created orders must persist after the API process restarts",
+  );
 });

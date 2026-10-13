@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { REQUIRE_DRIVER_APPROVAL } from "../utils/config";
+import type { Store } from "./storeContract";
+import { canTransitionOrder, claimQueueEntry, hasActiveOrders, joinQueueEntry, releaseQueueEntry, transitionQueueEntry } from "./orderLifecycle";
+import { AppError } from "../utils/errors";
 import type {
   Coordinates,
   DeviceRegistration,
@@ -16,7 +19,7 @@ import type {
   UserRole,
 } from "../types/domain";
 
-class MemoryStore {
+class MemoryStore implements Store {
   private readonly users = new Map<string, User>();
   private readonly usersByPhone = new Map<string, string>();
   private readonly otpChallenges = new Map<string, OtpChallenge>();
@@ -24,6 +27,8 @@ class MemoryStore {
   private readonly orders = new Map<string, Order>();
   private readonly deviceRegistrations = new Map<string, DeviceRegistration>();
   private readonly routes = new Map<string, RouteDefinition>();
+
+  initialize(): void {}
 
   constructor() {
     const now = new Date().toISOString();
@@ -136,8 +141,13 @@ class MemoryStore {
   }
 
   joinQueue(entry: QueueEntry): QueueEntry {
-    this.queueEntries.set(entry.driverId, entry);
-    return entry;
+    const current = this.queueEntries.get(entry.driverId);
+    if (current && (hasActiveOrders(current) || current.inFifo === false)) {
+      throw new AppError(409, "Driver cannot rejoin while an order or route is active", "QUEUE_BUSY");
+    }
+    const joined = joinQueueEntry(entry, current);
+    this.queueEntries.set(entry.driverId, joined);
+    return joined;
   }
 
   updateQueueEntry(
@@ -153,6 +163,10 @@ class MemoryStore {
   }
 
   leaveQueue(driverId: string): void {
+    const current = this.queueEntries.get(driverId);
+    if (current && hasActiveOrders(current)) {
+      throw new AppError(409, "Driver cannot leave the queue while an order is active", "ACTIVE_ORDER");
+    }
     this.queueEntries.delete(driverId);
   }
 
@@ -208,6 +222,58 @@ class MemoryStore {
     }
     Object.assign(order, patch, { updatedAt: new Date().toISOString() });
     return order;
+  }
+
+  transitionOrder(orderId: string, actorId: string, nextStatus: OrderStatus, expectedStatus?: OrderStatus): Order | undefined {
+    const order = this.orders.get(orderId);
+    if (!order || !canTransitionOrder(order, actorId, nextStatus, expectedStatus)) return undefined;
+    const entry = order.driverId ? this.queueEntries.get(order.driverId) : undefined;
+    if (entry) this.queueEntries.set(entry.driverId, transitionQueueEntry(entry, order, nextStatus));
+    return this.updateOrder(orderId, {
+      status: nextStatus,
+      ...(nextStatus === "cancelled" ? { cancelledBy: actorId } : {}),
+      seatLockExpiresAt: nextStatus === "in_transit" || nextStatus === "completed" || nextStatus === "cancelled"
+        ? undefined : order.seatLockExpiresAt,
+    });
+  }
+
+  claimOrderForDriver(
+    orderId: string,
+    driverId: string,
+    orderPatch: Partial<Order>,
+    _queuePatch: Partial<QueueEntry>,
+  ): Order | undefined {
+    const order = this.orders.get(orderId);
+    const entry = this.queueEntries.get(driverId);
+    if (
+      !order ||
+      order.status !== "searching" ||
+      (order.driverId && order.driverId !== driverId) ||
+      (order.offeredDriverId && order.offeredDriverId !== driverId) ||
+      !entry ||
+      entry.availableSeats < order.seats
+    ) {
+      return undefined;
+    }
+    const activePoolOffer =
+      order.pickupPoint === "D" &&
+      order.offeredDriverId === driverId &&
+      entry.inFifo === false &&
+      entry.status === "in_transit";
+    if (!activePoolOffer && this.getQueuePosition(driverId) !== 1) {
+      return undefined;
+    }
+    const expectedStatus = order.pickupPoint === "C" ? "en_route_to_c" : "in_transit";
+    if (orderPatch.status !== undefined && orderPatch.status !== expectedStatus) return undefined;
+    const updated = this.updateOrder(orderId, {
+      ...orderPatch,
+      status: expectedStatus,
+      driverId,
+      offeredDriverId: driverId,
+    });
+    if (!updated) return undefined;
+    this.queueEntries.set(driverId, claimQueueEntry(entry, updated));
+    return updated;
   }
 
   listOrdersForUser(userId: string): Order[] {
@@ -378,32 +444,7 @@ class MemoryStore {
         if (driverId) {
           const entry = this.queueEntries.get(driverId);
           if (entry) {
-            const activeOrderIds = (
-              entry.activeOrderIds ??
-              (entry.currentOrderId ? [entry.currentOrderId] : [])
-            ).filter((orderId) => orderId !== order.id);
-            Object.assign(
-              entry,
-              activeOrderIds.length > 0
-                ? {
-                    status: "in_transit",
-                    priorityLock: true,
-                    inFifo: false,
-                    activeOrderIds,
-                    currentOrderId: activeOrderIds[0],
-                    seatLockExpiresAt: undefined,
-                    availableSeats: entry.availableSeats + order.seats,
-                  }
-                : {
-                    status: "searching",
-                    priorityLock: false,
-                    inFifo: true,
-                    activeOrderIds: [],
-                    currentOrderId: undefined,
-                    seatLockExpiresAt: undefined,
-                    availableSeats: entry.availableSeats + order.seats,
-                  },
-            );
+            this.queueEntries.set(driverId, releaseQueueEntry(entry, order));
           }
         }
         order.seatLockExpiresAt = undefined;

@@ -1,0 +1,176 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:http";
+import path from "node:path";
+import { after, before, test } from "node:test";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { build } from "esbuild";
+import { io as createSocket } from "socket.io-client";
+
+// Promise rejection handling belongs to the Socket.IO boundary, independent
+// of a database connection. Use the real server with an isolated MemoryStore
+// and make its actual lookup methods reject as the PostgreSQL adapter can.
+const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const envKeys = ["NODE_ENV", "TEZJET_STORAGE_ADAPTER", "SESSION_SECRET", "LOG_LEVEL", "REQUIRE_DRIVER_APPROVAL"];
+const originalEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
+const sockets = new Set();
+let moduleDirectory;
+let store;
+let createAccessToken;
+let httpServer;
+let realtime;
+let serverUrl;
+
+before(async () => {
+  process.env.NODE_ENV = "test";
+  process.env.TEZJET_STORAGE_ADAPTER = "memory";
+  process.env.SESSION_SECRET = "socket-error-regression-session-secret";
+  process.env.LOG_LEVEL = "silent";
+  process.env.REQUIRE_DRIVER_APPROVAL = "true";
+  moduleDirectory = await mkdtemp(path.join(apiRoot, ".socket-error-test-"));
+  const entry = path.join(moduleDirectory, "production.mjs");
+  await build({
+    stdin: {
+      contents: [
+        'export { createRealtimeServer } from "./src/socket";',
+        'export { store } from "./src/store";',
+        'export { MemoryStore } from "./src/store/memoryStore";',
+        'export { createAccessToken } from "./src/utils/token";',
+      ].join("\n"),
+      resolveDir: apiRoot, loader: "ts",
+    },
+    outfile: entry, bundle: true, platform: "node", format: "esm", target: "node22", logLevel: "silent",
+    external: ["pg-native", "pino", "socket.io"],
+    banner: { js: 'import { createRequire as testCreateRequire } from "node:module"; const require = testCreateRequire(import.meta.url);' },
+  });
+  const production = await import(pathToFileURL(entry).href);
+  store = production.store;
+  createAccessToken = production.createAccessToken;
+  assert.ok(store instanceof production.MemoryStore, "Socket rejection regressions must be independent of PostgreSQL.");
+  await store.initialize();
+  httpServer = createServer((_request, response) => response.end("healthy"));
+  realtime = production.createRealtimeServer(httpServer);
+  await new Promise((resolve, reject) => {
+    httpServer.once("error", reject);
+    httpServer.listen(0, "127.0.0.1", resolve);
+  });
+  serverUrl = `http://127.0.0.1:${httpServer.address().port}`;
+}, { timeout: 30_000 });
+
+after(async () => {
+  try {
+    for (const socket of sockets) socket.disconnect();
+    if (realtime) await new Promise(resolve => realtime.close(resolve));
+  } finally {
+    if (moduleDirectory) await rm(moduleDirectory, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+function waitForEvent(socket, event, predicate = () => true) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      socket.off(event, onEvent);
+      reject(new Error(`Timed out waiting for Socket.IO event "${event}"`));
+    }, 5_000);
+    function onEvent(payload) {
+      if (!predicate(payload)) return;
+      clearTimeout(timeout);
+      socket.off(event, onEvent);
+      resolve(payload);
+    }
+    socket.on(event, onEvent);
+  });
+}
+
+async function client(t, role = "passenger") {
+  const user = await store.createUser({
+    role, fullName: "Socket regression user", phoneNumber: randomUUID(), locale: "ru",
+  });
+  if (role === "driver") await store.setDriverApproval(user.id, "approved");
+  const token = createAccessToken({
+    sub: user.id, role: user.role, locale: user.locale,
+    sessionVersion: user.sessionVersion, sessionId: randomUUID(),
+  });
+  const socket = createSocket(serverUrl, {
+    path: "/api/socket.io", auth: { token }, transports: ["websocket"],
+    autoConnect: false, reconnection: false,
+  });
+  sockets.add(socket);
+  t.after(() => {
+    socket.disconnect();
+    sockets.delete(socket);
+  });
+  return { socket, user };
+}
+
+async function connect(socket) {
+  const snapshot = waitForEvent(socket, "queue:snapshot");
+  socket.connect();
+  await snapshot;
+}
+
+test("Socket authentication lookup rejection returns connect_error and permits recovery", { timeout: 15_000 }, async t => {
+  const { socket } = await client(t);
+  t.mock.method(store, "getUser", async () => { throw new Error("private database error"); });
+  const errorReceived = waitForEvent(socket, "connect_error");
+  socket.connect();
+  const error = await errorReceived;
+  assert.equal(error.message, "Authentication unavailable");
+  assert.equal(socket.connected, false);
+  assert.equal((await fetch(serverUrl)).status, 200);
+  t.mock.restoreAll();
+  await connect(socket);
+  assert.equal(socket.connected, true);
+});
+
+for (const method of ["queueSnapshot", "getQueuePosition"]) {
+  test(`Socket initialization ${method} rejection disconnects and permits recovery`, { timeout: 15_000 }, async t => {
+    const { socket } = await client(t);
+    const snapshots = [];
+    socket.on("queue:snapshot", snapshot => snapshots.push(snapshot));
+    t.mock.method(store, method, async () => { throw new Error("private database error"); });
+    const disconnected = waitForEvent(socket, "disconnect");
+    socket.connect();
+    assert.equal(await disconnected, "io server disconnect");
+    assert.equal(socket.connected, false);
+    assert.deepEqual(snapshots, []);
+    assert.equal((await fetch(serverUrl)).status, 200);
+    t.mock.restoreAll();
+    await connect(socket);
+    assert.equal(snapshots.length, 1);
+  });
+}
+
+test("Socket driver lookup rejection drops its location and later valid locations still broadcast", { timeout: 15_000 }, async t => {
+  const { socket: observer } = await client(t);
+  const { socket: driver, user } = await client(t, "driver");
+  await Promise.all([connect(observer), connect(driver)]);
+  const locations = [];
+  observer.on("driver:location", payload => locations.push(payload));
+  const getUser = store.getUser.bind(store);
+  let failedLookup;
+  const rejectedLookup = new Promise(resolve => { failedLookup = resolve; });
+  let failNextLookup = true;
+  t.mock.method(store, "getUser", async userId => {
+    if (userId === user.id && failNextLookup) {
+      failNextLookup = false;
+      failedLookup();
+      throw new Error("private database error");
+    }
+    return getUser(userId);
+  });
+  driver.emit("driver:location", { lat: 1, lng: 1, timestamp: 1 });
+  await rejectedLookup;
+  const validLocation = { lat: 41.3111, lng: 69.2797, timestamp: 2 };
+  const broadcast = waitForEvent(observer, "driver:location", payload => payload.location.timestamp === 2);
+  driver.emit("driver:location", validLocation);
+  await broadcast;
+  assert.deepEqual(locations, [{ driver_id: user.id, location: validLocation }]);
+  assert.equal(driver.connected, true);
+  assert.equal((await fetch(serverUrl)).status, 200);
+});

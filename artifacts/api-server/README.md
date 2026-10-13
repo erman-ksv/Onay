@@ -29,10 +29,19 @@ returned in responses or written to source files.
 pnpm --filter @workspace/api-server run dev
 ```
 
-The managed workflow supplies `PORT`. Set `SESSION_SECRET` for production. The
-in-memory adapter is intentional for a runnable API scaffold; replace
-`src/store/memoryStore.ts` with a PostgreSQL/Redis adapter when deploying
-multi-instance workers.
+The managed workflow supplies `PORT`. Set `SESSION_SECRET` for production. Storage selection is explicit:
+
+- Tests use the in-memory adapter.
+- Development uses in-memory storage by default. To test PostgreSQL, set `TEZJET_STORAGE_ADAPTER=postgres` and `DATABASE_URL`.
+- Production refuses to start unless `TEZJET_STORAGE_ADAPTER=postgres` and `DATABASE_URL` are configured; it will not silently run with volatile in-memory data.
+
+Provision the PostgreSQL database and apply the current Drizzle schema before enabling the PostgreSQL adapter:
+
+```bash
+pnpm --filter @workspace/db run push
+```
+
+CI now provisions PostgreSQL, applies the Drizzle schema, runs the API regression scenarios against the PostgreSQL adapter, verifies that users and orders survive an API process restart, and tests concurrent duplicate acceptance of the same order. Order acceptance and the corresponding queue update run in one database transaction. Before production launch, continue reviewing transaction boundaries for cancellation, status transitions, and seat-lock expiration, and complete deployment-specific security and load testing.
 
 ## Release scenario checks
 

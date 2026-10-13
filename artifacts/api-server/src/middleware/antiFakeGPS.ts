@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
-import { store } from "../store/memoryStore";
+import { store } from "../store";
 import type { Coordinates } from "../types/domain";
 import { MAX_SPEED_KMH } from "../utils/config";
 import { isValidCoordinates, speedKmh } from "../utils/geo";
@@ -24,11 +24,11 @@ function readLocation(request: Request): Coordinates | undefined {
   };
 }
 
-export function antiFakeGPS(
+export async function antiFakeGPS(
   request: Request,
   _response: Response,
   next: NextFunction,
-): void {
+): Promise<void> {
   const location = readLocation(request);
   if (!location) {
     next();
@@ -59,7 +59,7 @@ export function antiFakeGPS(
   }
 
   if (request.auth) {
-    store.updateUser(request.auth.userId, { lastLocation: location });
+    await store.updateUser(request.auth.userId, { lastLocation: location });
     request.auth.user.lastLocation = location;
   }
   next();

@@ -2,7 +2,9 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { createServer } from "node:http";
 import { createRealtimeServer } from "./socket";
-import { store } from "./store/memoryStore";
+import { store } from "./store";
+
+await store.initialize();
 
 const httpServer = createServer(app);
 const io = createRealtimeServer(httpServer);
@@ -10,7 +12,7 @@ app.locals.io = io;
 const cleanupTimer = setInterval(() => {
   // Seat locks are kept in memory for this runnable API adapter and expire automatically.
   // A database-backed adapter can move this responsibility to a scheduled job.
-  store.clearExpiredSeatLocks();
+  void Promise.resolve(store.clearExpiredSeatLocks()).catch((err) => logger.error({ err }, "Seat-lock cleanup failed"));
 }, 30_000);
 cleanupTimer.unref();
 

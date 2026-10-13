@@ -1,6 +1,6 @@
 import type { Server } from "socket.io";
 import type { Order } from "../types/domain";
-import { store } from "../store/memoryStore";
+import { store } from "../store";
 import { serializeOrder } from "./serialize";
 import { PYATAK_ZONE } from "./config";
 
@@ -19,11 +19,11 @@ interface QueueChange {
   driverId?: string;
 }
 
-export function emitQueueUpdate(io: Server | undefined, change: QueueChange = { type: "reordered" }): void {
+export async function emitQueueUpdate(io: Server | undefined, change: QueueChange = { type: "reordered" }): Promise<void> {
   if (!io) {
     return;
   }
-  const queue = store.queueSnapshot();
+  const queue = await store.queueSnapshot();
   const payload = {
     zone: {
       id: PYATAK_ZONE.id,

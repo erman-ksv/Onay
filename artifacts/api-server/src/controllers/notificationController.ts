@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import { store } from "../store/memoryStore";
+import { store } from "../store";
 import { AppError } from "../utils/errors";
 import { emitIncomingOrder } from "../utils/realtime";
 import { calculateFixedFare } from "../utils/fare";
@@ -15,7 +15,7 @@ export function getNotificationConfig(_request: Request, response: Response): vo
   });
 }
 
-export function registerDevice(request: Request, response: Response): void {
+export async function registerDevice(request: Request, response: Response): Promise<void> {
   if (!request.auth) {
     throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
   }
@@ -25,7 +25,7 @@ export function registerDevice(request: Request, response: Response): void {
     "ios",
     "web",
   ] as const);
-  const registration = store.saveDeviceRegistration(
+  const registration = await store.saveDeviceRegistration(
     request.auth.userId,
     deviceToken,
     platform,
@@ -33,30 +33,31 @@ export function registerDevice(request: Request, response: Response): void {
   response.status(201).json({ registration });
 }
 
-export function listDevices(request: Request, response: Response): void {
+export async function listDevices(request: Request, response: Response): Promise<void> {
   if (!request.auth) {
     throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
   }
   response.json({
-    devices: store.getDeviceRegistrations(request.auth.userId).map((device) => ({
+    devices: (await store.getDeviceRegistrations(request.auth.userId)).map((device) => ({
       platform: device.platform,
       created_at: device.createdAt,
     })),
   });
 }
 
-export function testHighPriorityAlert(request: Request, response: Response): void {
+export async function testHighPriorityAlert(request: Request, response: Response): Promise<void> {
   if (!request.auth) {
     throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
   }
+  const fare = await calculateFixedFare(["C"]);
   emitIncomingOrder(request.app.locals.io, request.auth.userId, {
     id: "test-alert",
     passengerId: "test-passenger",
     passengerPhone: "+70000000000",
     pickupPoint: "C",
     pickupLocation: { lat: 0, lng: 0, timestamp: Date.now() },
-    routeStops: calculateFixedFare(["C"]).stops,
-    fare: calculateFixedFare(["C"]),
+    routeStops: fare.stops,
+    fare,
     destination: "Test alert",
     seats: 1,
     status: "searching",
