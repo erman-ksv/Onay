@@ -465,6 +465,27 @@ test("HTTP admin order overview is read-only and rejects non-admin callers", asy
   assert.equal(listed.seats, 2);
   assert.equal(listed.sessionVersion, undefined);
   assert.deepEqual(await store.getOrder(order.id), order, "listing must not modify orders");
+  const active = await request("/admin/orders?status=active", { token: adminLogin.body.access_token });
+  assert.equal(active.status, 200);
+  assert.ok(active.body.orders.some(item => item.id === order.id));
+  const exact = await request("/admin/orders?status=searching", { token: adminLogin.body.access_token });
+  assert.equal(exact.status, 200);
+  assert.ok(exact.body.orders.some(item => item.id === order.id));
+  for (const status of ["completed", "cancelled"]) {
+    const filtered = await request(`/admin/orders?status=${status}`, { token: adminLogin.body.access_token });
+    assert.equal(filtered.status, 200);
+    assert.equal(filtered.body.orders.some(item => item.id === order.id), false);
+  }
+  const all = await request("/admin/orders?status=all", { token: adminLogin.body.access_token });
+  assert.equal(all.status, 200);
+  assert.ok(all.body.orders.some(item => item.id === order.id));
+  for (const invalid of ["bogus", "", "ACTIVE"]) {
+    const response = await request(`/admin/orders?status=${encodeURIComponent(invalid)}`, { token: adminLogin.body.access_token });
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error.code, "VALIDATION_ERROR");
+  }
+  assert.equal((await request("/admin/orders?status=active", { token: passengerLogin.body.access_token })).status, 403);
+  assert.deepEqual(await store.getOrder(order.id), order, "filtering must not mutate the order");
 });
 
 test("HTTP admin passenger directory is protected and includes passengers in driver mode", async t => {
