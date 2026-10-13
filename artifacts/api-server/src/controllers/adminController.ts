@@ -213,6 +213,21 @@ export async function listAdminOrders(request: Request, response: Response): Pro
   response.json({ orders: visible.map((order) => serializeOrder(order)) });
 }
 
+/** Read the current FIFO snapshot without exposing driver GPS or private queue locks. */
+export async function listAdminQueue(_request: Request, response: Response): Promise<void> {
+  const entries = await store.queueSnapshot();
+  response.json({
+    total_queued: entries.length,
+    queue: entries.map((entry) => ({
+      driver_id: entry.driverId,
+      position: entry.position,
+      joined_at: entry.joinedAt,
+      status: entry.status,
+      available_seats: entry.availableSeats,
+    })),
+  });
+}
+
 /** Return aggregate trip counts without exposing order or passenger details. */
 export async function getTripStatistics(_request: Request, response: Response): Promise<void> {
   const byStatus: Record<OrderStatus, number> = {
