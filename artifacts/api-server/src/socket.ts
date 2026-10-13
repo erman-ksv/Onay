@@ -17,29 +17,34 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
   });
 
   io.use(async (socket, next) => {
-    const token = readSocketToken(socket.handshake.auth?.token);
-    const claims = token ? verifyAccessToken(token) : null;
-    const user = claims?.sub ? await store.getUser(claims.sub) : undefined;
-    if (
-      !claims ||
-      !user ||
-      user.sessionVersion !== claims.sessionVersion ||
-      user.role !== claims.role
-    ) {
-      next(new Error("Unauthorized"));
-      return;
+    try {
+      const token = readSocketToken(socket.handshake.auth?.token);
+      const claims = token ? verifyAccessToken(token) : null;
+      const user = claims?.sub ? await store.getUser(claims.sub) : undefined;
+      if (
+        !claims ||
+        !user ||
+        user.sessionVersion !== claims.sessionVersion ||
+        user.role !== claims.role
+      ) {
+        next(new Error("Unauthorized"));
+        return;
+      }
+      if (
+        REQUIRE_DRIVER_APPROVAL &&
+        user.role === "driver" &&
+        user.driverApprovalStatus !== "approved"
+      ) {
+        next(new Error("Driver approval required"));
+        return;
+      }
+      socket.data.userId = user.id;
+      socket.data.role = user.role;
+      next();
+    } catch (err) {
+      logger.error({ err, socketId: socket.id }, "Socket authentication failed");
+      next(new Error("Authentication unavailable"));
     }
-    if (
-      REQUIRE_DRIVER_APPROVAL &&
-      user.role === "driver" &&
-      user.driverApprovalStatus !== "approved"
-    ) {
-      next(new Error("Driver approval required"));
-      return;
-    }
-    socket.data.userId = user.id;
-    socket.data.role = user.role;
-    next();
   });
 
   io.on("connection", async (socket) => {
@@ -62,34 +67,44 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
         "push_alert",
       ],
     });
-    socket.emit("queue:snapshot", {
-      zone: {
-        id: PYATAK_ZONE.id,
-        name: PYATAK_ZONE.name,
-        center: PYATAK_ZONE.center,
-        geofence_meters: PYATAK_ZONE.radiusMeters,
-      },
-      queue: await store.queueSnapshot(),
-      your_position: await store.getQueuePosition(userId),
-      updated_at: new Date().toISOString(),
-    });
+    try {
+      socket.emit("queue:snapshot", {
+        zone: {
+          id: PYATAK_ZONE.id,
+          name: PYATAK_ZONE.name,
+          center: PYATAK_ZONE.center,
+          geofence_meters: PYATAK_ZONE.radiusMeters,
+        },
+        queue: await store.queueSnapshot(),
+        your_position: await store.getQueuePosition(userId),
+        updated_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      logger.error({ err, userId, socketId: socket.id }, "Socket queue initialization failed");
+      socket.disconnect(true);
+      return;
+    }
     logger.info({ userId, socketId: socket.id }, "Socket client connected");
 
     socket.on("driver:location", async (location: unknown) => {
       if (socket.data.role !== "driver") {
         return;
       }
-      const driver = await store.getUser(userId);
-      if (
-        REQUIRE_DRIVER_APPROVAL &&
-        driver?.driverApprovalStatus !== "approved"
-      ) {
-        return;
+      try {
+        const driver = await store.getUser(userId);
+        if (
+          REQUIRE_DRIVER_APPROVAL &&
+          driver?.driverApprovalStatus !== "approved"
+        ) {
+          return;
+        }
+        socket.broadcast.emit("driver:location", {
+          driver_id: userId,
+          location,
+        });
+      } catch (err) {
+        logger.error({ err, userId, socketId: socket.id }, "Socket driver location failed");
       }
-      socket.broadcast.emit("driver:location", {
-        driver_id: userId,
-        location,
-      });
     });
 
     socket.on("disconnect", (reason) => {
