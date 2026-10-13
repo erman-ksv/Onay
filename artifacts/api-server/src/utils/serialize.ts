@@ -23,6 +23,7 @@ export function serializeOrder(order: Order, maskPassenger = false) {
       : order.passengerPhone,
     driver_id: order.driverId,
     offered_driver_id: order.offeredDriverId,
+    offer_expires_at: order.offerExpiresAt,
     pickup_point: order.pickupPoint,
     pickup_location: order.pickupLocation,
     pickup_address: order.pickupAddress,

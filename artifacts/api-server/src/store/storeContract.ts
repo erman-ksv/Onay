@@ -3,8 +3,10 @@ import type {
   DriverApprovalStatus,
   Locale,
   Order,
+  OrderOfferChange,
   OrderStatus,
   OtpChallenge,
+  PickupPoint,
   QueueEntry,
   RouteDefinition,
   RouteStop,
@@ -19,6 +21,7 @@ import type {
  * switching production storage.
  */
 export type MaybePromise<T> = T | Promise<T>;
+export type { OrderOfferChange } from "../types/domain";
 
 export interface Store {
   initialize(): MaybePromise<void>;
@@ -51,10 +54,21 @@ export interface Store {
   getQueue(): MaybePromise<QueueEntry[]>;
   getQueuePosition(driverId: string): MaybePromise<number | null>;
   getFirstEligibleDriver(seats: number): MaybePromise<QueueEntry | undefined>;
+  getOrderAvailability(pickupPoint: PickupPoint, seats: number): MaybePromise<{ available: boolean; eligibleDriverCount: number }>;
 
   createOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt">): MaybePromise<Order>;
+  /** Create and reserve an offer atomically; unavailable requests persist no order. */
+  createOrderWithOffer(input: Omit<Order, "id" | "createdAt" | "updatedAt">): MaybePromise<Order | undefined>;
   getOrder(orderId: string): MaybePromise<Order | undefined>;
   updateOrder(orderId: string, patch: Partial<Order>): MaybePromise<Order | undefined>;
+  /** Reserve seats and the next eligible driver's single pending offer atomically. */
+  dispatchOrderOffer(orderId: string, now?: number): MaybePromise<OrderOfferChange | undefined>;
+  /** Release this driver's live offer and reserve the next eligible driver atomically. */
+  rejectOrderOffer(orderId: string, driverId: string, now?: number): MaybePromise<OrderOfferChange | undefined>;
+  /** Convert the live offer reservation into assigned seats without another debit. */
+  acceptOrderOffer(orderId: string, driverId: string, now?: number): MaybePromise<Order | undefined>;
+  /** Advance expired offers first, then dispatch searching orders oldest first. */
+  processOrderOffers(now?: number): MaybePromise<OrderOfferChange[]>;
   /** Validate the live actor/state and update its seat reservation atomically. */
   transitionOrder(
     orderId: string,

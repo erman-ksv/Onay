@@ -58,7 +58,8 @@ jobs:
         run: pnpm run typecheck
 
       - name: Provision PostgreSQL schema
-        run: pnpm --filter @workspace/db run push
+        run: pnpm --filter @workspace/db run migrate
 
       - name: API integration tests
         run: pnpm --filter @workspace/api-server run test
+

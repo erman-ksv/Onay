@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { REQUIRE_DRIVER_APPROVAL } from "../utils/config";
+import { OFFER_TIMEOUT_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
 import type { Store } from "./storeContract";
 import { canTransitionOrder, claimQueueEntry, hasActiveOrders, joinQueueEntry, releaseQueueEntry, transitionQueueEntry } from "./orderLifecycle";
 import { AppError } from "../utils/errors";
+import { acceptQueueOffer, assertOrderOfferPatch, assertQueueOfferPatch, compareOfferDrivers, hasLiveOrderOffer, orderedOfferCandidates, releaseQueueOffer, reserveQueueOffer } from "./orderOffers";
 import type {
   Coordinates,
   DeviceRegistration,
@@ -10,8 +11,10 @@ import type {
   DriverApprovalStatus,
   Locale,
   Order,
+  OrderOfferChange,
   OrderStatus,
   OtpChallenge,
+  PickupPoint,
   RouteDefinition,
   RouteStop,
   QueueEntry,
@@ -123,29 +126,19 @@ class MemoryStore implements Store {
    * retaining the active-trip record for pooled orders.
    */
   removeDriverFromFifo(driverId: string): QueueEntry | undefined {
-    const entry = this.queueEntries.get(driverId);
-    if (!entry) {
-      return undefined;
-    }
-    entry.inFifo = false;
-    return entry;
+    return this.updateQueueEntry(driverId, { inFifo: false });
   }
 
   returnDriverToFifo(driverId: string): QueueEntry | undefined {
-    const entry = this.queueEntries.get(driverId);
-    if (!entry) {
-      return undefined;
-    }
-    entry.inFifo = true;
-    return entry;
+    return this.updateQueueEntry(driverId, { inFifo: true });
   }
 
   joinQueue(entry: QueueEntry): QueueEntry {
     const current = this.queueEntries.get(entry.driverId);
-    if (current && (hasActiveOrders(current) || current.inFifo === false)) {
+    if (current && (hasActiveOrders(current) || current.pendingOfferOrderId || current.inFifo === false)) {
       throw new AppError(409, "Driver cannot rejoin while an order or route is active", "QUEUE_BUSY");
     }
-    const joined = joinQueueEntry(entry, current);
+    const joined = joinQueueEntry({ ...entry, pendingOfferOrderId: undefined }, current);
     this.queueEntries.set(entry.driverId, joined);
     return joined;
   }
@@ -158,13 +151,14 @@ class MemoryStore implements Store {
     if (!entry) {
       return undefined;
     }
+    assertQueueOfferPatch(entry, patch);
     Object.assign(entry, patch);
     return entry;
   }
 
   leaveQueue(driverId: string): void {
     const current = this.queueEntries.get(driverId);
-    if (current && hasActiveOrders(current)) {
+    if (current && (hasActiveOrders(current) || current.pendingOfferOrderId)) {
       throw new AppError(409, "Driver cannot leave the queue while an order is active", "ACTIVE_ORDER");
     }
     this.queueEntries.delete(driverId);
@@ -174,12 +168,7 @@ class MemoryStore implements Store {
     return [...this.queueEntries.values()]
       .filter((entry) => entry.inFifo !== false)
       .filter((entry) => !entry.seatLockExpiresAt || entry.seatLockExpiresAt > Date.now())
-      .sort((a, b) => {
-        if (a.priorityLock !== b.priorityLock) {
-          return a.priorityLock ? -1 : 1;
-        }
-        return a.joinedAt - b.joinedAt;
-      });
+      .sort(compareOfferDrivers);
   }
 
   getQueuePosition(driverId: string): number | null {
@@ -188,15 +177,27 @@ class MemoryStore implements Store {
   }
 
   getFirstEligibleDriver(seats: number): QueueEntry | undefined {
-    return [...this.queueEntries.values()].find(
+    return [...this.queueEntries.values()].sort(compareOfferDrivers).find(
       (entry) =>
         entry.status === "in_transit" &&
+        !entry.pendingOfferOrderId &&
         entry.availableSeats >= seats &&
         Boolean(
           entry.currentOrderId ||
             (entry.activeOrderIds && entry.activeOrderIds.length > 0),
         ),
     );
+  }
+
+  private eligibleOfferEntries(): QueueEntry[] {
+    return [...this.queueEntries.values()].filter(entry =>
+      !REQUIRE_DRIVER_APPROVAL || this.users.get(entry.driverId)?.driverApprovalStatus === "approved",
+    );
+  }
+
+  getOrderAvailability(pickupPoint: PickupPoint, seats: number): { available: boolean; eligibleDriverCount: number } {
+    const eligibleDriverCount = orderedOfferCandidates({ pickupPoint, seats }, this.eligibleOfferEntries(), Date.now()).length;
+    return { available: eligibleDriverCount > 0, eligibleDriverCount };
   }
 
   createOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt">): Order {
@@ -211,6 +212,30 @@ class MemoryStore implements Store {
     return order;
   }
 
+  createOrderWithOffer(input: Omit<Order, "id" | "createdAt" | "updatedAt">): Order | undefined {
+    const now = Date.now();
+    const next = orderedOfferCandidates(
+      { pickupPoint: input.pickupPoint, seats: input.seats }, this.eligibleOfferEntries(), now,
+    )[0];
+    if (!next) return undefined;
+    const timestamp = new Date(now).toISOString();
+    const order: Order = {
+      ...input,
+      id: randomUUID(),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      status: "searching",
+      driverId: undefined,
+      offeredDriverId: next.driverId,
+      offerExpiresAt: now + OFFER_TIMEOUT_MS,
+      attemptedDriverIds: [next.driverId],
+      seatLockExpiresAt: undefined,
+    };
+    this.queueEntries.set(next.driverId, reserveQueueOffer(next, order));
+    this.orders.set(order.id, order);
+    return order;
+  }
+
   getOrder(orderId: string): Order | undefined {
     return this.orders.get(orderId);
   }
@@ -220,8 +245,92 @@ class MemoryStore implements Store {
     if (!order) {
       return undefined;
     }
-    Object.assign(order, patch, { updatedAt: new Date().toISOString() });
+    assertOrderOfferPatch(order, patch);
+    return this.writeOrder(order, patch);
+  }
+
+  private writeOrder(order: Order, patch: Partial<Order>, now = Date.now()): Order {
+    Object.assign(order, patch, { id: order.id, updatedAt: new Date(now).toISOString() });
     return order;
+  }
+
+  private isValidReservedOffer(order: Order, now: number): boolean {
+    const entry = order.offeredDriverId ? this.queueEntries.get(order.offeredDriverId) : undefined;
+    if (!entry || entry.pendingOfferOrderId !== order.id || entry.availableSeats < 0) return false;
+    if (REQUIRE_DRIVER_APPROVAL && this.users.get(entry.driverId)?.driverApprovalStatus !== "approved") return false;
+    return orderedOfferCandidates(
+      { ...order, attemptedDriverIds: [] },
+      [{ ...entry, pendingOfferOrderId: undefined, availableSeats: entry.availableSeats + order.seats }],
+      now,
+    ).length > 0;
+  }
+
+  private advanceOrderOffer(order: Order, now: number, previousDriverId?: string): OrderOfferChange | undefined {
+    const previousEntry = previousDriverId ? this.queueEntries.get(previousDriverId) : undefined;
+    if (previousEntry) {
+      this.queueEntries.set(previousEntry.driverId, releaseQueueOffer(previousEntry, order));
+    }
+    const attemptedDriverIds = [...new Set([
+      ...(order.attemptedDriverIds ?? []),
+      ...(previousDriverId ? [previousDriverId] : []),
+    ])];
+    const next = orderedOfferCandidates({ ...order, attemptedDriverIds }, this.eligibleOfferEntries(), now)[0];
+    if (!next && !previousDriverId) return undefined;
+    if (next) {
+      this.queueEntries.set(next.driverId, reserveQueueOffer(next, order));
+      attemptedDriverIds.push(next.driverId);
+    }
+    this.writeOrder(order, {
+      offeredDriverId: next?.driverId,
+      offerExpiresAt: next ? now + OFFER_TIMEOUT_MS : undefined,
+      attemptedDriverIds,
+    }, now);
+    return { order: { ...order }, ...(previousDriverId ? { previousDriverId } : {}) };
+  }
+
+  dispatchOrderOffer(orderId: string, now = Date.now()): OrderOfferChange | undefined {
+    const order = this.orders.get(orderId);
+    if (!order || order.status !== "searching" || order.driverId) return undefined;
+    if (hasLiveOrderOffer(order, now) && this.isValidReservedOffer(order, now)) return undefined;
+    return this.advanceOrderOffer(order, now, order.offeredDriverId);
+  }
+
+  rejectOrderOffer(orderId: string, driverId: string, now = Date.now()): OrderOfferChange | undefined {
+    const order = this.orders.get(orderId);
+    if (!order || order.offeredDriverId !== driverId || !hasLiveOrderOffer(order, now) ||
+      this.queueEntries.get(driverId)?.pendingOfferOrderId !== order.id) return undefined;
+    return this.advanceOrderOffer(order, now, driverId);
+  }
+
+  acceptOrderOffer(orderId: string, driverId: string, now = Date.now()): Order | undefined {
+    const order = this.orders.get(orderId);
+    if (!order || order.offeredDriverId !== driverId || !hasLiveOrderOffer(order, now) ||
+      !this.isValidReservedOffer(order, now)) return undefined;
+    const entry = this.queueEntries.get(driverId)!;
+    const updated = this.writeOrder(order, {
+      driverId,
+      status: order.pickupPoint === "C" ? "en_route_to_c" : "in_transit",
+      offerExpiresAt: undefined,
+      seatLockExpiresAt: order.pickupPoint === "C" ? now + SEAT_LOCK_TTL_MS : undefined,
+    }, now);
+    this.queueEntries.set(driverId, acceptQueueOffer(entry, updated));
+    return updated;
+  }
+
+  processOrderOffers(now?: number): OrderOfferChange[] {
+    const changes: OrderOfferChange[] = [];
+    const searching = [...this.orders.values()]
+      .filter(order => order.status === "searching" && !order.driverId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+    const sweepTime = now ?? Date.now();
+    const expired = searching.filter(order => order.offeredDriverId && !hasLiveOrderOffer(order, sweepTime));
+    const waiting = searching.filter(order => !order.offeredDriverId);
+    const live = searching.filter(order => hasLiveOrderOffer(order, sweepTime));
+    for (const order of [...expired, ...waiting, ...live]) {
+      const change = this.dispatchOrderOffer(order.id, now ?? Date.now());
+      if (change) changes.push(change);
+    }
+    return changes;
   }
 
   transitionOrder(orderId: string, actorId: string, nextStatus: OrderStatus, expectedStatus?: OrderStatus): Order | undefined {
@@ -229,11 +338,16 @@ class MemoryStore implements Store {
     if (!order || !canTransitionOrder(order, actorId, nextStatus, expectedStatus)) return undefined;
     const entry = order.driverId ? this.queueEntries.get(order.driverId) : undefined;
     if (entry) this.queueEntries.set(entry.driverId, transitionQueueEntry(entry, order, nextStatus));
-    return this.updateOrder(orderId, {
+    if (nextStatus === "cancelled" && order.status === "searching" && order.offeredDriverId) {
+      const offeredEntry = this.queueEntries.get(order.offeredDriverId);
+      if (offeredEntry) this.queueEntries.set(offeredEntry.driverId, releaseQueueOffer(offeredEntry, order));
+    }
+    return this.writeOrder(order, {
       status: nextStatus,
       ...(nextStatus === "cancelled" ? { cancelledBy: actorId } : {}),
       seatLockExpiresAt: nextStatus === "in_transit" || nextStatus === "completed" || nextStatus === "cancelled"
         ? undefined : order.seatLockExpiresAt,
+      offerExpiresAt: nextStatus === "cancelled" ? undefined : order.offerExpiresAt,
     });
   }
 
@@ -250,7 +364,9 @@ class MemoryStore implements Store {
       order.status !== "searching" ||
       (order.driverId && order.driverId !== driverId) ||
       (order.offeredDriverId && order.offeredDriverId !== driverId) ||
+      order.offerExpiresAt !== undefined ||
       !entry ||
+      Boolean(entry.pendingOfferOrderId) ||
       entry.availableSeats < order.seats
     ) {
       return undefined;
@@ -278,7 +394,8 @@ class MemoryStore implements Store {
 
   listOrdersForUser(userId: string): Order[] {
     return [...this.orders.values()]
-      .filter((order) => order.passengerId === userId || order.driverId === userId)
+      .filter((order) => order.passengerId === userId || order.driverId === userId ||
+        (order.offeredDriverId === userId && hasLiveOrderOffer(order, Date.now())))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
@@ -450,6 +567,7 @@ class MemoryStore implements Store {
         order.seatLockExpiresAt = undefined;
         order.driverId = undefined;
         order.offeredDriverId = undefined;
+        order.offerExpiresAt = undefined;
         order.status = "searching";
         order.updatedAt = new Date().toISOString();
       }

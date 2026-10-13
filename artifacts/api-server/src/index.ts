@@ -3,17 +3,17 @@ import { logger } from "./lib/logger";
 import { createServer } from "node:http";
 import { createRealtimeServer } from "./socket";
 import { store } from "./store";
+import { processOrderDispatch } from "./services/orderDispatchService";
 
 await store.initialize();
 
 const httpServer = createServer(app);
 const io = createRealtimeServer(httpServer);
 app.locals.io = io;
+await processOrderDispatch(io);
 const cleanupTimer = setInterval(() => {
-  // Seat locks are kept in memory for this runnable API adapter and expire automatically.
-  // A database-backed adapter can move this responsibility to a scheduled job.
-  void Promise.resolve(store.clearExpiredSeatLocks()).catch((err) => logger.error({ err }, "Seat-lock cleanup failed"));
-}, 30_000);
+  void processOrderDispatch(io).catch((err) => logger.error({ err }, "Order dispatch cleanup failed"));
+}, 1_000);
 cleanupTimer.unref();
 
 const rawPort = process.env["PORT"];
@@ -40,3 +40,4 @@ httpServer.on("error", (err) => {
     process.exit(1);
   }
 });
+

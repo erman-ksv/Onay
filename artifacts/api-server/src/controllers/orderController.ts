@@ -1,17 +1,17 @@
 import type { Request, Response } from "express";
 import type { Server } from "socket.io";
-import { logger } from "../lib/logger";
 import { store } from "../store";
 import { statusTransitions } from "../store/orderLifecycle";
 import type { Coordinates, Order, OrderStatus, PickupPoint } from "../types/domain";
-import { SEAT_LOCK_TTL_MS } from "../utils/config";
 import { AppError } from "../utils/errors";
+import { OFFER_TIMEOUT_MS } from "../utils/config";
 import { translate } from "../utils/i18n";
-import { emitIncomingOrder, emitOrderUpdate, emitQueueUpdate } from "../utils/realtime";
+import { emitOrderUpdate, emitQueueUpdate } from "../utils/realtime";
 import { serializeOrder } from "../utils/serialize";
 import { calculateRouteFare, parseRouteStopCodes } from "../utils/fare";
 import { boundedInteger, optionalString, pickEnum, requiredString } from "../utils/validation";
 import { normalizeNaturalLanguageAddress } from "../services/geminiAddressService";
+import { processOrderDispatch, publishOrderOfferChanges } from "../services/orderDispatchService";
 
 function getSocket(request: Request): Server | undefined {
   return request.app.locals.io as Server | undefined;
@@ -73,8 +73,16 @@ async function getOrderForActor(request: Request, orderId: string): Promise<Orde
   return order;
 }
 
-function sendOrderToDriver(io: Server | undefined, order: Order, driverId: string): void {
-  emitIncomingOrder(io, driverId, order);
+export async function getOrderAvailability(request: Request, response: Response): Promise<void> {
+  assertPassenger(request);
+  const pickupPoint = pickEnum(request.query["pickup_point"] ?? "C", "pickup_point", ["C", "D"] as const);
+  const seats = boundedInteger(request.query["seats"] ?? 1, "seats", 1, 8);
+  const availability = await store.getOrderAvailability(pickupPoint, seats);
+  response.json({
+    available: availability.available,
+    eligible_driver_count: availability.eligibleDriverCount,
+    offer_timeout_seconds: OFFER_TIMEOUT_MS / 1000,
+  });
 }
 
 export async function createOrder(
@@ -104,7 +112,7 @@ export async function createOrder(
         request.auth?.locale ?? "ru",
       )
     : undefined;
-  const order = await store.createOrder({
+  const order = await store.createOrderWithOffer({
     passengerId,
     passengerPhone: request.auth?.user.phoneNumber ?? "",
     pickupPoint,
@@ -117,23 +125,20 @@ export async function createOrder(
     status: "searching",
   });
 
-  const firstDriver =
-    pickupPoint === "D"
-      ? await store.getFirstEligibleDriver(order.seats)
-      : (await store.getQueue())[0];
-  if (firstDriver) {
-    await store.updateOrder(order.id, { offeredDriverId: firstDriver.driverId });
-    order.offeredDriverId = firstDriver.driverId;
-    sendOrderToDriver(getSocket(request), order, firstDriver.driverId);
+  if (!order) {
+    throw new AppError(409, "Водителей пока нет", "NO_DRIVERS");
   }
+  await publishOrderOfferChanges(getSocket(request), [{ order }]);
+  const offeredOrder = order;
 
   response.status(201).json({
-    order: serializeOrder(order),
-    offer: firstDriver
+    order: serializeOrder(offeredOrder),
+    offer: offeredOrder.offeredDriverId
       ? {
-          driver_id: firstDriver.driverId,
-          queue_position: await store.getQueuePosition(firstDriver.driverId),
+          driver_id: offeredOrder.offeredDriverId,
+          queue_position: await store.getQueuePosition(offeredOrder.offeredDriverId),
           smart_pooling: pickupPoint === "D",
+          expires_at: offeredOrder.offerExpiresAt,
         }
       : null,
   });
@@ -163,61 +168,39 @@ export async function acceptOrder(request: Request, response: Response): Promise
       "ORDER_NOT_FOUND",
     );
   }
-  if (order.status !== "searching" || (order.driverId && order.driverId !== driverId)) {
-    throw new AppError(409, "Order is no longer available", "ORDER_UNAVAILABLE");
-  }
   if (order.offeredDriverId && order.offeredDriverId !== driverId) {
     throw new AppError(409, "Order is reserved for another driver", "ORDER_RESERVED");
   }
-
-  const queueEntry = await store.getQueueEntry(driverId);
-  const position = await store.getQueuePosition(driverId);
-  const isActivePoolOffer =
-    order.pickupPoint === "D" &&
-    order.offeredDriverId === driverId &&
-    queueEntry?.inFifo === false &&
-    queueEntry.status === "in_transit";
-  if (!queueEntry || (!isActivePoolOffer && position !== 1)) {
-    throw new AppError(409, "Only the first driver in the queue can accept this order", "FIFO_REQUIRED");
-  }
-  if (queueEntry.availableSeats < order.seats) {
-    throw new AppError(409, "Not enough available seats", "SEATS_UNAVAILABLE");
-  }
-
-  const seatLockExpiresAt =
-    order.pickupPoint === "C" ? Date.now() + SEAT_LOCK_TTL_MS : undefined;
-  const status: OrderStatus = order.pickupPoint === "C" ? "en_route_to_c" : "in_transit";
-  const updated = await store.claimOrderForDriver(
-    order.id,
-    driverId,
-    { status, seatLockExpiresAt },
-    {}, // The store derives reservation fields from the queue under its lock.
-  );
+  const updated = await store.acceptOrderOffer(order.id, driverId);
   if (!updated) {
     throw new AppError(409, "Order is no longer available", "ORDER_UNAVAILABLE");
   }
-  if (seatLockExpiresAt) {
-    setTimeout(() => {
-      void (async () => {
-        await store.clearExpiredSeatLocks();
-        await emitQueueUpdate(getSocket(request), {
-          type: "seat_lock_expired",
-          driverId,
-        });
-      })().catch((err) => logger.error({ err, driverId }, "Seat-lock expiration failed"));
-    }, SEAT_LOCK_TTL_MS + 100);
-  }
-
   emitOrderUpdate(getSocket(request), updated);
   await emitQueueUpdate(getSocket(request), {
     type: "order_assigned",
     driverId,
   });
+  await processOrderDispatch(getSocket(request));
   response.json({
     message: translate(request.auth?.locale ?? "ru", "seatLocked"),
     order: serializeOrder(updated, true),
     seat_lock_minutes: order.pickupPoint === "C" ? 7 : null,
   });
+}
+
+export async function rejectOrder(request: Request, response: Response): Promise<void> {
+  const driverId = assertDriver(request);
+  const orderId = String(request.params["orderId"]);
+  if (!(await store.getOrder(orderId))) {
+    throw new AppError(404, "Order not found", "ORDER_NOT_FOUND");
+  }
+  const change = await store.rejectOrderOffer(orderId, driverId);
+  if (!change) {
+    throw new AppError(409, "Order offer is no longer available", "ORDER_UNAVAILABLE");
+  }
+  await publishOrderOfferChanges(getSocket(request), [change]);
+  await processOrderDispatch(getSocket(request));
+  response.json({ order: serializeOrder(change.order, true) });
 }
 
 export async function updateOrderStatus(request: Request, response: Response): Promise<void> {
@@ -249,11 +232,16 @@ export async function updateOrderStatus(request: Request, response: Response): P
     type: "order_released",
     driverId,
   });
+  await processOrderDispatch(getSocket(request));
   response.json({ order: serializeOrder(updated, true) });
 }
 
 export async function cancelOrder(request: Request, response: Response): Promise<void> {
   const order = await getOrderForActor(request, String(request.params["orderId"]));
+  if (order.status === "searching" && order.offerExpiresAt !== undefined &&
+      request.auth?.role === "driver" && order.offeredDriverId === request.auth.userId) {
+    throw new AppError(409, "Use the reject endpoint to decline a pending offer", "USE_REJECT");
+  }
   if (order.status === "completed" || order.status === "cancelled") {
     throw new AppError(409, "Order is already closed", "ORDER_CLOSED");
   }
@@ -261,11 +249,21 @@ export async function cancelOrder(request: Request, response: Response): Promise
   if (!updated) {
     throw new AppError(409, "Order changed before cancellation", "ORDER_UNAVAILABLE");
   }
-  emitOrderUpdate(getSocket(request), updated);
-  await emitQueueUpdate(getSocket(request), {
-    type: "order_released",
-    driverId: order.driverId,
-  });
+  const previousOfferedDriverId = updated.offeredDriverId ??
+    (order.status === "searching" ? order.offeredDriverId : undefined);
+  if (!updated.driverId && previousOfferedDriverId) {
+    await publishOrderOfferChanges(getSocket(request), [{
+      order: updated,
+      previousDriverId: previousOfferedDriverId,
+    }]);
+  } else {
+    emitOrderUpdate(getSocket(request), updated);
+    await emitQueueUpdate(getSocket(request), {
+      type: "order_released",
+      driverId: updated.driverId,
+    });
+  }
+  await processOrderDispatch(getSocket(request));
   response.json({ order: serializeOrder(updated, request.auth?.role === "driver") });
 }
 
@@ -275,12 +273,12 @@ export async function offerToFirstDriver(request: Request, response: Response): 
   if (order.pickupPoint !== "D" || order.status !== "searching") {
     throw new AppError(409, "Only searching Point D orders can be pooled", "NOT_POOLING_ORDER");
   }
-  const firstDriver = await store.getFirstEligibleDriver(order.seats);
-  if (!firstDriver || firstDriver.driverId !== driverId) {
+  const change = await store.dispatchOrderOffer(order.id);
+  await publishOrderOfferChanges(getSocket(request), change ? [change] : []);
+  const offeredOrder = change?.order ?? (await store.getOrder(order.id));
+  if (!offeredOrder || offeredOrder.offeredDriverId !== driverId ||
+      (offeredOrder.offerExpiresAt ?? 0) <= Date.now()) {
     throw new AppError(409, "You are not the eligible first driver", "FIFO_REQUIRED");
   }
-  await store.updateOrder(order.id, { offeredDriverId: driverId });
-  order.offeredDriverId = driverId;
-  sendOrderToDriver(getSocket(request), order, driverId);
-  response.json({ order: serializeOrder(order, true), smart_pooling: true });
+  response.json({ order: serializeOrder(offeredOrder, true), smart_pooling: true });
 }

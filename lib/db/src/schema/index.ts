@@ -8,6 +8,7 @@ import {
   text,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 /**
  * Durable TezJet storage schema.
@@ -58,6 +59,7 @@ export const driverQueueTable = pgTable(
     inFifo: boolean("in_fifo").notNull().default(true),
     activeOrderIds: jsonb("active_order_ids").$type<string[]>().notNull().default([]),
     currentOrderId: text("current_order_id"),
+    pendingOfferOrderId: text("pending_offer_order_id"),
     seatLockExpiresAt: bigint("seat_lock_expires_at", { mode: "number" }),
   },
   (table) => [
@@ -73,6 +75,7 @@ export const ordersTable = pgTable(
     passengerId: text("passenger_id").notNull(),
     driverId: text("driver_id"),
     offeredDriverId: text("offered_driver_id"),
+    offerExpiresAt: bigint("offer_expires_at", { mode: "number" }),
     status: text("status").notNull(),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
@@ -82,6 +85,9 @@ export const ordersTable = pgTable(
     index("tezjet_orders_passenger_created_idx").on(table.passengerId, table.createdAt),
     index("tezjet_orders_driver_created_idx").on(table.driverId, table.createdAt),
     index("tezjet_orders_status_created_idx").on(table.status, table.createdAt),
+    index("tezjet_orders_offer_expiry_idx").on(table.status, table.offerExpiresAt),
+    uniqueIndex("tezjet_orders_pending_driver_uq").on(table.offeredDriverId)
+      .where(sql`${table.status} = 'searching' AND ${table.offeredDriverId} IS NOT NULL`),
   ],
 );
 
@@ -108,3 +114,4 @@ export const routesTable = pgTable("tezjet_routes", {
   updatedAt: text("updated_at").notNull(),
   payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
 });
+

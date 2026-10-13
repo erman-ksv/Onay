@@ -8,6 +8,14 @@
       "when": 1791638400000,
       "tag": "0000_tezjet_persistent_store",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791892800000,
+      "tag": "0001_order_offers",
+      "breakpoints": true
     }
   ]
 }
+

@@ -18,6 +18,7 @@ export function joinQueueEntry(input: QueueEntry, current?: QueueEntry): QueueEn
     activeOrderIds: [],
     currentOrderId: undefined,
     seatLockExpiresAt: undefined,
+    pendingOfferOrderId: undefined,
   };
 }
 
@@ -38,6 +39,9 @@ export function canTransitionOrder(
 ): boolean {
   if (!actorId || (expectedStatus !== undefined && order.status !== expectedStatus)) return false;
   if (!statusTransitions[order.status].includes(nextStatus)) return false;
+  if (nextStatus === "cancelled" && order.status === "searching" && order.offerExpiresAt !== undefined) {
+    return actorId === order.passengerId;
+  }
   return nextStatus === "cancelled"
     ? actorId === order.passengerId || actorId === order.driverId || actorId === order.offeredDriverId
     : actorId === order.driverId;
