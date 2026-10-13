@@ -12,6 +12,7 @@ export type QueueEventType =
   | "reordered"
   | "order_assigned"
   | "order_released"
+  | "order_offer"
   | "seat_lock_expired";
 
 interface QueueChange {
@@ -72,8 +73,36 @@ export function emitOrderUpdate(io: Server | undefined, order: Order): void {
   };
   io.to(`user:${order.passengerId}`).emit("order:status", payload);
   if (order.driverId) {
-    io.to(`user:${order.driverId}`).emit("order:status", payload);
+    emitDriverOrderUpdate(io, order.driverId, order);
   }
+}
+
+export function emitDriverOrderUpdate(
+  io: Server | undefined,
+  driverId: string,
+  order: Order,
+): void {
+  io?.to(`user:${driverId}`).emit("order:status", {
+    order: serializeOrder(order, true),
+    updated_at: new Date().toISOString(),
+  });
+}
+
+export function emitOrderOfferWithdrawn(
+  io: Server | undefined,
+  driverId: string,
+  order: Order,
+): void {
+  io?.to(`user:${driverId}`).emit("order:offer_withdrawn", {
+    order_id: order.id,
+    order: {
+      ...serializeOrder(order, true),
+      driver_id: undefined,
+      offered_driver_id: undefined,
+      offer_expires_at: undefined,
+    },
+    updated_at: new Date().toISOString(),
+  });
 }
 
 export function emitIncomingOrder(

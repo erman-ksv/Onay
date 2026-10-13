@@ -41,7 +41,7 @@ Provision the PostgreSQL database and apply the current Drizzle schema before en
 pnpm --filter @workspace/db run push
 ```
 
-CI now provisions PostgreSQL, applies the Drizzle schema, runs the API regression scenarios against the PostgreSQL adapter, verifies that users and orders survive an API process restart, and tests concurrent duplicate acceptance of the same order. Order acceptance and the corresponding queue update run in one database transaction. Before production launch, continue reviewing transaction boundaries for cancellation, status transitions, and seat-lock expiration, and complete deployment-specific security and load testing.
+CI provisions PostgreSQL, applies the Drizzle schema, runs the API regression scenarios against the PostgreSQL adapter, verifies that users and orders survive an API process restart, and tests concurrent duplicate acceptance of the same order. Offer assignment, reserved seats, acceptance, rejection, and cancellation use the store's transaction boundaries. Before production launch, complete deployment-specific security and load testing.
 
 ## Release scenario checks
 
@@ -84,12 +84,41 @@ services.
 - `POST /api/orders` — passenger creates a Point C or Point D order. Optional
   `route_stops` uses the same route catalog; when omitted, the pickup point is
   used as the pickup and destination stop, with a minimum one-stop fare.
-- `POST /api/orders/:orderId/accept` — #1 driver accepts; Point C gets a 7-minute seat lock.
+- `POST /api/orders/:orderId/accept` — the driver holding the live offer accepts; Point C gets a 7-minute seat lock.
+- `POST /api/orders/:orderId/reject` — the driver holding the live offer rejects it, returning its reserved seats and offering the order to the next eligible driver.
 - `PATCH /api/orders/:orderId/status` — driver advances `en_route_to_c` → `arrived_at_c` → `in_transit` → `completed`.
-- `POST /api/orders/:orderId/cancel` — passenger or assigned driver cancels.
+- `POST /api/orders/:orderId/cancel` — passenger or assigned driver cancels. A driver with a pending offer must use `/reject`; `/cancel` returns HTTP 409 `USE_REJECT`.
 
-Point D orders are offered to the first in-transit driver with enough seats.
+Point C orders are offered to eligible drivers in FIFO order. A driver has at
+most one pending offer, and the requested seats are reserved when the offer is
+created. Rejection or timeout returns those seats once and advances to the next
+eligible driver; acceptance keeps that reservation without subtracting seats a
+second time. A driver's position does not need to be #1 after earlier drivers
+have declined the same order. Stale acceptance and rejection return HTTP 409.
+
+Point D orders are offered to the first eligible in-transit driver with enough seats.
 Driver-facing order responses mask passenger phone numbers.
+
+Orders expose `offered_driver_id` and `offer_expires_at` (Unix milliseconds).
+When upgrading an existing PostgreSQL database, stop the previous API and run
+`pnpm --filter @workspace/db run migrate` before starting the new API. Migration
+`0001_order_offers` adds the pending reservation/deadline fields, reopens legacy
+searching offers that have no deadline, and enforces one pending offer per driver.
+Offers last 60 seconds by default; set `TEZJET_OFFER_TIMEOUT_SECONDS` to change
+the duration. The server checks stored offer deadlines and seat locks on startup
+and every second, so deadlines continue after a process restart. Queue joins,
+departures, rejection, acceptance, cancellation, and status changes also trigger
+dispatch. Passengers check `GET /api/orders/availability?pickup_point=C&seats=2`
+before ordering; the response contains `available`, `eligible_driver_count`, and
+`offer_timeout_seconds`. `POST /api/orders` creates the order and reserves its
+first offer in one transaction. Without an eligible driver it returns HTTP 409
+with error code `NO_DRIVERS` and does not persist an order. Existing searching
+orders whose drivers all rejected remain waiting for a newly eligible driver.
+Drivers cannot leave or reset their queue entry while an offer is pending.
+
+`POST /api/orders/:orderId/offer-first-driver` is a compatibility endpoint for
+Point D offers. It uses the same store dispatcher and cannot force an offer to
+the requesting driver or extend a live offer deadline.
 
 The default route has two stops, Point C and Point D, and a price of 500 KZT
 per stop. Admins can change the price and stops at runtime through `/api/admin`.
@@ -140,12 +169,19 @@ io({ path: "/api/socket.io", auth: { token: accessToken } });
 The server emits:
 
 - `incoming_order` — `{ priority: "high", sound: "incoming_order.mp3", order }`
+- `order:offer_withdrawn` — `{ order_id, order, updated_at }` sent to a driver whose pending offer ended
 - `order:status`
 - `queue:snapshot` — initial queue state on connection
 - `queue:update`
 - `queue:joined`, `queue:left`, `queue:status`, `queue:location`
 - `queue:position` — private position update for each driver
 - `queue:reordered` — emitted when FIFO ordering may have changed
+- `queue:order_offer` — pending offer assignment, withdrawal, or reassignment changed the queue's reservations
+
+Driver connections replay their current unexpired offer. Realtime events are
+sent after storage commits. Socket delivery currently reaches clients connected
+to the same API instance; a shared Socket.io adapter and a transactional event
+outbox are needed for coordinated delivery across multiple API instances.
 
 Use `GET /api/notifications/config` for client notification settings,
 `POST /api/notifications/devices` to register a push token, and

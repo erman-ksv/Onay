@@ -1,5 +1,5 @@
 import { createHmac, randomUUID } from "node:crypto";
-import { and, asc, desc, eq, gt, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { Store } from "./storeContract";
 import { canTransitionOrder, claimQueueEntry, hasActiveOrders, joinQueueEntry, releaseQueueEntry, transitionQueueEntry } from "./orderLifecycle";
 import { AppError } from "../utils/errors";
@@ -9,15 +9,18 @@ import type {
   DriverApprovalStatus,
   Locale,
   Order,
+  OrderOfferChange,
   OrderStatus,
   OtpChallenge,
+  PickupPoint,
   QueueEntry,
   RouteDefinition,
   RouteStop,
   User,
   UserRole,
 } from "../types/domain";
-import { REQUIRE_DRIVER_APPROVAL } from "../utils/config";
+import { OFFER_TIMEOUT_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
+import { acceptQueueOffer, assertOrderOfferPatch, assertQueueOfferPatch, hasLiveOrderOffer, orderedOfferCandidates, releaseQueueOffer, reserveQueueOffer } from "./orderOffers";
 
 type DbModule = typeof import("@workspace/db");
 
@@ -55,6 +58,7 @@ function asQueueEntry(row: Record<string, unknown>): QueueEntry {
     inFifo: row.inFifo === undefined ? true : Boolean(row.inFifo),
     activeOrderIds: (row.activeOrderIds ?? []) as string[],
     currentOrderId: (row.currentOrderId ?? undefined) as string | undefined,
+    pendingOfferOrderId: (row.pendingOfferOrderId ?? undefined) as string | undefined,
     seatLockExpiresAt: (row.seatLockExpiresAt ?? undefined) as number | undefined,
   };
 }
@@ -66,6 +70,7 @@ function asOrder(row: Record<string, unknown>): Order {
     passengerId: String(row.passengerId),
     driverId: (row.driverId ?? undefined) as string | undefined,
     offeredDriverId: (row.offeredDriverId ?? undefined) as string | undefined,
+    offerExpiresAt: row.offerExpiresAt == null ? undefined : Number(row.offerExpiresAt),
     status: row.status as Order["status"],
     createdAt: String(row.createdAt),
     updatedAt: String(row.updatedAt),
@@ -82,8 +87,30 @@ function queueValues(entry: QueueEntry) {
     inFifo: entry.inFifo !== false,
     activeOrderIds: entry.activeOrderIds ?? [],
     currentOrderId: entry.currentOrderId ?? null,
+    pendingOfferOrderId: entry.pendingOfferOrderId ?? null,
     seatLockExpiresAt: entry.seatLockExpiresAt ?? null,
   };
+}
+
+function orderValues(order: Order) {
+  return {
+    driverId: order.driverId ?? null,
+    offeredDriverId: order.offeredDriverId ?? null,
+    offerExpiresAt: order.offerExpiresAt ?? null,
+    status: order.status,
+    updatedAt: order.updatedAt,
+    payload: order as unknown as Record<string, unknown>,
+  };
+}
+
+/** A reserved offer must still belong to the same eligible queue entry. */
+function queueOwnsEligibleOffer(entry: QueueEntry | undefined, order: Order, now: number): boolean {
+  if (!entry || entry.pendingOfferOrderId !== order.id) return false;
+  return orderedOfferCandidates(
+    { ...order, attemptedDriverIds: [] },
+    [{ ...entry, pendingOfferOrderId: undefined, availableSeats: entry.availableSeats + order.seats }],
+    now,
+  ).length > 0;
 }
 
 function asRoute(row: Record<string, unknown>): RouteDefinition {
@@ -282,6 +309,7 @@ export class PostgresStore implements Store {
       setWhere: and(
         eq(driverQueueTable.inFifo, true),
         isNull(driverQueueTable.currentOrderId),
+        isNull(driverQueueTable.pendingOfferOrderId),
         sql`${driverQueueTable.activeOrderIds} = '[]'::jsonb`,
       ),
       set: {
@@ -306,6 +334,7 @@ export class PostgresStore implements Store {
       inFifo?: boolean;
       activeOrderIds?: string[];
       currentOrderId?: string | null;
+      pendingOfferOrderId?: string | null;
       seatLockExpiresAt?: number | null;
     } = {};
     if (patch.joinedAt !== undefined) values.joinedAt = patch.joinedAt;
@@ -316,10 +345,18 @@ export class PostgresStore implements Store {
     if (patch.inFifo !== undefined) values.inFifo = patch.inFifo;
     if (patch.activeOrderIds !== undefined) values.activeOrderIds = patch.activeOrderIds;
     if ("currentOrderId" in patch) values.currentOrderId = patch.currentOrderId ?? null;
+    if ("pendingOfferOrderId" in patch) values.pendingOfferOrderId = patch.pendingOfferOrderId ?? null;
     if ("seatLockExpiresAt" in patch) values.seatLockExpiresAt = patch.seatLockExpiresAt ?? null;
-    const [row] = await db.update(driverQueueTable).set(values)
-      .where(eq(driverQueueTable.driverId, driverId)).returning();
-    return row ? asQueueEntry(row as unknown as Record<string, unknown>) : undefined;
+    return db.transaction(async tx => {
+      const [currentRow] = await tx.select().from(driverQueueTable)
+        .where(eq(driverQueueTable.driverId, driverId)).for("update").limit(1);
+      if (!currentRow) return undefined;
+      const current = asQueueEntry(currentRow as unknown as Record<string, unknown>);
+      assertQueueOfferPatch(current, patch);
+      const [row] = await tx.update(driverQueueTable).set(values)
+        .where(eq(driverQueueTable.driverId, driverId)).returning();
+      return row ? asQueueEntry(row as unknown as Record<string, unknown>) : undefined;
+    });
   }
 
   async leaveQueue(driverId: string): Promise<void> {
@@ -328,7 +365,8 @@ export class PostgresStore implements Store {
       const [row] = await tx.select().from(driverQueueTable)
         .where(eq(driverQueueTable.driverId, driverId)).for("update").limit(1);
       if (!row) return;
-      if (hasActiveOrders(asQueueEntry(row as unknown as Record<string, unknown>))) {
+      const entry = asQueueEntry(row as unknown as Record<string, unknown>);
+      if (hasActiveOrders(entry) || entry.pendingOfferOrderId) {
         throw new AppError(409, "Driver cannot leave the queue while an order is active", "ACTIVE_ORDER");
       }
       await tx.delete(driverQueueTable).where(eq(driverQueueTable.driverId, driverId));
@@ -340,7 +378,7 @@ export class PostgresStore implements Store {
     const rows = await db.select().from(driverQueueTable).where(and(
       eq(driverQueueTable.inFifo, true),
       or(isNull(driverQueueTable.seatLockExpiresAt), gt(driverQueueTable.seatLockExpiresAt, Date.now())),
-    )).orderBy(desc(driverQueueTable.priorityLock), asc(driverQueueTable.joinedAt));
+    )).orderBy(desc(driverQueueTable.priorityLock), asc(driverQueueTable.joinedAt), asc(driverQueueTable.driverId));
     return rows.map((row) => asQueueEntry(row as unknown as Record<string, unknown>));
   }
 
@@ -352,12 +390,86 @@ export class PostgresStore implements Store {
 
   async getFirstEligibleDriver(seats: number): Promise<QueueEntry | undefined> {
     const { db, driverQueueTable } = await this.database();
-    const rows = await db.select().from(driverQueueTable).where(eq(driverQueueTable.status, "in_transit"));
+    const rows = await db.select().from(driverQueueTable).where(and(
+      eq(driverQueueTable.status, "in_transit"),
+      isNull(driverQueueTable.pendingOfferOrderId),
+    )).orderBy(desc(driverQueueTable.priorityLock), asc(driverQueueTable.joinedAt), asc(driverQueueTable.driverId));
     const entry = rows.map((row) => asQueueEntry(row as unknown as Record<string, unknown>)).find((candidate) =>
       candidate.availableSeats >= seats &&
       Boolean(candidate.currentOrderId || (candidate.activeOrderIds && candidate.activeOrderIds.length > 0)),
     );
     return entry;
+  }
+
+  async getOrderAvailability(pickupPoint: PickupPoint, seats: number): Promise<{ available: boolean; eligibleDriverCount: number }> {
+    const { db, driverQueueTable, usersTable } = await this.database();
+    // Availability is a read-only snapshot. Creation repeats this decision
+    // under locks so concurrent passengers cannot consume the same offer slot.
+    const rows = await db.select({ queue: driverQueueTable }).from(driverQueueTable)
+      .innerJoin(usersTable, eq(usersTable.id, driverQueueTable.driverId)).where(and(
+        isNull(driverQueueTable.pendingOfferOrderId),
+        pickupPoint === "D" ? eq(driverQueueTable.status, "in_transit") : eq(driverQueueTable.inFifo, true),
+        eq(usersTable.role, "driver"),
+        REQUIRE_DRIVER_APPROVAL ? eq(usersTable.driverApprovalStatus, "approved") : undefined,
+      ));
+    const eligibleDriverCount = orderedOfferCandidates(
+      { pickupPoint, seats, attemptedDriverIds: [] },
+      rows.map(row => asQueueEntry(row.queue as unknown as Record<string, unknown>)),
+      Date.now(),
+    ).length;
+    return { available: eligibleDriverCount > 0, eligibleDriverCount };
+  }
+
+  async createOrderWithOffer(input: Omit<Order, "id" | "createdAt" | "updatedAt">): Promise<Order | undefined> {
+    const { db, driverQueueTable, usersTable, ordersTable } = await this.database();
+    return db.transaction(async tx => {
+      // This order does not exist yet. Locking queue rows before inserting its
+      // new UUID cannot acquire or wait on another existing order row.
+      const queueRows = await tx.select().from(driverQueueTable).where(and(
+        isNull(driverQueueTable.pendingOfferOrderId),
+        input.pickupPoint === "D" ? eq(driverQueueTable.status, "in_transit") : eq(driverQueueTable.inFifo, true),
+      )).orderBy(asc(driverQueueTable.driverId)).for("update");
+      const entries = queueRows.map(row => asQueueEntry(row as unknown as Record<string, unknown>));
+      const approvedRows = entries.length
+        ? await tx.select({ id: usersTable.id }).from(usersTable).where(and(
+          inArray(usersTable.id, entries.map(entry => entry.driverId)),
+          eq(usersTable.role, "driver"),
+          REQUIRE_DRIVER_APPROVAL ? eq(usersTable.driverApprovalStatus, "approved") : undefined,
+        )).orderBy(asc(usersTable.id)).for("share")
+        : [];
+      const approvedIds = new Set(approvedRows.map(row => row.id));
+      const now = Date.now();
+      const candidate = orderedOfferCandidates(
+        { pickupPoint: input.pickupPoint, seats: input.seats, attemptedDriverIds: [] },
+        entries.filter(entry => approvedIds.has(entry.driverId)),
+        now,
+      )[0];
+      if (!candidate) return undefined;
+
+      const timestamp = new Date(now).toISOString();
+      const order: Order = {
+        ...input,
+        id: randomUUID(),
+        status: "searching",
+        driverId: undefined,
+        offeredDriverId: candidate.driverId,
+        offerExpiresAt: now + OFFER_TIMEOUT_MS,
+        seatLockExpiresAt: undefined,
+        attemptedDriverIds: [candidate.driverId],
+        cancelledBy: undefined,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      await tx.update(driverQueueTable).set(queueValues(reserveQueueOffer(candidate, order)))
+        .where(eq(driverQueueTable.driverId, candidate.driverId));
+      const [row] = await tx.insert(ordersTable).values({
+        id: order.id,
+        passengerId: order.passengerId,
+        createdAt: order.createdAt,
+        ...orderValues(order),
+      }).returning();
+      return asOrder(row as unknown as Record<string, unknown>);
+    });
   }
 
   async createOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt">): Promise<Order> {
@@ -369,6 +481,7 @@ export class PostgresStore implements Store {
       passengerId: order.passengerId,
       driverId: order.driverId ?? null,
       offeredDriverId: order.offeredDriverId ?? null,
+      offerExpiresAt: order.offerExpiresAt ?? null,
       status: order.status,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
@@ -390,16 +503,172 @@ export class PostgresStore implements Store {
         .for("update").limit(1);
       if (!currentRow) return undefined;
       const current = asOrder(currentRow as unknown as Record<string, unknown>);
+      assertOrderOfferPatch(current, patch);
       const updated: Order = { ...current, ...patch, id: current.id, updatedAt: new Date().toISOString() };
       const [row] = await tx.update(ordersTable).set({
         driverId: updated.driverId ?? null,
         offeredDriverId: updated.offeredDriverId ?? null,
+        offerExpiresAt: updated.offerExpiresAt ?? null,
         status: updated.status,
         updatedAt: updated.updatedAt,
         payload: updated as unknown as Record<string, unknown>,
       }).where(eq(ordersTable.id, orderId)).returning();
       return row ? asOrder(row as unknown as Record<string, unknown>) : undefined;
     });
+  }
+
+  async dispatchOrderOffer(orderId: string, now?: number): Promise<OrderOfferChange | undefined> {
+    return this.advanceOrderOffer(orderId, now);
+  }
+
+  async rejectOrderOffer(orderId: string, driverId: string, now?: number): Promise<OrderOfferChange | undefined> {
+    return this.advanceOrderOffer(orderId, now, driverId);
+  }
+
+  /** Release and select the next driver while holding one order and its candidate queue rows. */
+  private async advanceOrderOffer(
+    orderId: string,
+    now?: number,
+    rejectingDriverId?: string,
+  ): Promise<OrderOfferChange | undefined> {
+    const { db, ordersTable, driverQueueTable, usersTable } = await this.database();
+    return db.transaction(async tx => {
+      const [orderRow] = await tx.select().from(ordersTable)
+        .where(eq(ordersTable.id, orderId)).for("update").limit(1);
+      if (!orderRow) return undefined;
+      const order = asOrder(orderRow as unknown as Record<string, unknown>);
+      if (order.status !== "searching" || order.driverId) return undefined;
+
+      // Every offer operation locks queue rows only once, in driver-ID order.
+      // A competing order can reserve a candidate while this query waits;
+      // PostgreSQL rechecks the predicate on that row after the lock is won.
+      const queueRows = await tx.select().from(driverQueueTable).where(or(
+        and(
+          isNull(driverQueueTable.pendingOfferOrderId),
+          order.pickupPoint === "D"
+            ? eq(driverQueueTable.status, "in_transit")
+            : eq(driverQueueTable.inFifo, true),
+        ),
+        order.offeredDriverId ? eq(driverQueueTable.driverId, order.offeredDriverId) : undefined,
+      )).orderBy(asc(driverQueueTable.driverId)).for("update");
+      const entries = queueRows.map(row => asQueueEntry(row as unknown as Record<string, unknown>));
+      const previousEntry = entries.find(entry => entry.driverId === order.offeredDriverId);
+      // A revoked driver may still have a queue row. Hold approved user rows
+      // through commit so a revocation cannot race this reservation decision.
+      const approvedRows = REQUIRE_DRIVER_APPROVAL && entries.length
+        ? await tx.select({ id: usersTable.id }).from(usersTable).where(and(
+          inArray(usersTable.id, entries.map(entry => entry.driverId)),
+          eq(usersTable.role, "driver"),
+          eq(usersTable.driverApprovalStatus, "approved"),
+        )).orderBy(asc(usersTable.id)).for("share")
+        : undefined;
+      const approvedIds = approvedRows ? new Set(approvedRows.map(row => row.id)) : undefined;
+      const offerTime = now ?? Date.now();
+      const liveOffer = hasLiveOrderOffer(order, offerTime);
+      if (rejectingDriverId !== undefined) {
+        if (!liveOffer || order.offeredDriverId !== rejectingDriverId ||
+          previousEntry?.pendingOfferOrderId !== order.id) return undefined;
+      } else if (liveOffer && (!approvedIds || approvedIds.has(order.offeredDriverId!)) &&
+        queueOwnsEligibleOffer(previousEntry, order, offerTime)) {
+        return undefined;
+      }
+
+      const previousDriverId = order.offeredDriverId;
+      if (previousEntry) {
+        const released = releaseQueueOffer(previousEntry, order);
+        if (released !== previousEntry) {
+          await tx.update(driverQueueTable).set(queueValues(released))
+            .where(eq(driverQueueTable.driverId, previousEntry.driverId));
+          entries[entries.indexOf(previousEntry)] = released;
+        }
+      }
+      const attemptedDriverIds = [...new Set([
+        ...(order.attemptedDriverIds ?? []),
+        ...(previousDriverId ? [previousDriverId] : []),
+      ])];
+      const candidate = orderedOfferCandidates({ ...order, attemptedDriverIds },
+        approvedIds ? entries.filter(entry => approvedIds.has(entry.driverId)) : entries,
+        offerTime)[0];
+      // Waiting with no available candidate is a read-only result. Notification
+      // callers receive changes only when an actual lifecycle update commits.
+      if (!candidate && !previousDriverId && order.offerExpiresAt === undefined) return undefined;
+
+      const updated: Order = {
+        ...order,
+        offeredDriverId: candidate?.driverId,
+        offerExpiresAt: candidate ? offerTime + OFFER_TIMEOUT_MS : undefined,
+        attemptedDriverIds: candidate ? [...attemptedDriverIds, candidate.driverId] : attemptedDriverIds,
+        updatedAt: new Date(offerTime).toISOString(),
+      };
+      if (candidate) {
+        await tx.update(driverQueueTable).set(queueValues(reserveQueueOffer(candidate, updated)))
+          .where(eq(driverQueueTable.driverId, candidate.driverId));
+      }
+      await tx.update(ordersTable).set(orderValues(updated)).where(eq(ordersTable.id, orderId));
+      return { order: updated, ...(previousDriverId ? { previousDriverId } : {}) };
+    });
+  }
+
+  async acceptOrderOffer(orderId: string, driverId: string, now?: number): Promise<Order | undefined> {
+    const { db, ordersTable, driverQueueTable, usersTable } = await this.database();
+    return db.transaction(async tx => {
+      const [orderRow] = await tx.select().from(ordersTable)
+        .where(eq(ordersTable.id, orderId)).for("update").limit(1);
+      if (!orderRow) return undefined;
+      const order = asOrder(orderRow as unknown as Record<string, unknown>);
+      if (order.offeredDriverId !== driverId || order.status !== "searching" || order.driverId) return undefined;
+      const [queueRow] = await tx.select().from(driverQueueTable)
+        .where(eq(driverQueueTable.driverId, driverId)).for("update").limit(1);
+      const entry = queueRow ? asQueueEntry(queueRow as unknown as Record<string, unknown>) : undefined;
+      if (REQUIRE_DRIVER_APPROVAL) {
+        const [driver] = await tx.select({ id: usersTable.id }).from(usersTable).where(and(
+          eq(usersTable.id, driverId),
+          eq(usersTable.role, "driver"),
+          eq(usersTable.driverApprovalStatus, "approved"),
+        )).for("share").limit(1);
+        if (!driver) return undefined;
+      }
+      const offerTime = now ?? Date.now();
+      if (!hasLiveOrderOffer(order, offerTime) || !queueOwnsEligibleOffer(entry, order, offerTime)) return undefined;
+
+      const updated: Order = {
+        ...order,
+        status: order.pickupPoint === "C" ? "en_route_to_c" : "in_transit",
+        driverId,
+        offeredDriverId: driverId,
+        offerExpiresAt: undefined,
+        seatLockExpiresAt: order.pickupPoint === "C" ? offerTime + SEAT_LOCK_TTL_MS : undefined,
+        updatedAt: new Date(offerTime).toISOString(),
+      };
+      await tx.update(driverQueueTable).set(queueValues(acceptQueueOffer(entry!, updated)))
+        .where(eq(driverQueueTable.driverId, driverId));
+      await tx.update(ordersTable).set(orderValues(updated)).where(eq(ordersTable.id, orderId));
+      return updated;
+    });
+  }
+
+  async processOrderOffers(now?: number): Promise<OrderOfferChange[]> {
+    const { db, ordersTable } = await this.database();
+    const scanTime = now ?? Date.now();
+    // The scan owns no row locks. Each order is re-read under its own lock,
+    // preventing cross-order lock cycles and stale timeout decisions.
+    const rows = await db.select({
+      id: ordersTable.id,
+      offeredDriverId: ordersTable.offeredDriverId,
+      offerExpiresAt: ordersTable.offerExpiresAt,
+    }).from(ordersTable).where(and(
+      eq(ordersTable.status, "searching"),
+      isNull(ordersTable.driverId),
+    )).orderBy(asc(ordersTable.createdAt), asc(ordersTable.id));
+    const expired = rows.filter(row => row.offeredDriverId && (row.offerExpiresAt === null || row.offerExpiresAt <= scanTime));
+    const waiting = rows.filter(row => !row.offeredDriverId);
+    const live = rows.filter(row => row.offeredDriverId && row.offerExpiresAt !== null && row.offerExpiresAt > scanTime);
+    const changes: OrderOfferChange[] = [];
+    for (const row of [...expired, ...waiting, ...live]) {
+      const change = await this.dispatchOrderOffer(row.id, now);
+      if (change) changes.push(change);
+    }
+    return changes;
   }
 
   async transitionOrder(
@@ -416,19 +685,26 @@ export class PostgresStore implements Store {
       if (!orderRow) return undefined;
       const order = asOrder(orderRow as unknown as Record<string, unknown>);
       if (!canTransitionOrder(order, actorId, nextStatus, expectedStatus)) return undefined;
-      if (order.driverId) {
+      const queueDriverId = order.driverId ?? (nextStatus === "cancelled" ? order.offeredDriverId : undefined);
+      if (queueDriverId) {
         const [queueRow] = await tx.select().from(driverQueueTable)
-          .where(eq(driverQueueTable.driverId, order.driverId)).for("update").limit(1);
+          .where(eq(driverQueueTable.driverId, queueDriverId)).for("update").limit(1);
         if (queueRow) {
           const entry = asQueueEntry(queueRow as unknown as Record<string, unknown>);
-          await tx.update(driverQueueTable).set(queueValues(transitionQueueEntry(entry, order, nextStatus)))
-            .where(eq(driverQueueTable.driverId, order.driverId));
+          const updatedEntry = order.driverId
+            ? transitionQueueEntry(entry, order, nextStatus)
+            : releaseQueueOffer(entry, order);
+          await tx.update(driverQueueTable).set(queueValues(updatedEntry))
+            .where(eq(driverQueueTable.driverId, queueDriverId));
         }
       }
       const updated: Order = {
         ...order,
         status: nextStatus,
-        ...(nextStatus === "cancelled" ? { cancelledBy: actorId } : {}),
+        ...(nextStatus === "cancelled" ? {
+          cancelledBy: actorId,
+          offerExpiresAt: undefined,
+        } : {}),
         seatLockExpiresAt: nextStatus === "in_transit" || nextStatus === "completed" || nextStatus === "cancelled"
           ? undefined : order.seatLockExpiresAt,
         updatedAt: new Date().toISOString(),
@@ -436,6 +712,7 @@ export class PostgresStore implements Store {
       await tx.update(ordersTable).set({
         driverId: updated.driverId ?? null,
         offeredDriverId: updated.offeredDriverId ?? null,
+        offerExpiresAt: updated.offerExpiresAt ?? null,
         status: updated.status,
         updatedAt: updated.updatedAt,
         payload: updated as unknown as Record<string, unknown>,
@@ -460,6 +737,7 @@ export class PostgresStore implements Store {
       const order = asOrder(orderRow as unknown as Record<string, unknown>);
       if (
         order.status !== "searching" ||
+        order.offerExpiresAt !== undefined ||
         (order.driverId && order.driverId !== driverId) ||
         (order.offeredDriverId && order.offeredDriverId !== driverId)
       ) return undefined;
@@ -477,7 +755,7 @@ export class PostgresStore implements Store {
       const queueRow = queueRows.find(row => row.driverId === driverId);
       if (!queueRow) return undefined;
       const entry = asQueueEntry(queueRow as unknown as Record<string, unknown>);
-      if (entry.availableSeats < order.seats) return undefined;
+      if (entry.pendingOfferOrderId || entry.availableSeats < order.seats) return undefined;
 
       const now = Date.now();
       const fifo = queueRows.map(row => asQueueEntry(row as unknown as Record<string, unknown>))
@@ -522,6 +800,11 @@ export class PostgresStore implements Store {
     const rows = await db.select().from(ordersTable).where(or(
       eq(ordersTable.passengerId, userId),
       eq(ordersTable.driverId, userId),
+      and(
+        eq(ordersTable.status, "searching"),
+        eq(ordersTable.offeredDriverId, userId),
+        gt(ordersTable.offerExpiresAt, Date.now()),
+      ),
     )).orderBy(desc(ordersTable.createdAt));
     return rows.map((row) => asOrder(row as unknown as Record<string, unknown>));
   }
@@ -708,12 +991,14 @@ export class PostgresStore implements Store {
           status: "searching",
           driverId: undefined,
           offeredDriverId: undefined,
+          offerExpiresAt: undefined,
           seatLockExpiresAt: undefined,
           updatedAt: new Date().toISOString(),
         };
         await tx.update(ordersTable).set({
           driverId: null,
           offeredDriverId: null,
+          offerExpiresAt: null,
           status: "searching",
           updatedAt: reopened.updatedAt,
           payload: reopened as unknown as Record<string, unknown>,
@@ -724,8 +1009,17 @@ export class PostgresStore implements Store {
     // Expired queue-only locks can be cleared independently. This cleanup does
     // not restore seats; seat restoration is handled only by the locked order
     // transaction above.
-    await db.update(driverQueueTable).set({ seatLockExpiresAt: null })
-      .where(lte(driverQueueTable.seatLockExpiresAt, now));
+    await db.transaction(async tx => {
+      // Dispatch locks candidate rows by driver ID. Queue-only cleanup must
+      // acquire its rows in the same order before issuing a bulk update.
+      const expiredRows = await tx.select({ driverId: driverQueueTable.driverId }).from(driverQueueTable)
+        .where(lte(driverQueueTable.seatLockExpiresAt, now))
+        .orderBy(asc(driverQueueTable.driverId)).for("update");
+      if (expiredRows.length) {
+        await tx.update(driverQueueTable).set({ seatLockExpiresAt: null })
+          .where(inArray(driverQueueTable.driverId, expiredRows.map(row => row.driverId)));
+      }
+    });
   }
 
   async queueSnapshot(): Promise<Array<QueueEntry & { position: number }>> {

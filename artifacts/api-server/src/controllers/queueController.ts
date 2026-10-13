@@ -7,6 +7,7 @@ import { AppError } from "../utils/errors";
 import { translate } from "../utils/i18n";
 import { emitQueueUpdate } from "../utils/realtime";
 import { boundedInteger, pickEnum } from "../utils/validation";
+import { processOrderDispatch } from "../services/orderDispatchService";
 
 function getLocation(request: Request): Coordinates {
   const raw = request.body?.location;
@@ -78,6 +79,9 @@ export async function joinQueue(request: Request, response: Response): Promise<v
     8,
   );
   const existing = await store.getQueueEntry(driverId);
+  if (existing?.pendingOfferOrderId) {
+    throw new AppError(409, "Driver has a pending order offer", "QUEUE_BUSY");
+  }
   if (existing && existing.inFifo === false) {
     throw new AppError(
       409,
@@ -85,7 +89,7 @@ export async function joinQueue(request: Request, response: Response): Promise<v
       "ACTIVE_ROUTE",
     );
   }
-  const entry = await store.joinQueue({
+  await store.joinQueue({
     driverId,
     joinedAt: existing?.joinedAt ?? Date.now(),
     status: existing?.status ?? "searching",
@@ -97,6 +101,8 @@ export async function joinQueue(request: Request, response: Response): Promise<v
     currentOrderId: existing?.currentOrderId,
     seatLockExpiresAt: existing?.seatLockExpiresAt,
   });
+  await processOrderDispatch(request.app.locals.io);
+  const entry = await store.getQueueEntry(driverId);
   await emitQueueUpdate(request.app.locals.io, {
     type: existing ? "reordered" : "joined",
     driverId,
@@ -111,7 +117,7 @@ export async function joinQueue(request: Request, response: Response): Promise<v
 export async function leaveQueue(request: Request, response: Response): Promise<void> {
   const driverId = assertDriver(request);
   const entry = await store.getQueueEntry(driverId);
-  if (entry?.currentOrderId) {
+  if (entry?.currentOrderId || entry?.activeOrderIds?.length || entry?.pendingOfferOrderId) {
     throw new AppError(
       409,
       "Driver cannot leave the queue while an order is active",
@@ -120,6 +126,7 @@ export async function leaveQueue(request: Request, response: Response): Promise<
   }
   await store.leaveQueue(driverId);
   await emitQueueUpdate(request.app.locals.io, { type: "left", driverId });
+  await processOrderDispatch(request.app.locals.io);
   response.status(204).send();
 }
 
@@ -159,6 +166,9 @@ export async function updateQueueStatus(request: Request, response: Response): P
   if (!current) {
     throw new AppError(404, "Driver is not in the queue", "NOT_IN_QUEUE");
   }
+  if (current.pendingOfferOrderId) {
+    throw new AppError(409, "Accept or reject the pending offer before changing status", "QUEUE_BUSY");
+  }
   const allowedTransitions: Record<DriverQueueStatus, readonly DriverQueueStatus[]> = {
     searching: ["picking_up", "in_transit"],
     picking_up: ["searching", "en_route_to_c"],
@@ -187,5 +197,6 @@ export async function updateQueueStatus(request: Request, response: Response): P
     throw new AppError(404, "Driver is not in the queue", "NOT_IN_QUEUE");
   }
   await emitQueueUpdate(request.app.locals.io, { type: "status", driverId });
-  response.json({ entry, position: await store.getQueuePosition(driverId) });
+  await processOrderDispatch(request.app.locals.io);
+  response.json({ entry: await store.getQueueEntry(driverId), position: await store.getQueuePosition(driverId) });
 }

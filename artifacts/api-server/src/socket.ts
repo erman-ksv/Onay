@@ -5,6 +5,7 @@ import { readSocketToken } from "./middleware/auth";
 import { verifyAccessToken } from "./utils/token";
 import { logger } from "./lib/logger";
 import { PYATAK_ZONE, REQUIRE_DRIVER_APPROVAL } from "./utils/config";
+import { emitIncomingOrder } from "./utils/realtime";
 
 export function createRealtimeServer(httpServer: HttpServer): Server {
   const io = new Server(httpServer, {
@@ -56,6 +57,7 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
       events: [
         "incoming_order",
         "order:status",
+        "order:offer_withdrawn",
         "queue:snapshot",
         "queue:update",
         "queue:joined",
@@ -64,6 +66,7 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
         "queue:location",
         "queue:position",
         "queue:reordered",
+        "queue:order_offer",
         "push_alert",
       ],
     });
@@ -79,6 +82,15 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
         your_position: await store.getQueuePosition(userId),
         updated_at: new Date().toISOString(),
       });
+      if (socket.data.role === "driver") {
+        const orders = await store.listOrdersForUser(userId);
+        for (const order of orders) {
+          if (order.status === "searching" && order.offeredDriverId === userId &&
+              (order.offerExpiresAt ?? 0) > Date.now() && socket.connected) {
+            emitIncomingOrder(io, userId, order);
+          }
+        }
+      }
     } catch (err) {
       logger.error({ err, userId, socketId: socket.id }, "Socket queue initialization failed");
       socket.disconnect(true);

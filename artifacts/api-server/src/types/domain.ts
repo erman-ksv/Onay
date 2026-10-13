@@ -107,6 +107,8 @@ export interface QueueEntry {
   inFifo?: boolean;
   activeOrderIds?: string[];
   currentOrderId?: string;
+  /** Owns the seats reserved for the driver's single pending order offer. */
+  pendingOfferOrderId?: string;
   seatLockExpiresAt?: number;
 }
 
@@ -116,6 +118,9 @@ export interface Order {
   passengerPhone: string;
   driverId?: string;
   offeredDriverId?: string;
+  offerExpiresAt?: number;
+  /** Internal dispatch history prevents offering this order to a driver twice. */
+  attemptedDriverIds?: string[];
   pickupPoint: PickupPoint;
   pickupLocation: Coordinates;
   pickupAddress?: NormalizedAddress;
@@ -128,6 +133,11 @@ export interface Order {
   updatedAt: string;
   seatLockExpiresAt?: number;
   cancelledBy?: string;
+}
+
+export interface OrderOfferChange {
+  order: Order;
+  previousDriverId?: string;
 }
 
 export interface DeviceRegistration {

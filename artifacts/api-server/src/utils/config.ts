@@ -20,6 +20,11 @@ export const QUEUE_GEOFENCE_METERS = Number(
 );
 export const MAX_SPEED_KMH = 180;
 export const SEAT_LOCK_TTL_MS = 7 * 60 * 1000;
+const offerTimeoutSeconds = Number(process.env.TEZJET_OFFER_TIMEOUT_SECONDS ?? 60);
+if (!Number.isInteger(offerTimeoutSeconds) || offerTimeoutSeconds < 1 || offerTimeoutSeconds > 3600) {
+  throw new Error("TEZJET_OFFER_TIMEOUT_SECONDS must be an integer between 1 and 3600");
+}
+export const OFFER_TIMEOUT_MS = offerTimeoutSeconds * 1000;
 export const ADMIN_PHONE = process.env.ADMIN_PHONE
   ? process.env.ADMIN_PHONE.replace(/[^\d+]/g, "")
   : undefined;
