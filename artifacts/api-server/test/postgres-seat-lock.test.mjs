@@ -22,6 +22,7 @@ let otherStore;
 let runtimeStore;
 let cancelOrder;
 let updateOrderStatus;
+let MemoryStore;
 let schemaCreated = false;
 
 before(async () => {
@@ -40,6 +41,7 @@ before(async () => {
     stdin: {
       contents: [
         'export { PostgresStore } from "./src/store/postgresStore";',
+        'export { MemoryStore } from "./src/store/memoryStore";',
         'export { pool } from "../../lib/db/src/index";',
         'export { store as runtimeStore } from "./src/store";',
         'export { cancelOrder, updateOrderStatus } from "./src/controllers/orderController";',
@@ -65,6 +67,7 @@ before(async () => {
   runtimeStore = production.runtimeStore;
   cancelOrder = production.cancelOrder;
   updateOrderStatus = production.updateOrderStatus;
+  MemoryStore = production.MemoryStore;
   assert.ok(runtimeStore instanceof production.PostgresStore, "Controller runtime must use the real PostgreSQL adapter.");
   await Promise.all([store.initialize(), otherStore.initialize(), runtimeStore.initialize()]);
 }, { timeout: 30_000 });
@@ -121,14 +124,18 @@ async function fixture(t, { seats = [2], expired = true, searching = false, capa
     ownOrders.push(order.id);
     orders.push(order);
   }
-  const entry = await store.joinQueue({
+  const seededEntry = {
     driverId: driver.id, joinedAt: Date.now(), status: searching ? "searching" : "en_route_to_c",
     availableSeats: capacity - (searching ? 0 : seats.reduce((sum, count) => sum + count, 0)),
     lastLocation: location, priorityLock: !searching, inFifo: true,
     activeOrderIds: searching ? [] : orders.map(order => order.id),
     currentOrderId: searching ? undefined : orders[0]?.id,
     seatLockExpiresAt: searching ? undefined : expiry,
-  });
+  };
+  // Joining is a production operation that starts idle. Fixture reservations
+  // are seeded explicitly so the join API need not accept stale trip fields.
+  await store.joinQueue(seededEntry);
+  const entry = await store.updateQueueEntry(driver.id, seededEntry);
   return { passenger, driver, orders, entry, expiry, capacity, createUser };
 }
 
@@ -426,4 +433,144 @@ test("PostgreSQL lifecycle checks the live actor and completion restores seats o
   assert.deepEqual(current.activeOrderIds, []);
   assert.equal(current.currentOrderId, undefined);
   assert.equal((await store.getOrder(orderId)).driverId, f.driver.id, "Completed trips retain the assigned driver for history.");
+});
+
+test("PostgreSQL rejoining cannot reset occupied seats or active order identifiers", async t => {
+  const f = await fixture(t, { expired: false });
+  const beforeQueue = await store.getQueueEntry(f.driver.id);
+  await assert.rejects(store.joinQueue({
+    ...beforeQueue, availableSeats: 8, status: "searching", activeOrderIds: [], currentOrderId: undefined,
+  }), { statusCode: 409, code: "QUEUE_BUSY" });
+  assert.deepEqual(await store.getQueueEntry(f.driver.id), beforeQueue);
+  assert.equal((await store.getOrder(f.orders[0].id)).driverId, f.driver.id);
+});
+
+test("PostgreSQL leaving cannot delete an active reservation even without currentOrderId", async t => {
+  const f = await fixture(t, { expired: false });
+  await store.updateQueueEntry(f.driver.id, { currentOrderId: undefined });
+  const beforeQueue = await store.getQueueEntry(f.driver.id);
+  await assert.rejects(store.leaveQueue(f.driver.id), { statusCode: 409, code: "ACTIVE_ORDER" });
+  assert.deepEqual(await store.getQueueEntry(f.driver.id), beforeQueue);
+});
+
+test("PostgreSQL rejoining after expiry ignores stale reservation fields and preserves FIFO time", async t => {
+  const f = await fixture(t);
+  const oldQueue = await store.getQueueEntry(f.driver.id);
+  await store.clearExpiredSeatLocks();
+  const current = await store.getQueueEntry(f.driver.id);
+  const joined = await store.joinQueue({ ...oldQueue, availableSeats: 8, joinedAt: oldQueue.joinedAt - 10_000 });
+  assert.deepEqual(joined, current);
+  await assertReleased(f.driver.id, f.orders, f.capacity);
+});
+
+test("PostgreSQL simultaneous idle rejoins preserve the existing FIFO position", { timeout: 15_000 }, async t => {
+  const f = await fixture(t, { searching: true, seats: [], expired: false });
+  const results = await overlapping("tezjet_driver_queue", "driver_id", f.driver.id, [
+    () => store.joinQueue({ ...f.entry, joinedAt: 1, availableSeats: 5 }),
+    () => otherStore.joinQueue({ ...f.entry, joinedAt: 2, availableSeats: 7 }),
+  ]);
+  assert.deepEqual(results.map(entry => entry.availableSeats), [5, 7]);
+  const current = await store.getQueueEntry(f.driver.id);
+  assert.equal(current.joinedAt, f.entry.joinedAt);
+  assert.equal(current.availableSeats, 7);
+  assert.equal(current.currentOrderId, undefined);
+  assert.deepEqual(current.activeOrderIds, []);
+});
+
+function claimFixture(f) {
+  return store.claimOrderForDriver(f.orders[0].id, f.driver.id,
+    { status: "en_route_to_c", seatLockExpiresAt: f.expiry }, {});
+}
+
+test("PostgreSQL a claim winning against leave keeps its queue and seat debit", { timeout: 15_000 }, async t => {
+  const f = await fixture(t, { searching: true, expired: false });
+  const results = await overlapping("tezjet_driver_queue", "driver_id", f.driver.id, [
+    () => claimFixture(f),
+    () => otherStore.leaveQueue(f.driver.id).catch(error => ({ error })),
+  ]);
+  assert.equal(results[0]?.driverId, f.driver.id);
+  assert.equal(results[1]?.error?.statusCode, 409);
+  const current = await store.getQueueEntry(f.driver.id);
+  assert.equal(current.availableSeats, 6);
+  assert.deepEqual(current.activeOrderIds, [f.orders[0].id]);
+});
+
+test("PostgreSQL leave winning against a claim keeps the order unassigned", { timeout: 15_000 }, async t => {
+  const f = await fixture(t, { searching: true, expired: false });
+  const results = await overlapping("tezjet_driver_queue", "driver_id", f.driver.id, [
+    () => store.leaveQueue(f.driver.id),
+    () => claimFixture(f),
+  ]);
+  assert.equal(results[1], undefined);
+  assert.equal(await store.getQueueEntry(f.driver.id), undefined);
+  const order = await store.getOrder(f.orders[0].id);
+  assert.equal(order.status, "searching");
+  assert.equal(order.driverId, undefined);
+  await store.leaveQueue(f.driver.id); // An already absent entry is harmless.
+});
+
+test("PostgreSQL a claim winning against stale rejoin preserves its reservation", { timeout: 15_000 }, async t => {
+  const f = await fixture(t, { searching: true, expired: false });
+  const results = await overlapping("tezjet_driver_queue", "driver_id", f.driver.id, [
+    () => claimFixture(f),
+    () => otherStore.joinQueue(f.entry).catch(error => ({ error })),
+  ]);
+  assert.ok(results[0]);
+  assert.equal(results[1]?.error?.statusCode, 409);
+  const current = await store.getQueueEntry(f.driver.id);
+  assert.equal(current.availableSeats, 6);
+  assert.deepEqual(current.activeOrderIds, [f.orders[0].id]);
+});
+
+test("PostgreSQL rejoin winning against a claim rechecks the reduced seat count", { timeout: 15_000 }, async t => {
+  const f = await fixture(t, { searching: true, expired: false });
+  const results = await overlapping("tezjet_driver_queue", "driver_id", f.driver.id, [
+    () => store.joinQueue({ ...f.entry, availableSeats: 1 }),
+    () => claimFixture(f),
+  ]);
+  assert.equal(results[0].availableSeats, 1);
+  assert.equal(results[1], undefined);
+  assert.equal((await store.getQueueEntry(f.driver.id)).availableSeats, 1);
+  assert.equal((await store.getOrder(f.orders[0].id)).status, "searching");
+});
+
+test("PostgreSQL a fresh join cannot restore trip fields from a deleted queue snapshot", async t => {
+  const f = await fixture(t, { searching: true, seats: [], expired: false });
+  await store.leaveQueue(f.driver.id);
+  const beforeJoin = Date.now();
+  const joined = await store.joinQueue({
+    ...f.entry, joinedAt: 1, status: "in_transit", inFifo: false, priorityLock: true,
+    activeOrderIds: ["old-order"], currentOrderId: "old-order", seatLockExpiresAt: f.expiry,
+  });
+  assert.ok(joined.joinedAt >= beforeJoin);
+  assert.equal(joined.status, "searching");
+  assert.equal(joined.inFifo, true);
+  assert.equal(joined.priorityLock, false);
+  assert.deepEqual(joined.activeOrderIds, []);
+  assert.equal(joined.currentOrderId, undefined);
+  assert.equal(joined.seatLockExpiresAt, undefined);
+});
+
+test("MemoryStore enforces the same queue join and leave ownership boundaries", () => {
+  const memory = new MemoryStore();
+  const input = {
+    driverId: "memory-driver", joinedAt: 1, availableSeats: 8, lastLocation: location,
+    status: "in_transit", priorityLock: true, inFifo: false,
+    activeOrderIds: ["old-order"], currentOrderId: "old-order", seatLockExpiresAt: Date.now() + 60_000,
+  };
+  const joined = memory.joinQueue(input);
+  assert.equal(joined.status, "searching");
+  assert.deepEqual(joined.activeOrderIds, []);
+  assert.equal(joined.currentOrderId, undefined);
+  assert.equal(joined.inFifo, true);
+  const updated = memory.joinQueue({ ...input, availableSeats: 7 });
+  assert.equal(updated.joinedAt, joined.joinedAt);
+  assert.equal(updated.availableSeats, 7);
+  memory.updateQueueEntry(input.driverId, { activeOrderIds: ["accepted-order"], currentOrderId: undefined, availableSeats: 5 });
+  assert.throws(() => memory.joinQueue(input), { statusCode: 409, code: "QUEUE_BUSY" });
+  assert.throws(() => memory.leaveQueue(input.driverId), { statusCode: 409, code: "ACTIVE_ORDER" });
+  assert.equal(memory.getQueueEntry(input.driverId).availableSeats, 5);
+  memory.updateQueueEntry(input.driverId, { activeOrderIds: [] });
+  memory.leaveQueue(input.driverId);
+  assert.equal(memory.getQueueEntry(input.driverId), undefined);
 });
