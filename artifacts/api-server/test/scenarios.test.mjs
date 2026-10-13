@@ -182,7 +182,7 @@ function startApiServer(overrides = {}) {
 }
 
 async function stopApiServer() {
-  if (!serverProcess || serverProcess.exitCode !== null) return;
+  if (!serverProcess || serverProcess.exitCode !== null || serverProcess.signalCode !== null) return;
   await new Promise(resolve => {
     serverProcess.once("exit", resolve);
     serverProcess.kill("SIGTERM");
@@ -314,6 +314,28 @@ test("covers OTP auth, FIFO offers, Point C locks, Point D pooling, and realtime
   assert.equal(available.body.available, true);
   assert.equal(available.body.eligible_driver_count, 2);
 
+  const declinedOrder = await createOrder(passengerLoginToken, "C", 1);
+  assert.equal(declinedOrder.offered_driver_id, firstJoin.body.entry.driverId);
+  const withdrawn = waitForSocketEvent(driverOneSocket, "order:offer_withdrawn", payload => payload.order_id === declinedOrder.id);
+  const nextIncoming = waitForSocketEvent(driverTwoSocket, "incoming_order", payload => payload.order?.id === declinedOrder.id);
+  const passengerReoffered = waitForSocketEvent(passengerSocket, "order:status", payload => payload.order?.id === declinedOrder.id && payload.order?.offered_driver_id === secondJoin.body.entry.driverId);
+  const rejected = await request(`/orders/${declinedOrder.id}/reject`, { method: "POST", token: driverOneToken });
+  assert.equal(rejected.response.status, 200);
+  assert.equal(rejected.body.order.offered_driver_id, secondJoin.body.entry.driverId);
+  assert.equal((await withdrawn).order_id, declinedOrder.id);
+  assert.equal((await nextIncoming).order.id, declinedOrder.id);
+  assert.equal((await passengerReoffered).order.offered_driver_id, secondJoin.body.entry.driverId);
+  for (const action of ["accept", "reject"]) {
+    const stale = await request(`/orders/${declinedOrder.id}/${action}`, { method: "POST", token: driverOneToken });
+    assert.equal(stale.response.status, 409, "The previous recipient cannot act on the next driver's offer.");
+  }
+  const afterRejectQueue = await request("/queue", { token: driverOneToken });
+  const releasedDriver = afterRejectQueue.body.queue.find(entry => entry.driverId === firstJoin.body.entry.driverId);
+  assert.equal(releasedDriver.availableSeats, 3);
+  assert.equal(releasedDriver.pendingOfferOrderId, undefined);
+  const declinedCancelled = await request(`/orders/${declinedOrder.id}/cancel`, { method: "POST", token: passengerLoginToken });
+  assert.equal(declinedCancelled.response.status, 200);
+
   const firstOrderIncoming = waitForSocketEvent(
     driverOneSocket,
     "incoming_order",
@@ -429,24 +451,7 @@ test("covers OTP auth, FIFO offers, Point C locks, Point D pooling, and realtime
   }
 
   const transitOrder = await createOrder(passengerLoginToken, "C", 1);
-  assert.equal(transitOrder.offered_driver_id, secondJoin.body.entry.driverId, "The earlier FIFO driver receives the next offer.");
-  const withdrawn = waitForSocketEvent(driverTwoSocket, "order:offer_withdrawn", payload => payload.order_id === transitOrder.id);
-  const nextIncoming = waitForSocketEvent(driverOneSocket, "incoming_order", payload => payload.order?.id === transitOrder.id);
-  const passengerReoffered = waitForSocketEvent(passengerSocket, "order:status", payload => payload.order?.id === transitOrder.id && payload.order?.offered_driver_id === firstJoin.body.entry.driverId);
-  const rejected = await request(`/orders/${transitOrder.id}/reject`, { method: "POST", token: driverTwoToken });
-  assert.equal(rejected.response.status, 200);
-  assert.equal(rejected.body.order.offered_driver_id, firstJoin.body.entry.driverId);
-  assert.equal((await withdrawn).order_id, transitOrder.id);
-  assert.equal((await nextIncoming).order.id, transitOrder.id);
-  assert.equal((await passengerReoffered).order.offered_driver_id, firstJoin.body.entry.driverId);
-  for (const action of ["accept", "reject"]) {
-    const stale = await request(`/orders/${transitOrder.id}/${action}`, { method: "POST", token: driverTwoToken });
-    assert.equal(stale.response.status, 409, "The previous recipient cannot act on the next driver's offer.");
-  }
-  const afterRejectQueue = await request("/queue", { token: driverTwoToken });
-  const releasedDriver = afterRejectQueue.body.queue.find(entry => entry.driverId === secondJoin.body.entry.driverId);
-  assert.equal(releasedDriver.availableSeats, 3);
-  assert.equal(releasedDriver.pendingOfferOrderId, undefined);
+  assert.equal(transitOrder.offered_driver_id, firstJoin.body.entry.driverId, "Completion preserves the existing FIFO timestamp.");
   const transitAccept = await request(`/orders/${transitOrder.id}/accept`, {
     method: "POST",
     token: driverOneToken,
