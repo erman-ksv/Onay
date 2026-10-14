@@ -9,7 +9,7 @@ import { emitQueueUpdate } from "../utils/realtime";
 import { boundedInteger, pickEnum } from "../utils/validation";
 import { processOrderDispatch } from "../services/orderDispatchService";
 import { readDriverRouteChoiceInput } from "../utils/driverRoute";
-import { resolveRouteQueue, sameQueueLane } from "../utils/routeQueue";
+import { queueStatusView } from "../services/queueView";
 
 function getLocation(request: Request): Coordinates {
   const raw = request.body?.location;
@@ -47,39 +47,7 @@ function assertDriver(request: Request): string {
 }
 
 export async function getQueueStatus(request: Request, response: Response): Promise<void> {
-  const entry = request.auth ? await store.getQueueEntry(request.auth.userId) : undefined;
-  const choice = request.auth?.role === "driver" ? request.auth.user.driverRouteChoice : undefined;
-  let context = entry?.routeContext;
-  let routeError: string | null = null;
-  if (!context && choice) {
-    try {
-      context = resolveRouteQueue(choice, await store.getRoute(choice.routeId), {
-        routeId: choice.routeId, direction: choice.direction, expectedUpdatedAt: choice.routeUpdatedAt,
-      });
-    } catch (error) {
-      if (!(error instanceof AppError)) throw error;
-      routeError = error.code ?? "ROUTE_CHANGED";
-    }
-  }
-  const snapshot = await store.queueSnapshot();
-  const zone = context ? {
-    id: `route:${context.routeId}:${context.pitak}`, name: `${context.routeName} · питак ${context.pitak}: ${context.stopName}`,
-    center: context.center, geofence_meters: context.radiusMeters,
-  } : routeError ? null : {
-    id: PYATAK_ZONE.id, name: PYATAK_ZONE.name, center: PYATAK_ZONE.center, geofence_meters: PYATAK_ZONE.radiusMeters,
-  };
-  response.json({
-    zone,
-    queue_point: zone?.center ?? null,
-    geofence_meters: zone?.geofence_meters ?? null,
-    route_queue: context ?? null,
-    route_queue_error: routeError,
-    your_entry: entry ?? null,
-    queue: request.auth?.role === "admin" ? snapshot : routeError ? [] : snapshot.filter(item => sameQueueLane(item.routeContext, context)),
-    your_position: request.auth
-      ? await store.getQueuePosition(request.auth.userId)
-      : null,
-  });
+  response.json(await queueStatusView(request.auth?.user));
 }
 
 export async function joinQueue(request: Request, response: Response): Promise<void> {
@@ -163,7 +131,7 @@ export async function updateQueueLocation(request: Request, response: Response):
     throw new AppError(404, "Driver is not in the queue", "NOT_IN_QUEUE");
   }
   if (
-    current.status === "searching" &&
+    !current.routeContext && current.status === "searching" &&
     !isWithinRadius(location, PYATAK_ZONE.center, PYATAK_ZONE.radiusMeters)
   ) {
     throw new AppError(

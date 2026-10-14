@@ -190,7 +190,8 @@ class MemoryStore implements Store {
   }
 
   getQueueEntry(driverId: string): QueueEntry | undefined {
-    return this.queueEntries.get(driverId);
+    const entry = this.queueEntries.get(driverId);
+    return entry?.routeContext ? structuredClone(entry) : entry;
   }
 
   /**
@@ -224,7 +225,7 @@ class MemoryStore implements Store {
     const joined = joinQueueEntry({ ...entry, pendingOfferOrderId: undefined, routeContext }, current);
     if (current?.routeContext) joined.availableSeats = current.availableSeats;
     this.queueEntries.set(entry.driverId, joined);
-    return joined;
+    return joined.routeContext ? structuredClone(joined) : joined;
   }
 
   updateQueueEntry(
@@ -239,7 +240,7 @@ class MemoryStore implements Store {
     if ("routeContext" in patch) throw new AppError(409, "Queue context cannot be changed", "QUEUE_BUSY");
     if (entry.routeContext && patch.lastLocation) assertRouteQueueLocation(entry.routeContext, patch.lastLocation);
     Object.assign(entry, patch);
-    return entry;
+    return entry.routeContext ? structuredClone(entry) : entry;
   }
 
   leaveQueue(driverId: string): void {
@@ -254,7 +255,8 @@ class MemoryStore implements Store {
     return [...this.queueEntries.values()]
       .filter((entry) => entry.inFifo !== false)
       .filter((entry) => !entry.seatLockExpiresAt || entry.seatLockExpiresAt > Date.now())
-      .sort(compareOfferDrivers);
+      .sort(compareOfferDrivers)
+      .map(entry => entry.routeContext ? structuredClone(entry) : entry);
   }
 
   getQueuePosition(driverId: string): number | null {

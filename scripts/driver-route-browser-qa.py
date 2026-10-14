@@ -319,6 +319,7 @@ class DriverRouteQA:
         require(entry["routeContext"]["routeId"] == route["id"] and entry["routeContext"]["pitak"] == pitak, "Server must derive the correct route/pitak")
         self.expect(self.control("driver-queue-context")).to_contain_text(route["name"])
         self.expect(self.control("driver-queue-context")).to_contain_text("питак " + pitak)
+        self.expect(self.page.get_by_text("Ожидаем подходящий заказ. Сервер выбирает водителя по очереди и доступным местам.", exact=True)).to_have_count(0)
         self.expect(self.control("driver-queue-status")).to_contain_text("позиция 1")
         self.expect(self.control("driver-route-save")).to_be_disabled()
         self.control("driver-queue-context").screenshot(path=str(self.args.output_dir / ("queue-" + pitak + "-persisted.png")))
@@ -327,6 +328,7 @@ class DriverRouteQA:
         require(pending.value.status == 200 and pending.value.json()["your_position"] == 1, "Reopening must restore the durable lane position")
         self.expect(self.control("driver-queue-context")).to_contain_text("питак " + pitak)
         self.expect(self.control("driver-route-save")).to_be_disabled()
+        self.context.set_geolocation({"latitude": stop["location"]["lat"], "longitude": stop["location"]["lng"], "accuracy": 5})
         with self.response_for("/queue/location", "PATCH") as pending:
             self.control("driver-queue-location").click()
         require(pending.value.status == 200, "Actual location button must update within its own pitak zone")

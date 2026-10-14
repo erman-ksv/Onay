@@ -5,6 +5,7 @@ import path from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
+import { io as createSocket } from "socket.io-client";
 
 // Use the production HTTP app and adapters. PostgreSQL is mandatory, and
 // all six tables are cloned with their real columns/indexes into a private
@@ -16,6 +17,8 @@ const tables = ["tezjet_users", "tezjet_otp_challenges", "tezjet_driver_queue", 
 const envKeys = ["DATABASE_URL", "TEZJET_STORAGE_ADAPTER", "NODE_ENV", "SESSION_SECRET", "LOG_LEVEL", "REQUIRE_DRIVER_APPROVAL", "PYATAK_CENTER_LAT", "PYATAK_CENTER_LNG"];
 const originalEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
 let moduleDirectory, production, database, adminPool, store, otherStore, server, baseUrl;
+let realtime;
+const sockets = new Set();
 let schemaCreated = false;
 
 before(async () => {
@@ -43,11 +46,12 @@ before(async () => {
         'export { pool } from "../../lib/db/src/index";',
         'export { store as runtimeStore } from "./src/store";',
         'export { createAccessToken } from "./src/utils/token";',
+        'export { createRealtimeServer } from "./src/socket";',
       ].join("\n"),
       resolveDir: apiRoot, loader: "ts",
     },
     outfile: entry, bundle: true, platform: "node", format: "esm", target: "node22", logLevel: "silent",
-    external: ["pg-native", "pino", "pino-http"],
+    external: ["pg-native", "pino", "pino-http", "socket.io"],
     banner: { js: 'import { createRequire as testCreateRequire } from "node:module"; const require = testCreateRequire(import.meta.url);' },
   });
   production = await import(pathToFileURL(entry).href);
@@ -70,7 +74,9 @@ before(async () => {
 
 after(async () => {
   try {
-    if (server) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    for (const socket of sockets) socket.disconnect();
+    if (realtime) await new Promise(resolve => realtime.close(resolve));
+    if (server?.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     if (database) await database.end();
     if (schemaCreated && adminPool) await adminPool.query(`DROP SCHEMA "${schema}" CASCADE`);
   } finally {
@@ -234,6 +240,9 @@ test("HTTP persists separate route A/B lanes and restores their own FIFO positio
     assert.equal(context.routeUpdatedAt, config.updatedAt);
     assert.equal(context.radiusMeters, config.pitaks.radiusMeters);
     assert.deepEqual(await otherStore.getQueueEntry(driver.user.id), await store.getQueueEntry(driver.user.id));
+    const locationUpdate = await request("/queue/location", { token: driver.token, method: "PATCH", body: { location: at(config, direction) } });
+    assert.equal(locationUpdate.status, 200, JSON.stringify(locationUpdate.body));
+    assert.equal(locationUpdate.body.entry.routeContext.pitak, context.pitak);
   }
   const view = await request("/queue", { token: a2.token });
   assert.equal(view.status, 200); assert.equal(view.body.your_position, 2);
@@ -254,7 +263,15 @@ test("both adapters validate the selected endpoint and isolate configured queues
     const a = await planned(f, route), b = await planned(f, route, "b_to_a");
     await assert.rejects(async () => adapter.joinQueue({ ...enrollment(f, a.user, route), lastLocation: at(route, "b_to_a") }, a.user.sessionVersion, choiceInput(route)), e => e.code === "OUTSIDE_QUEUE_GEOFENCE");
     assert.equal(await adapter.getQueueEntry(a.user.id), undefined);
-    await adapter.joinQueue(enrollment(f, a.user, route), a.user.sessionVersion, choiceInput(route));
+    const joined = await adapter.joinQueue(enrollment(f, a.user, route), a.user.sessionVersion, choiceInput(route));
+    const durable = structuredClone(await adapter.getQueueEntry(a.user.id));
+    joined.routeContext.center.lat = 0;
+    delete joined.routeContext;
+    const fetched = await adapter.getQueueEntry(a.user.id);
+    assert.deepEqual(fetched, durable, "Changing or deleting a returned context must not erase the stored lane or move its geofence.");
+    fetched.routeContext.center.lng = 0;
+    delete fetched.routeContext;
+    assert.deepEqual(await adapter.getQueueEntry(a.user.id), durable, "A fetched configured entry must also be isolated from caller mutations.");
     await adapter.joinQueue(enrollment(f, b.user, route, "b_to_a"), b.user.sessionVersion, choiceInput(route, "b_to_a"));
     assert.equal((await adapter.getOrderAvailability("C", 1)).available, false);
     assert.equal(await adapter.getFirstEligibleDriver(1), undefined);
@@ -313,6 +330,135 @@ test("real PostgreSQL choice-versus-configured-join barriers preserve one legal 
       assert.equal(await otherStore.getQueueEntry(driver.user.id), undefined);
       assert.equal((await store.getUser(driver.user.id)).driverRouteChoice.direction, "b_to_a");
     }
+  }
+});
+
+test("actual HTTP configured joins recheck live session, role and approval after a user row-lock wait", { timeout: 20_000 }, async t => {
+  for (const mutation of ["session", "role", "approval"]) {
+    await t.test(mutation, async child => {
+      const f = await fixture(child), route = await f.configured(), driver = await planned(f, route);
+      const blocker = await adminPool.connect();
+      let pending;
+      try {
+        await blocker.query("BEGIN");
+        await blocker.query(`SELECT id FROM "${schema}".tezjet_users WHERE id = $1 FOR UPDATE`, [driver.user.id]);
+        pending = join(driver, route);
+        await waitForBlockedTransactions(1);
+        // HTTP has authenticated with the prior account state. Its GPS-account
+        // write is now waiting for this real concurrent account transaction;
+        // the eventual enrollment must recheck the committed live authority.
+        if (mutation === "session") await blocker.query(`UPDATE "${schema}".tezjet_users SET session_version = session_version + 1 WHERE id = $1`, [driver.user.id]);
+        if (mutation === "role") await blocker.query(`UPDATE "${schema}".tezjet_users SET role = 'passenger', roles = '["driver","passenger"]'::jsonb WHERE id = $1`, [driver.user.id]);
+        if (mutation === "approval") await blocker.query(`UPDATE "${schema}".tezjet_users SET driver_approval_status = 'rejected' WHERE id = $1`, [driver.user.id]);
+        await blocker.query("COMMIT");
+        const [status, code] = mutation === "session" ? [401, "UNAUTHORIZED"] : mutation === "role" ? [403, "FORBIDDEN"] : [403, "DRIVER_NOT_APPROVED"];
+        assertError(await pending, status, code);
+        assert.equal(await otherStore.getQueueEntry(driver.user.id), undefined, "Failed live authority checks must leave no inserted queue row.");
+        assert.deepEqual((await otherStore.getUser(driver.user.id)).driverRouteChoice, savedChoice(route));
+      } finally {
+        await blocker.query("ROLLBACK");
+        blocker.release();
+        if (pending) await pending;
+      }
+    });
+  }
+});
+
+test("a real HTTP admin layout writer queued first makes an overlapping configured join stale and rolls back enrollment", { timeout: 20_000 }, async t => {
+  const f = await fixture(t), route = await f.configured(), driver = await planned(f, route), admin = await f.createUser("admin");
+  const blocker = await adminPool.connect();
+  const pending = [];
+  try {
+    await blocker.query("BEGIN");
+    await blocker.query(`SELECT id FROM "${schema}".tezjet_routes WHERE id = $1 FOR UPDATE`, [route.id]);
+    pending.push(request(`/admin/routes/${route.id}/layout`, { token: admin.token, method: "PUT", body: {
+      expected_updated_at: route.updatedAt,
+      stops: editStops(route).map((stop, index) => ({ ...stop, name: index === 1 ? "Обновлённая промежуточная остановка" : stop.name })),
+      pitaks: { a_stop_code: pitaks.aStopCode, b_stop_code: pitaks.bStopCode, radius_meters: pitaks.radiusMeters },
+    } }));
+    await waitForBlockedTransactions(1);
+    pending.push(join(driver, route));
+    await waitForBlockedTransactions(2);
+    // Observed PostgreSQL lock waiters establish that the admin UPDATE is
+    // ahead of the join's route SHARE lock. Simultaneous JS starts alone do
+    // not establish this ordering or prove a stale version was read.
+    await blocker.query("COMMIT");
+    const [written, rejected] = await Promise.all(pending);
+    assert.equal(written.status, 200, JSON.stringify(written.body));
+    assert.ok(Date.parse(written.body.route.updatedAt) > Date.parse(route.updatedAt));
+    assert.equal(written.body.route.stops[1].name, "Обновлённая промежуточная остановка");
+    assertError(rejected, 409, "ROUTE_CHANGED");
+    assert.equal(await otherStore.getQueueEntry(driver.user.id), undefined, "The losing join must roll back its newly inserted row.");
+    assert.deepEqual(await otherStore.getRoute(route.id), written.body.route);
+    assert.deepEqual((await otherStore.getUser(driver.user.id)).driverRouteChoice, savedChoice(route));
+    const restored = await request("/driver/route", { token: driver.token });
+    assert.equal(restored.status, 200);
+    assert.equal(restored.body.unavailable_reason, "ROUTE_CHANGED");
+  } finally {
+    await blocker.query("ROLLBACK");
+    blocker.release();
+    await Promise.allSettled(pending);
+  }
+});
+
+function initialSocketSnapshot(t, token) {
+  const socket = createSocket(new URL(baseUrl).origin, {
+    path: "/api/socket.io", auth: { token }, transports: ["websocket"],
+    autoConnect: false, reconnection: false,
+  });
+  sockets.add(socket);
+  t.after(() => { socket.disconnect(); sockets.delete(socket); });
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => finish(new Error("Timed out waiting for the real initial queue:snapshot")), 5_000);
+    function finish(error, snapshot) {
+      clearTimeout(timer);
+      socket.off("queue:snapshot", onSnapshot);
+      socket.off("connect_error", onError);
+      if (error) reject(error);
+      else resolve(snapshot);
+    }
+    const onSnapshot = snapshot => finish(undefined, snapshot);
+    const onError = error => finish(error);
+    socket.once("queue:snapshot", onSnapshot);
+    socket.once("connect_error", onError);
+    socket.connect();
+  });
+}
+
+test("actual Socket.IO initial snapshots expose only the caller's configured lane or legacy queue", { timeout: 20_000 }, async t => {
+  const f = await fixture(t), route = await f.configured(), route2 = await f.configured();
+  const a1 = await planned(f, route), a2 = await planned(f, route), b = await planned(f, route, "b_to_a");
+  const other = await planned(f, route2), observer = await planned(f, route);
+  const legacy = await f.createUser(), passenger = await f.createUser("passenger");
+  const socketJoinedAt = Date.now();
+  const enrollments = [[a1, route, "a_to_b"], [a2, route, "a_to_b"], [b, route, "b_to_a"], [other, route2, "a_to_b"]];
+  for (const [index, [driver, config, direction]] of enrollments.entries()) {
+    await store.joinQueue({ ...enrollment(f, driver.user, config, direction), joinedAt: socketJoinedAt + index }, driver.user.sessionVersion, choiceInput(config, direction));
+  }
+  await store.joinQueue(f.queueInput(legacy.user), legacy.user.sessionVersion);
+  // Attach the production initializer to the very same real HTTP server and
+  // PostgreSQL-backed runtime store used by the request tests, not a mocked
+  // Socket.IO handler or an alternative queue projection.
+  realtime = production.createRealtimeServer(server);
+  production.app.locals.io = realtime;
+  const cases = [
+    [a2, [a1.user.id, a2.user.id], 2, `route:${route.id}:A`],
+    [b, [b.user.id], 1, `route:${route.id}:B`],
+    [other, [other.user.id], 1, `route:${route2.id}:A`],
+    [observer, [a1.user.id, a2.user.id], null, `route:${route.id}:A`],
+    [legacy, [legacy.user.id], 1, "pyatak"],
+    [passenger, [legacy.user.id], null, "pyatak"],
+  ];
+  for (const [actor, ids, position, zoneId] of cases) {
+    const snapshot = await initialSocketSnapshot(t, actor.token);
+    assert.deepEqual(snapshot.queue.map(entry => entry.driverId), ids, "Initial snapshots must not leak another route, opposite pitak, or legacy lane.");
+    assert.equal(snapshot.your_position, position);
+    assert.equal(snapshot.zone.id, zoneId);
+    assert.deepEqual(snapshot.queue.map(entry => entry.position), ids.map((_, index) => index + 1));
+    const http = await request("/queue", { token: actor.token });
+    assert.equal(http.status, 200);
+    assert.deepEqual(snapshot.queue, http.body.queue, "Socket initialization and HTTP must use the same durable lane view.");
+    assert.deepEqual(snapshot.zone, http.body.zone, "The initial zone must also identify the same pitak and geofence as HTTP.");
   }
 });
 
