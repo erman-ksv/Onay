@@ -4,6 +4,7 @@ import { store } from "../store";
 import type { Locale, User } from "../types/domain";
 import { createAccessToken } from "../utils/token";
 import { normalizePhone } from "../utils/phone";
+import { otpCode, otpPhone, otpStorageOperation, sendOtpRateLimit } from "../utils/otpRequest";
 import { serializeUser } from "../utils/serialize";
 import { translate } from "../utils/i18n";
 import { AppError } from "../utils/errors";
@@ -32,7 +33,7 @@ function issueToken(user: User): string {
 }
 
 export async function requestOtp(request: Request, response: Response): Promise<void> {
-  const phoneNumber = normalizePhone(requiredString(request.body?.phone_number, "phone_number", 32));
+  const phoneNumber = otpPhone(request.body?.phone_number);
   const role = pickEnum(request.body?.role ?? "passenger", "role", roles);
   if (
     role === "admin" &&
@@ -44,14 +45,19 @@ export async function requestOtp(request: Request, response: Response): Promise<
   const fullName = optionalString(request.body?.full_name, "full_name", 120);
   const code = String(randomInt(100000, 1_000_000));
 
-  await store.saveOtp({
+  const admission = await otpStorageOperation(() => store.saveOtpProtected({
     phoneNumber,
     code,
     role,
     locale,
     fullName,
     expiresAt: Date.now() + OTP_TTL_MS,
-  });
+  }));
+
+  if (!admission.allowed) {
+    sendOtpRateLimit(response, admission.retryAfterMs);
+    return;
+  }
 
   response.status(202).json({
     message: translate(locale, "otpSent"),
@@ -61,12 +67,17 @@ export async function requestOtp(request: Request, response: Response): Promise<
 }
 
 export async function verifyOtp(request: Request, response: Response): Promise<void> {
-  const phoneNumber = normalizePhone(requiredString(request.body?.phone_number, "phone_number", 32));
-  const code = requiredString(request.body?.code, "code", 12);
-  const challenge = await store.consumeOtp(phoneNumber, code);
-  if (!challenge) {
+  const phoneNumber = otpPhone(request.body?.phone_number);
+  const code = otpCode(request.body?.code);
+  const verification = await otpStorageOperation(() => store.consumeOtpProtected(phoneNumber, code));
+  if (verification.status === "limited") {
+    sendOtpRateLimit(response, verification.retryAfterMs);
+    return;
+  }
+  if (verification.status === "invalid") {
     throw new AppError(401, translate("ru", "invalidOtp"), "INVALID_OTP");
   }
+  const challenge = verification.challenge;
 
   let user = await store.getUserByPhone(phoneNumber);
   if (!user) {

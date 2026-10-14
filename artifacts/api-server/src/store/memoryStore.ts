@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { OFFER_TIMEOUT_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
-import type { DriverRouteChoiceInput, RouteLayoutInput, Store } from "./storeContract";
+import { OFFER_TIMEOUT_MS, OTP_TTL_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
+import { normalizePhone } from "../utils/phone";
+import type { DriverRouteChoiceInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, Store } from "./storeContract";
+import { emptyOtpRateState, OTP_CLEANUP_BATCH_SIZE, otpFailureState, otpPhoneBlock, otpRateExpiresAt, otpRateKey, recordOtpFailure, takeOtpIp, takeOtpSend } from "./otpProtection";
+import type { OtpRateKind, OtpRateState } from "./otpProtection";
 import { mutateRouteStop, nextRouteUpdatedAt, replaceRouteLayout } from "../utils/routeLayout";
 import { assertDriverRouteChoiceRoute, validateDriverRouteChoiceInput } from "../utils/driverRoute";
 import { canTransitionOrder, claimQueueEntry, hasActiveOrders, joinQueueEntry, releaseQueueEntry, transitionQueueEntry } from "./orderLifecycle";
@@ -30,6 +33,9 @@ class MemoryStore implements Store {
   private readonly users = new Map<string, User>();
   private readonly usersByPhone = new Map<string, string>();
   private readonly otpChallenges = new Map<string, OtpChallenge>();
+  private readonly otpRateLimits = new Map<string, { state: OtpRateState; expiresAt: number }>();
+  private otpRateCleanupIterator?: IterableIterator<[string, { state: OtpRateState; expiresAt: number }]>;
+  private otpChallengeCleanupIterator?: IterableIterator<[string, OtpChallenge]>;
   private readonly queueEntries = new Map<string, QueueEntry>();
   private readonly orders = new Map<string, Order>();
   private readonly deviceRegistrations = new Map<string, DeviceRegistration>();
@@ -111,7 +117,87 @@ class MemoryStore implements Store {
   }
 
   saveOtp(challenge: OtpChallenge): void {
-    this.otpChallenges.set(challenge.phoneNumber, challenge);
+    this.cleanupOtp(Date.now());
+    this.otpChallenges.set(challenge.phoneNumber, structuredClone(challenge));
+  }
+
+  private cleanupOtp(now: number): void {
+    this.otpRateCleanupIterator ??= this.otpRateLimits.entries();
+    for (let scanned = 0; scanned < OTP_CLEANUP_BATCH_SIZE; scanned += 1) {
+      const item = this.otpRateCleanupIterator.next();
+      if (item.done) {
+        this.otpRateCleanupIterator = undefined;
+        break;
+      }
+      const [key, row] = item.value;
+      if (row.expiresAt <= now && row.state.blockedUntil <= now) this.otpRateLimits.delete(key);
+    }
+    this.otpChallengeCleanupIterator ??= this.otpChallenges.entries();
+    for (let scanned = 0; scanned < OTP_CLEANUP_BATCH_SIZE; scanned += 1) {
+      const item = this.otpChallengeCleanupIterator.next();
+      if (item.done) {
+        this.otpChallengeCleanupIterator = undefined;
+        break;
+      }
+      if (item.value[1].expiresAt <= now) this.otpChallenges.delete(item.value[0]);
+    }
+  }
+
+  private otpState(key: string): OtpRateState {
+    return { ...(this.otpRateLimits.get(key)?.state ?? emptyOtpRateState()) };
+  }
+
+  private saveOtpState(kind: OtpRateKind, key: string, state: OtpRateState): void {
+    this.otpRateLimits.set(key, { state: { ...state }, expiresAt: otpRateExpiresAt(kind, state) });
+  }
+
+  takeOtpIpBudget(clientKey: string): OtpLimitResult {
+    const now = Date.now();
+    this.cleanupOtp(now);
+    const key = otpRateKey("ip", clientKey);
+    const budget = takeOtpIp(this.otpState(key), now);
+    this.saveOtpState("ip", key, budget.state);
+    return budget.result;
+  }
+
+  saveOtpProtected(challenge: OtpChallenge): OtpLimitResult {
+    const now = Date.now();
+    this.cleanupOtp(now);
+    const phoneNumber = normalizePhone(challenge.phoneNumber);
+    const sendKey = otpRateKey("send", phoneNumber);
+    const verifyKey = otpRateKey("verify", phoneNumber);
+    const verification = otpFailureState(this.otpState(verifyKey), now);
+    this.saveOtpState("verify", verifyKey, verification);
+    const block = otpPhoneBlock(verification, now);
+    if (!block.allowed) return block;
+    const budget = takeOtpSend(this.otpState(sendKey), now);
+    this.saveOtpState("send", sendKey, budget.state);
+    if (budget.result.allowed) {
+      this.otpChallenges.set(phoneNumber, structuredClone({
+        ...challenge, phoneNumber, expiresAt: now + OTP_TTL_MS,
+      }));
+    }
+    return budget.result;
+  }
+
+  consumeOtpProtected(phone: string, code: string): OtpVerifyResult {
+    const now = Date.now();
+    this.cleanupOtp(now);
+    const phoneNumber = normalizePhone(phone);
+    const verifyKey = otpRateKey("verify", phoneNumber);
+    const verification = otpFailureState(this.otpState(verifyKey), now);
+    const block = otpPhoneBlock(verification, now);
+    if (!block.allowed) return { status: "limited", retryAfterMs: block.retryAfterMs };
+    const challenge = this.otpChallenges.get(phoneNumber);
+    if (challenge && challenge.code === code && challenge.expiresAt > now) {
+      this.otpChallenges.delete(phoneNumber);
+      this.saveOtpState("verify", verifyKey, { ...emptyOtpRateState(), windowStartedAt: now });
+      return { status: "verified", challenge: structuredClone(challenge) };
+    }
+    const failure = recordOtpFailure(verification, now);
+    this.saveOtpState("verify", verifyKey, failure);
+    const limit = otpPhoneBlock(failure, now);
+    return limit.allowed ? { status: "invalid" } : { status: "limited", retryAfterMs: limit.retryAfterMs };
   }
 
   activateUserRole(userId: string, nextRole: "passenger" | "driver", expectedSessionVersion?: number): User {
@@ -181,12 +267,13 @@ class MemoryStore implements Store {
   }
 
   consumeOtp(phoneNumber: string, code: string): OtpChallenge | undefined {
+    this.cleanupOtp(Date.now());
     const challenge = this.otpChallenges.get(phoneNumber);
-    if (!challenge || challenge.code !== code || challenge.expiresAt < Date.now()) {
+    if (!challenge || challenge.code !== code || challenge.expiresAt <= Date.now()) {
       return undefined;
     }
     this.otpChallenges.delete(phoneNumber);
-    return challenge;
+    return structuredClone(challenge);
   }
 
   getQueueEntry(driverId: string): QueueEntry | undefined {

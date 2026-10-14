@@ -1,6 +1,9 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
-import type { DriverRouteChoiceInput, RouteLayoutInput, Store } from "./storeContract";
+import type { DriverRouteChoiceInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, Store } from "./storeContract";
+import { normalizePhone } from "../utils/phone";
+import { emptyOtpRateState, OTP_CLEANUP_BATCH_SIZE, otpFailureState, otpPhoneBlock, otpRateExpiresAt, otpRateKey, recordOtpFailure, takeOtpIp, takeOtpSend } from "./otpProtection";
+import type { OtpRateKind, OtpRateState } from "./otpProtection";
 import { mutateRouteStop, nextRouteUpdatedAt, replaceRouteLayout } from "../utils/routeLayout";
 import { assertDriverRouteChoiceRoute, validateDriverRouteChoiceInput } from "../utils/driverRoute";
 import { canTransitionOrder, claimQueueEntry, hasActiveOrders, joinQueueEntry, releaseQueueEntry, transitionQueueEntry } from "./orderLifecycle";
@@ -23,10 +26,11 @@ import type {
   User,
   UserRole,
 } from "../types/domain";
-import { OFFER_TIMEOUT_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
+import { OFFER_TIMEOUT_MS, OTP_TTL_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
 import { acceptQueueOffer, assertOrderOfferPatch, assertQueueOfferPatch, hasLiveOrderOffer, orderedOfferCandidates, releaseQueueOffer, reserveQueueOffer } from "./orderOffers";
 
 type DbModule = typeof import("@workspace/db");
+type DbTransaction = Parameters<Parameters<DbModule["db"]["transaction"]>[0]>[0];
 
 function otpDigest(code: string): string {
   const secret = process.env.SESSION_SECRET;
@@ -277,6 +281,158 @@ export class PostgresStore implements Store {
     });
   }
 
+  private async otpNow(tx: DbTransaction): Promise<number> {
+    // transaction_timestamp() predates lock waits; the challenge and every
+    // limiter transition must use wall time after acquiring their locks.
+    const result = await tx.execute<{ now: string }>(sql`
+      SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint AS now
+    `);
+    return Number(result.rows[0].now);
+  }
+
+  private async lockOtpStates(
+    tx: DbTransaction,
+    table: DbModule["otpRateLimitsTable"],
+    keys: string[],
+  ): Promise<Map<string, OtpRateState>> {
+    const states = new Map<string, OtpRateState>();
+    // Both send and verify acquire all their phone keys in this exact order,
+    // including first inserts, so concurrent resend/verify cannot deadlock.
+    for (const key of [...new Set(keys)].sort()) {
+      for (;;) {
+        await tx.insert(table).values({ key, state: emptyOtpRateState(), expiresAt: 0 }).onConflictDoNothing();
+        const [row] = await tx.select().from(table).where(eq(table.key, key)).for("update").limit(1);
+        if (row) {
+          states.set(key, { ...row.state });
+          break;
+        }
+        // An expired row may have been removed by SKIP LOCKED cleanup between
+        // ON CONFLICT DO NOTHING and SELECT. Reinsert and lock its replacement.
+      }
+    }
+    return states;
+  }
+
+  private async saveOtpState(
+    tx: DbTransaction,
+    table: DbModule["otpRateLimitsTable"],
+    kind: OtpRateKind,
+    key: string,
+    state: OtpRateState,
+  ): Promise<void> {
+    await tx.update(table).set({ state, expiresAt: otpRateExpiresAt(kind, state) }).where(eq(table.key, key));
+  }
+
+  private async cleanupOtp(mod: DbModule): Promise<void> {
+    const { db, otpRateLimitsTable, otpChallengesTable } = mod;
+    // Standalone statements release their locks before the protected operation.
+    // SKIP LOCKED never waits for active OTP buckets or challenge consumers.
+    await db.execute(sql`
+      DELETE FROM ${otpRateLimitsTable}
+      WHERE ${otpRateLimitsTable.key} IN (
+        SELECT ${otpRateLimitsTable.key} FROM ${otpRateLimitsTable}
+        WHERE ${otpRateLimitsTable.expiresAt} <= floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint
+          AND (${otpRateLimitsTable.state}->>'blockedUntil')::bigint <= floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint
+        ORDER BY ${otpRateLimitsTable.expiresAt}, ${otpRateLimitsTable.key}
+        LIMIT ${OTP_CLEANUP_BATCH_SIZE} FOR UPDATE SKIP LOCKED
+      )
+    `);
+    await db.execute(sql`
+      DELETE FROM ${otpChallengesTable}
+      WHERE ${otpChallengesTable.phoneNumber} IN (
+        SELECT ${otpChallengesTable.phoneNumber} FROM ${otpChallengesTable}
+        WHERE ${otpChallengesTable.expiresAt} <= floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint
+        ORDER BY ${otpChallengesTable.expiresAt}, ${otpChallengesTable.phoneNumber}
+        LIMIT ${OTP_CLEANUP_BATCH_SIZE} FOR UPDATE SKIP LOCKED
+      )
+    `);
+  }
+
+  async takeOtpIpBudget(clientKey: string): Promise<OtpLimitResult> {
+    const mod = await this.database();
+    await this.cleanupOtp(mod);
+    const { db, otpRateLimitsTable } = mod;
+    const key = otpRateKey("ip", clientKey);
+    return db.transaction(async tx => {
+      const states = await this.lockOtpStates(tx, otpRateLimitsTable, [key]);
+      const now = await this.otpNow(tx);
+      const budget = takeOtpIp(states.get(key)!, now);
+      await this.saveOtpState(tx, otpRateLimitsTable, "ip", key, budget.state);
+      return budget.result;
+    });
+  }
+
+  async saveOtpProtected(challenge: OtpChallenge): Promise<OtpLimitResult> {
+    const mod = await this.database();
+    await this.cleanupOtp(mod);
+    const { db, otpRateLimitsTable, otpChallengesTable } = mod;
+    const phoneNumber = normalizePhone(challenge.phoneNumber);
+    const sendKey = otpRateKey("send", phoneNumber);
+    const verifyKey = otpRateKey("verify", phoneNumber);
+    return db.transaction(async tx => {
+      const states = await this.lockOtpStates(tx, otpRateLimitsTable, [sendKey, verifyKey]);
+      const now = await this.otpNow(tx);
+      const verification = otpFailureState(states.get(verifyKey)!, now);
+      await this.saveOtpState(tx, otpRateLimitsTable, "verify", verifyKey, verification);
+      const block = otpPhoneBlock(verification, now);
+      if (!block.allowed) return block;
+      const budget = takeOtpSend(states.get(sendKey)!, now);
+      await this.saveOtpState(tx, otpRateLimitsTable, "send", sendKey, budget.state);
+      if (budget.result.allowed) {
+        const values = {
+          phoneNumber,
+          code: otpDigest(challenge.code),
+          role: challenge.role,
+          locale: challenge.locale,
+          fullName: challenge.fullName ?? null,
+          expiresAt: now + OTP_TTL_MS,
+        };
+        await tx.insert(otpChallengesTable).values(values).onConflictDoUpdate({
+          target: otpChallengesTable.phoneNumber,
+          set: values,
+        });
+      }
+      // A denial is a committed result, not a thrown error that rolls state back.
+      return budget.result;
+    });
+  }
+
+  async consumeOtpProtected(phone: string, code: string): Promise<OtpVerifyResult> {
+    const mod = await this.database();
+    await this.cleanupOtp(mod);
+    const { db, otpRateLimitsTable, otpChallengesTable } = mod;
+    const phoneNumber = normalizePhone(phone);
+    const sendKey = otpRateKey("send", phoneNumber);
+    const verifyKey = otpRateKey("verify", phoneNumber);
+    return db.transaction(async tx => {
+      const states = await this.lockOtpStates(tx, otpRateLimitsTable, [sendKey, verifyKey]);
+      const now = await this.otpNow(tx);
+      const verification = otpFailureState(states.get(verifyKey)!, now);
+      const block = otpPhoneBlock(verification, now);
+      if (!block.allowed) return { status: "limited", retryAfterMs: block.retryAfterMs };
+      const [row] = await tx.delete(otpChallengesTable).where(and(
+        eq(otpChallengesTable.phoneNumber, phoneNumber),
+        eq(otpChallengesTable.code, otpDigest(code)),
+        gt(otpChallengesTable.expiresAt, now),
+      )).returning();
+      if (row) {
+        await this.saveOtpState(tx, otpRateLimitsTable, "verify", verifyKey, { ...emptyOtpRateState(), windowStartedAt: now });
+        return { status: "verified", challenge: {
+          phoneNumber: row.phoneNumber,
+          code,
+          role: row.role as UserRole,
+          locale: row.locale as Locale,
+          fullName: row.fullName ?? undefined,
+          expiresAt: Number(row.expiresAt),
+        } };
+      }
+      const failure = recordOtpFailure(verification, now);
+      await this.saveOtpState(tx, otpRateLimitsTable, "verify", verifyKey, failure);
+      const limit = otpPhoneBlock(failure, now);
+      return limit.allowed ? { status: "invalid" } : { status: "limited", retryAfterMs: limit.retryAfterMs };
+    });
+  }
+
   async activateUserRole(userId: string, nextRole: "passenger" | "driver", expectedSessionVersion?: number): Promise<User> {
     if (nextRole !== "passenger" && nextRole !== "driver") {
       throw new AppError(400, "Only passenger and driver modes are available", "INVALID_ROLE");
@@ -369,7 +525,7 @@ export class PostgresStore implements Store {
     const [row] = await db.delete(otpChallengesTable).where(and(
       eq(otpChallengesTable.phoneNumber, phoneNumber),
       eq(otpChallengesTable.code, otpDigest(code)),
-      gt(otpChallengesTable.expiresAt, Date.now()),
+      sql`${otpChallengesTable.expiresAt} > floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint`,
     )).returning();
     return row ? {
       phoneNumber: row.phoneNumber,

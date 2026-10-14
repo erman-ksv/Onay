@@ -67,6 +67,41 @@ services.
    - Every successful login increments the session version and invalidates all earlier JWTs.
 3. Send `Authorization: Bearer <access_token>` to protected routes.
 
+OTP endpoints share a PostgreSQL-backed IP budget before body parsing, including
+`/auth/login`, invalid JSON and oversized bodies. Phone send/failure budgets are
+independent of the challenge, role and locale. Rejected sends preserve the current
+code. A blocked phone cannot send another code or authenticate with a correct one.
+The fifth wrong code starts the block; the first four receive `401 INVALID_OTP`.
+Rate rejection returns `429 OTP_RATE_LIMITED`, a `Retry-After` header and a matching
+`retry_after_seconds`. Storage failure returns `503 OTP_STORAGE_UNAVAILABLE` and
+does not continue OTP issuance or verification. No environment disables limits.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `TEZJET_OTP_RESEND_SECONDS` | 60 | Minimum time between accepted sends for a phone |
+| `TEZJET_OTP_SEND_WINDOW_SECONDS` | 3600 | Fixed send window, beginning at its first accepted send |
+| `TEZJET_OTP_SEND_MAX` | 5 | Accepted sends per phone window |
+| `TEZJET_OTP_FAILURE_WINDOW_SECONDS` | 900 | Fixed failure window, beginning at its first failed check |
+| `TEZJET_OTP_FAILURE_MAX` | 5 | Wrong checks before blocking the phone |
+| `TEZJET_OTP_BLOCK_SECONDS` | 900 | Block duration; repeated rejected requests do not extend it |
+| `TEZJET_OTP_IP_WINDOW_SECONDS` | 900 | Shared fixed window for all three OTP endpoints |
+| `TEZJET_OTP_IP_MAX` | 120 | Requests per client IP budget, including invalid input |
+
+All settings must be positive bounded integers; invalid configuration prevents
+startup. Send, failure and IP counters survive restart and are shared by API
+instances using the same database and session secret. Successful verification
+resets the phone failure count, while send and IP budgets remain in place.
+Apply `pnpm --filter @workspace/db run migrate` before starting updated servers.
+Migration `0005_otp_protection` preserves existing challenges and adds hashed rate
+keys plus expiry indexes. Expired buckets/challenges are cleaned in bounded batches.
+
+Client identity comes from Express `request.ip`; `trust proxy` stays `false`.
+Forwarding headers are ignored. IPv4-mapped IPv6 shares its IPv4 budget, while
+IPv6 addresses in one `/64` share a budget. Deployments behind a reverse proxy
+must explicitly configure trusted proxy addresses before using per-client IPs;
+otherwise the proxy's address shares one budget. This is server-side OTP protection;
+real SMS delivery and device/UI acceptance remain separate tasks.
+
 `PATCH /api/auth/profile` only accepts locale changes. `full_name` and
 `phone_number` are locked after the first successful OTP registration.
 
