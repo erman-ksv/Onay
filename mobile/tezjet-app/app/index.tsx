@@ -6,7 +6,7 @@ import { ActivityIndicator, Alert, AppState, Pressable, ScrollView, StyleSheet, 
 import { API, ApiError, errorMessage, request, setApiEndpoint, validateApiEndpoint, type Availability } from "../lib/api";
 import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextTripLabel, nextTripStatus, statusLabels, type RideOrder } from "../lib/orders";
 import DriverRoutePicker from "../components/DriverRoutePicker";
-import { canJoinLegacyDriverQueue, driverRouteSessionKey, type DriverRouteGate } from "../lib/driver-routes";
+import { canJoinDriverQueue, driverQueueChoiceInput, driverRouteSessionKey, type DriverQueueContext, type DriverRouteGate } from "../lib/driver-routes";
 
 const TOKEN = "tezjet_access_token";
 const API_ENDPOINT = "tezjet_api_endpoint";
@@ -47,6 +47,7 @@ export default function Home() {
   const [driverSeats, setDriverSeats] = useState(3);
   const [queuePosition, setQueuePosition] = useState<number | null>(null);
   const [driverInQueue, setDriverInQueue] = useState(false);
+  const [driverQueueContext, setDriverQueueContext] = useState<DriverQueueContext | null>(null);
   const [driverRouteGate, setDriverRouteGate] = useState<DriverRouteGate>({ sessionKey: "", ready: false, hasChoice: false, mutating: false });
   const driverRouteGateRef = useRef(driverRouteGate);
   const updateDriverRouteGate = useCallback((next: DriverRouteGate) => {
@@ -82,7 +83,7 @@ export default function Home() {
   }, []);
   const driverApproved = activeRole === "driver" && profile?.driver_approval_status === "approved";
   const driverRouteSession = driverRouteSessionKey(apiBase, token);
-  const canJoinDriverQueue = canJoinLegacyDriverQueue(driverRouteGate, driverRouteSession);
+  const canJoinQueue = canJoinDriverQueue(driverRouteGate, driverRouteSession);
   const activeDriverOrders = orders.filter(order => !isClosed(order) && order.driver_id === profile?.id);
   const passengerOrders = orders.filter(order => order.passenger_id === profile?.id);
   const passengerHasActiveOrder = passengerOrders.some(order => !isClosed(order));
@@ -127,7 +128,7 @@ export default function Home() {
     orderChanges.current.clear(); orderRevision.current += 1; queueRevision.current += 1;
     setToken(""); setProfile(null); setOrders([]); setIncomingOrder(null);
     setProfileLoading(false); setProfileError("");
-    setStops([]); setFare(null); setAvailability(null); setQueuePosition(null); setDriverInQueue(false);
+    setStops([]); setFare(null); setAvailability(null); setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null);
     setDataError(""); setRouteError(""); setAvailabilityError("");
     try { await AsyncStorage.removeItem(TOKEN); return true; }
     catch { setProfileError("Не удалось удалить сохранённый вход на устройстве. Попробуй выйти ещё раз."); return false; }
@@ -205,7 +206,7 @@ export default function Home() {
     const queueRevisionAtStart = queueRevision.current;
     const results = await Promise.allSettled([
       request<{ orders: RideOrder[] }>("/api/orders", token),
-      driverApproved ? request<{ your_position: number | null }>("/api/queue", token) : Promise.resolve(undefined),
+      driverApproved ? request<{ your_position: number | null; your_entry: { routeContext?: DriverQueueContext } | null }>("/api/queue", token) : Promise.resolve(undefined),
     ]);
     const ordersResult = results[0];
     const queueResult = results[1];
@@ -223,6 +224,7 @@ export default function Home() {
     if (queueResult.status === "fulfilled" && queueResult.value && queueRevision.current === queueRevisionAtStart) {
       const position = (queueResult.value as { your_position: number | null }).your_position;
       setQueuePosition(position); setDriverInQueue(position !== null);
+      setDriverQueueContext((queueResult.value as { your_entry?: { routeContext?: DriverQueueContext } }).your_entry?.routeContext ?? null);
     }
     const failed = results.find(result => result.status === "rejected");
     if (failed?.status === "rejected") {
@@ -297,11 +299,12 @@ export default function Home() {
       applyOrder(updatedOrder);
       setIncomingOrder(current => current?.id === updatedOrder.id && !isLiveOffer(updatedOrder, profile.id) ? null : current);
     });
-    socket.on("queue:position", (payload: { position?: number | null }) => {
+    socket.on("queue:position", (payload: { position?: number | null; route_context?: DriverQueueContext | null }) => {
       if (!driverApproved || currentToken.current !== token) return;
       queueRevision.current += 1;
       setQueuePosition(payload.position ?? null);
       setDriverInQueue(payload.position != null);
+      setDriverQueueContext(payload.route_context ?? null);
     });
     socket.on("queue:update", () => { void availabilityRef.current(); });
     return () => { socket.disconnect(); setSocketConnected(false); };
@@ -335,7 +338,7 @@ export default function Home() {
       currentToken.current = result.access_token;
       setToken(result.access_token); setProfile(result.user); setMode(next);
       trackedOrders.current = []; orderChanges.current.clear(); orderRevision.current += 1; queueRevision.current += 1;
-      setOrders([]); setIncomingOrder(null); setQueuePosition(null); setDriverInQueue(false); setAvailability(null); setFare(null);
+      setOrders([]); setIncomingOrder(null); setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null); setAvailability(null); setFare(null);
       setRequested(false); setOtp(""); setDemoCode(""); setMessage(""); setDataError("");
       try { await AsyncStorage.setItem(TOKEN, result.access_token); }
       catch { setProfileError("Вход выполнен, но не сохранён на устройстве. При следующем запуске потребуется код."); }
@@ -412,17 +415,20 @@ export default function Home() {
   async function joinQueue() {
     const requestToken = token;
     const requestSession = driverRouteSession;
-    if (!canJoinLegacyDriverQueue(driverRouteGateRef.current, requestSession)) return;
+    if (!canJoinDriverQueue(driverRouteGateRef.current, requestSession)) return;
+    const routeChoice = driverQueueChoiceInput(driverRouteGateRef.current, requestSession);
     setBusy(true);
     try {
       const location = await getCoordinates();
-      if (currentToken.current !== requestToken || !canJoinLegacyDriverQueue(driverRouteGateRef.current, requestSession)) return;
+      if (currentToken.current !== requestToken || !canJoinDriverQueue(driverRouteGateRef.current, requestSession) ||
+          JSON.stringify(driverQueueChoiceInput(driverRouteGateRef.current, requestSession)) !== JSON.stringify(routeChoice)) return;
       const queueRevisionAtStart = queueRevision.current;
-      const result = await request<{ position: number | null }>("/api/queue/join", requestToken, { method: "POST", body: JSON.stringify({ location, available_seats: driverSeats }) });
+      const result = await request<{ position: number | null; entry?: { routeContext?: DriverQueueContext } }>("/api/queue/join", requestToken, { method: "POST", body: JSON.stringify({ location, available_seats: driverSeats, route_choice: routeChoice }) });
       if (currentToken.current !== requestToken) return;
       if (queueRevision.current === queueRevisionAtStart) {
         queueRevision.current += 1;
         setQueuePosition(result.position); setDriverInQueue(result.position !== null);
+        setDriverQueueContext(result.entry?.routeContext ?? null);
       }
       await refreshOrders();
       Alert.alert("TezJet Driver", `Ты в очереди. Позиция: ${result.position ?? "обновляется"}.`);
@@ -431,21 +437,26 @@ export default function Home() {
   }
 
   async function updateDriverLocation() {
+    const requestToken = token, requestSession = driverRouteSession;
     setBusy(true);
     try {
       const location = await getCoordinates();
-      await request("/api/queue/location", token, { method: "PATCH", body: JSON.stringify({ location }) });
+      if (currentToken.current !== requestToken || driverRouteGateRef.current.sessionKey !== requestSession) return;
+      await request("/api/queue/location", requestToken, { method: "PATCH", body: JSON.stringify({ location }) });
+      if (currentToken.current !== requestToken) return;
       Alert.alert("Местоположение обновлено", "Координаты переданы TezJet.");
     } catch (e) { Alert.alert("Геолокация водителя", e instanceof Error ? e.message : "Не удалось обновить координаты."); }
     finally { setBusy(false); }
   }
 
   async function leaveQueue() {
+    const requestToken = token;
     setBusy(true);
     try {
-      await request<void>("/api/queue/leave", token, { method: "DELETE" });
+      await request<void>("/api/queue/leave", requestToken, { method: "DELETE" });
+      if (currentToken.current !== requestToken) return;
       queueRevision.current += 1;
-      setQueuePosition(null); setDriverInQueue(false);
+      setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null);
     } catch (e) { Alert.alert("Очередь", e instanceof Error ? e.message : "Не удалось выйти из очереди."); }
     finally { setBusy(false); }
   }
@@ -532,9 +543,10 @@ export default function Home() {
         <View style={s.card}>
           <Text style={s.heading}>Рабочая смена</Text>
           <Text style={s.descDark}>Связь: {socketConnected ? "подключена" : "переподключение…"}</Text>
-          <Text style={s.descDark}>Очередь: {driverInQueue ? `позиция ${queuePosition ?? "—"}` : activeDriverOrders.length ? "активный маршрут" : "не в очереди"}</Text>
+          <Text style={s.descDark} testID="driver-queue-status">Очередь: {driverInQueue ? `позиция ${queuePosition ?? "—"}` : activeDriverOrders.length ? "активный маршрут" : "не в очереди"}</Text>
+          {driverInQueue && driverQueueContext ? <View testID="driver-queue-context"><Text style={s.descDark}>{driverQueueContext.routeName} · питак {driverQueueContext.pitak}: {driverQueueContext.stopName}</Text><Text style={s.note}>Вступление в очередь сохранено. Заказы для этого маршрута пока недоступны.</Text></View> : null}
           <Text style={s.label}>МЕСТА ПРИ ВХОДЕ В ОЧЕРЕДЬ</Text><Stepper value={driverSeats} onChange={setDriverSeats} disabled={busy || driverInQueue || !!incomingOrder || activeDriverOrders.length > 0} />
-          {!driverInQueue && !activeDriverOrders.length ? <Button title={busy ? "Определяем местоположение…" : "Встать в очередь"} testID="driver-queue-join" onPress={joinQueue} disabled={busy || !!incomingOrder || !canJoinDriverQueue} /> : <><Button title={busy ? "Обновляем…" : "Обновить местоположение"} onPress={updateDriverLocation} disabled={busy} secondary /><Button title="Выйти из очереди" onPress={leaveQueue} disabled={busy || !!incomingOrder || activeDriverOrders.length > 0} secondary /></>}
+          {!driverInQueue && !activeDriverOrders.length ? <Button title={busy ? "Определяем местоположение…" : driverRouteGate.hasChoice ? `Встать в очередь питак ${driverRouteGate.pitak ?? "—"}` : "Встать в очередь"} testID="driver-queue-join" onPress={joinQueue} disabled={busy || !!incomingOrder || !canJoinQueue} /> : <><Button title={busy ? "Обновляем…" : "Обновить местоположение"} testID="driver-queue-location" onPress={updateDriverLocation} disabled={busy} secondary /><Button title="Выйти из очереди" testID="driver-queue-leave" onPress={leaveQueue} disabled={busy || !!incomingOrder || activeDriverOrders.length > 0} secondary /></>}
         </View>
         {incomingOrder ? <View style={s.card}><Text style={s.heading}>Новый заказ</Text><Text style={s.descDark}>Точка подачи: {incomingOrder.pickup_point}</Text><Text style={s.descDark}>Куда: {incomingOrder.destination || "смотри маршрут"}</Text><Text style={s.descDark}>Пассажиров: {incomingOrder.seats}</Text><Text style={s.note}>Ответить за {Math.max(0, Math.ceil(((incomingOrder.offer_expires_at ?? now) - now) / 1_000))} сек.</Text><Button title={busy ? "Принимаем…" : "Принять заказ"} onPress={acceptOrder} disabled={busy || !isLiveOffer(incomingOrder, profile.id, now)} /><Button title="Отклонить" onPress={rejectOrder} disabled={busy || !isLiveOffer(incomingOrder, profile.id, now)} secondary /></View> : null}
         {activeDriverOrders.map(activeOrder => <View key={activeOrder.id} style={s.card}><Text style={s.heading}>Текущая поездка</Text><Text style={s.descDark}>Статус: {statusLabels[activeOrder.status]}</Text><Text style={s.descDark}>Точка подачи: {activeOrder.pickup_point}</Text><Text style={s.descDark}>Назначение: {activeOrder.destination || "по маршруту"}</Text>{nextTripStatus(activeOrder) ? <Button title={busy ? "Обновляем…" : nextTripLabel(activeOrder)} onPress={() => progressOrder(activeOrder)} disabled={busy} /> : null}</View>)}

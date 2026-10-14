@@ -137,6 +137,15 @@ export interface OtpChallenge {
   expiresAt: number;
 }
 
+export interface RouteQueueContext extends DriverRouteChoice {
+  routeName: string;
+  pitak: "A" | "B";
+  stopCode: string;
+  stopName: string;
+  center: Coordinates;
+  radiusMeters: number;
+}
+
 export interface QueueEntry {
   driverId: string;
   joinedAt: number;
@@ -144,6 +153,8 @@ export interface QueueEntry {
   availableSeats: number;
   lastLocation: Coordinates;
   priorityLock: boolean;
+  /** Immutable server-derived enrollment snapshot; absent for the legacy lane. */
+  routeContext?: RouteQueueContext;
   /** False means the driver is in an active-trip pool, not the FIFO set. */
   inFifo?: boolean;
   activeOrderIds?: string[];

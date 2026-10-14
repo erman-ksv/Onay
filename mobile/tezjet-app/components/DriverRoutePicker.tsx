@@ -49,7 +49,11 @@ export default function DriverRoutePicker(props: Props) {
   draftRef.current = draft;
   snapshotRef.current = snapshot;
   const publish = useCallback((ready: boolean, mutating = false, value = snapshotRef.current) => {
-    onStatusChange({ sessionKey, ready, hasChoice: value?.choice != null, mutating });
+    const pitak = value?.choice?.direction === "b_to_a" ? "B" : "A";
+    onStatusChange({ sessionKey, ready, hasChoice: value?.choice != null, mutating,
+      choice: value?.choice ?? undefined, routeAvailable: !!value?.route && !value.unavailable_reason, pitak,
+      pitakName: value?.route ? (pitak === "A" ? value.route.stops[0].name : value.route.stops[value.route.stops.length - 1].name) : undefined,
+    });
   }, [onStatusChange, sessionKey]);
 
   const load = useCallback(async (preserveDraft = false, nextNotice = "") => {
@@ -139,7 +143,7 @@ export default function DriverRoutePicker(props: Props) {
       {snapshot?.choice ? <>
         <Text style={s.status}>Сохранено: {snapshot.route?.name ?? snapshot.choice.routeId}{snapshot.route ? ` · ${driverDirectionLabel(snapshot.route, snapshot.choice.direction)}` : ""}</Text>
         {snapshot.unavailable_reason ? <Text style={s.warning}>{unavailableLabels[snapshot.unavailable_reason]} Выбери маршрут заново или сбрось выбор.</Text> : null}
-        <Text style={s.warning}>Очередь для выбранного маршрута пока недоступна</Text>
+        {snapshot.route && !snapshot.unavailable_reason ? <Text style={s.description}>Очередь: питак {snapshot.choice.direction === "a_to_b" ? "A" : "B"}. Для входа нужно находиться рядом с ним.</Text> : null}
       </> : snapshot ? <Text style={s.status}>Маршрут не выбран. Можно использовать общую очередь.</Text> : null}
       {notice ? <Text style={s.status}>{notice}</Text> : null}
       {error ? <Text style={s.warning}>{error} Обнови маршруты, чтобы проверить сохранённый выбор.</Text> : null}

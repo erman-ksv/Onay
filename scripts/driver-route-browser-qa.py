@@ -229,8 +229,8 @@ class DriverRouteQA:
         require(snapshot.get("unavailable_reason") is None and snapshot.get("route", {}).get("id") == route["id"], "Saved choice must resolve to its available real route")
         self.expect(self.control("driver-route-status")).to_contain_text("Сохранено: " + route["name"])
         self.expect(self.control("driver-route-status")).to_contain_text("A → B" if direction == "a_to_b" else "B → A")
-        self.expect(self.control("driver-queue-join")).to_be_disabled()
-        self.expect(self.page.get_by_text("Очередь для выбранного маршрута пока недоступна", exact=True)).to_be_visible()
+        self.expect(self.control("driver-queue-join")).to_be_enabled()
+        self.expect(self.control("driver-route-status")).to_contain_text("Очередь: питак " + ("A" if direction == "a_to_b" else "B"))
 
     def save(self, route, direction):
         with self.response_for("/driver/route", "PUT") as pending:
@@ -282,6 +282,7 @@ class DriverRouteQA:
         self.passed("Actual stale 409 preserves route/direction draft and prior saved choice before explicit retry")
 
     def clear_and_legacy(self):
+        requests_before_clear = len(self.requests)
         with self.response_for("/driver/route", "DELETE") as pending:
             self.control("driver-route-clear").click()
         require(pending.value.status == 204, "Explicit route clear must delete the actual persisted choice")
@@ -295,9 +296,47 @@ class DriverRouteQA:
         self.expect(self.control("driver-route-status")).to_contain_text("Маршрут не выбран. Можно использовать общую очередь.")
         self.identity()
         self.screenshot("mobile-390-cleared-legacy-queue-enabled")
-        forbidden = [item for item in self.requests if item["path"] in {"/api/queue/join", "/api/queue/location", "/api/orders"} and item["method"] != "GET"]
+        forbidden = [item for item in self.requests[requests_before_clear:] if item["path"] in {"/api/queue/join", "/api/queue/location", "/api/orders"} and item["method"] != "GET"]
         require(not forbidden, "Planning QA must not join a queue, fabricate GPS, or place orders")
         self.passed("Clear survives reload and re-enables the legacy queue control without GPS or queue writes")
+
+    def configured_queue_roundtrip(self, route, direction):
+        # Browser geolocation is deliberately emulated in local CI. The actual
+        # Expo Location API, HTTP authentication and PostgreSQL remain real.
+        # This verifies the UI integration, not physical-device GPS accuracy.
+        stop = route["stops"][0 if direction == "a_to_b" else -1]
+        pitak = "A" if direction == "a_to_b" else "B"
+        self.context.grant_permissions(["geolocation"], origin=self.args.base_url)
+        self.context.set_geolocation({"latitude": stop["location"]["lat"], "longitude": stop["location"]["lng"], "accuracy": 5})
+        with self.response_for("/queue/join", "POST") as pending:
+            self.control("driver-queue-join").click()
+        result = pending.value
+        require(result.status == 201, "Actual Expo join must persist the configured queue")
+        require(result.request.post_data_json["route_choice"] == {
+            "route_id": route["id"], "direction": direction, "expected_updated_at": route["updatedAt"],
+        }, "App must bind entry to its exact saved choice")
+        entry = result.json()["entry"]
+        require(entry["routeContext"]["routeId"] == route["id"] and entry["routeContext"]["pitak"] == pitak, "Server must derive the correct route/pitak")
+        self.expect(self.control("driver-queue-context")).to_contain_text(route["name"])
+        self.expect(self.control("driver-queue-context")).to_contain_text("питак " + pitak)
+        self.expect(self.control("driver-queue-status")).to_contain_text("позиция 1")
+        self.expect(self.control("driver-route-save")).to_be_disabled()
+        self.control("driver-queue-context").screenshot(path=str(self.args.output_dir / ("queue-" + pitak + "-persisted.png")))
+        with self.response_for("/queue", "GET") as pending:
+            self.page.reload(wait_until="domcontentloaded")
+        require(pending.value.status == 200 and pending.value.json()["your_position"] == 1, "Reopening must restore the durable lane position")
+        self.expect(self.control("driver-queue-context")).to_contain_text("питак " + pitak)
+        self.expect(self.control("driver-route-save")).to_be_disabled()
+        with self.response_for("/queue/location", "PATCH") as pending:
+            self.control("driver-queue-location").click()
+        require(pending.value.status == 200, "Actual location button must update within its own pitak zone")
+        with self.response_for("/queue/leave", "DELETE") as pending:
+            self.control("driver-queue-leave").click()
+        require(pending.value.status == 204, "Actual leave must delete the durable enrollment")
+        self.expect(self.control("driver-queue-status")).to_contain_text("не в очереди")
+        self.expect(self.control("driver-queue-context")).to_have_count(0)
+        self.expect(self.control("driver-route-save")).to_be_enabled()
+        self.passed("Actual app joins, restores, updates location and leaves pitak " + pitak + " using browser-emulated geolocation")
 
     def assert_console_health(self):
         unexpected = []
@@ -329,8 +368,16 @@ class DriverRouteQA:
         require(self.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "390px picker must not overflow horizontally")
         self.page.evaluate("window.scrollTo(0, 0)")
         self.screenshot("mobile-390-saved-route-reverse")
-        self.passed("Desktop and 390px route picker render real saved direction with honest queue restriction")
+        self.passed("Desktop and 390px route picker render real saved direction and correct queue control")
         self.stale_conflict()
+        self.configured_queue_roundtrip(self.routes[0], "a_to_b")
+        # A fresh real driver avoids pretending an instant A→B teleport passes
+        # the existing GPS speed guard. The first driver's enrollment is gone.
+        self.page.get_by_text("Выйти", exact=True).click()
+        self.driver_login_and_approval()
+        self.select_draft(self.routes[0], "b_to_a")
+        self.save(self.routes[0], "b_to_a")
+        self.configured_queue_roundtrip(self.routes[0], "b_to_a")
         self.clear_and_legacy()
         self.assert_console_health()
         self.passed("No unexpected browser errors, blank app, or framework overlays")
@@ -353,7 +400,8 @@ def main():
         "base_url": args.base_url, "api_url": args.api_url, "browser": "Chromium / Python Playwright",
         "browser_plugin": "not available", "fallback_reason": "Browser plugin not available",
         "viewports": [{"width": 1440, "height": 1000}, {"width": 390, "height": 844}],
-    }, "scope": "4.5 route and direction planning; route-scoped queue/GPS/dispatch remain untested", "checks": []}
+        "geolocation": "browser API emulation for local CI; physical-device GPS remains untested",
+    }, "scope": "4.5 choice regression and 4.6 configured A/B enrollment; configured order dispatch and real GPS remain untested", "checks": []}
     qa = None
     exit_code = 1
     try:

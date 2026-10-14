@@ -24,7 +24,8 @@ export async function emitQueueUpdate(io: Server | undefined, change: QueueChang
   if (!io) {
     return;
   }
-  const queue = await store.queueSnapshot();
+  const allQueue = await store.queueSnapshot();
+  const queue = allQueue.filter(entry => !entry.routeContext);
   const payload = {
     zone: {
       id: PYATAK_ZONE.id,
@@ -45,18 +46,20 @@ export async function emitQueueUpdate(io: Server | undefined, change: QueueChang
   ) {
     io.to(`queue:${PYATAK_ZONE.id}`).emit("queue:reordered", payload);
   }
-  for (const entry of queue) {
+  for (const entry of allQueue) {
     io.to(`user:${entry.driverId}`).emit("queue:position", {
-      zone_id: PYATAK_ZONE.id,
+      zone_id: entry.routeContext ? `route:${entry.routeContext.routeId}:${entry.routeContext.pitak}` : PYATAK_ZONE.id,
+      route_context: entry.routeContext ?? null,
       position: entry.position,
       status: entry.status,
       updated_at: payload.updated_at,
     });
   }
-  if (change.driverId && !queue.some((entry) => entry.driverId === change.driverId)) {
+  if (change.driverId && !allQueue.some((entry) => entry.driverId === change.driverId)) {
     io.to(`user:${change.driverId}`).emit("queue:position", {
       zone_id: PYATAK_ZONE.id,
       position: null,
+      route_context: null,
       status: "not_in_queue",
       updated_at: payload.updated_at,
     });
