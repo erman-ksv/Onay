@@ -155,6 +155,7 @@ export default function DriverRoutePicker(props: Props) {
     {!loading && routes.length === 0 ? <Text style={s.description}>Нет доступных настроенных маршрутов. Повтори обновление позже.</Text> : null}
     {routes.map(route => <Pressable key={route.id} testID={`driver-route-${route.id}`} accessibilityRole="radio"
       accessibilityLabel={`Маршрут: ${route.name}`} accessibilityState={{ checked: draft?.routeId === route.id, disabled }}
+      aria-checked={draft?.routeId === route.id} aria-disabled={disabled}
       onPress={() => selectRoute(route)} disabled={disabled} style={[s.option, draft?.routeId === route.id && s.selected, disabled && s.disabled]}>
       <Text style={s.optionTitle}>{route.name}</Text>
       <Text style={s.description}>{route.stops[0].name} → {route.stops[route.stops.length - 1].name}</Text>
@@ -164,7 +165,7 @@ export default function DriverRoutePicker(props: Props) {
       <Text style={s.label}>НАПРАВЛЕНИЕ</Text>
       {(["a_to_b", "b_to_a"] as const).map(direction => <Pressable key={direction} testID={`driver-direction-${direction}`}
         accessibilityRole="radio" accessibilityLabel={driverDirectionLabel(selectedRoute, direction)}
-        accessibilityState={{ checked: draft.direction === direction, disabled }} disabled={disabled}
+        accessibilityState={{ checked: draft.direction === direction, disabled }} aria-checked={draft.direction === direction} aria-disabled={disabled} disabled={disabled}
         onPress={() => selectDirection(direction)} style={[s.option, draft.direction === direction && s.selected, disabled && s.disabled]}>
         <Text style={s.optionTitle}>{driverDirectionLabel(selectedRoute, direction)}</Text>
       </Pressable>)}
