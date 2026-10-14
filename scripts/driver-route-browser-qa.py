@@ -359,6 +359,7 @@ def main():
     parser.add_argument("--api-url", default="http://127.0.0.1:5000")
     parser.add_argument("--admin-phone", default=os.environ.get("ADMIN_PHONE"))
     parser.add_argument("--output-dir", type=Path, default=Path("/tmp/driver-route-qa"))
+    parser.add_argument("--headed", action="store_true", help="Use a real browser window to verify background/foreground visibility.")
     args = parser.parse_args()
     require(os.environ.get("NODE_ENV") in {"test", "development"}, "QA requires the local nonproduction OTP configuration")
     require(bool(args.admin_phone), "ADMIN_PHONE must match the API's test administrator")
@@ -376,7 +377,7 @@ def main():
     try:
         from playwright.sync_api import expect, sync_playwright
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
+            browser = playwright.chromium.launch(headless=not args.headed)
             context = browser.new_context(viewport={"width": 1440, "height": 1000}, locale="ru-RU")
             page = context.new_page()
             page.set_default_timeout(20_000)

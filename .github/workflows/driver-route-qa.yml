@@ -172,7 +172,7 @@ jobs:
 
       - name: Run driver route planning browser QA
         run: |
-          python scripts/driver-route-browser-qa.py \
+          xvfb-run -a python scripts/driver-route-browser-qa.py --headed \
             --base-url http://127.0.0.1:4174 \
             --api-url http://127.0.0.1:5000 \
             --output-dir artifacts/driver-route-qa \
