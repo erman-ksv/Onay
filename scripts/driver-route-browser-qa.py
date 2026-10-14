@@ -252,19 +252,29 @@ class DriverRouteQA:
 
     def resume_saved(self, route, direction):
         # Real tab visibility exercises React Native Web's AppState listener.
+        # Playwright otherwise forces every page to remain virtually focused.
+        # Disable that override so switching actual tabs changes real visibility.
         # No synthetic AppState event or native lifecycle/GPS API is injected.
+        lifecycle = self.context.new_cdp_session(self.page)
+        lifecycle.send("Emulation.setFocusEmulationEnabled", {"enabled": False})
         background = self.context.new_page()
+        background_lifecycle = self.context.new_cdp_session(background)
         try:
+            background_lifecycle.send("Emulation.setFocusEmulationEnabled", {"enabled": False})
             background.goto("about:blank")
             background.bring_to_front()
             self.page.wait_for_function("document.visibilityState === 'hidden'", timeout=5_000)
             with self.response_for("/driver/route", "GET") as pending:
                 self.page.bring_to_front()
+            self.page.wait_for_function("document.visibilityState === 'visible'", timeout=5_000)
             require(pending.value.status == 200, "Foreground resume must refresh the real route choice")
             self.assert_stops(route, direction)
             self.assert_saved(route, direction)
         finally:
+            background_lifecycle.detach()
             background.close()
+            lifecycle.send("Emulation.setFocusEmulationEnabled", {"enabled": True})
+            lifecycle.detach()
 
     def stale_conflict(self):
         route = self.routes[0]
