@@ -14,7 +14,11 @@ export type DriverRouteSnapshot = {
   route: DriverRouteOption | null;
   unavailable_reason: DriverRouteUnavailable | null;
 };
-export type DriverRouteGate = { sessionKey: string; ready: boolean; hasChoice: boolean; mutating: boolean };
+export type DriverRouteGate = {
+  sessionKey: string; ready: boolean; hasChoice: boolean; mutating: boolean;
+  choice?: DriverRouteChoice; routeAvailable?: boolean; pitak?: "A" | "B"; pitakName?: string;
+};
+export type DriverQueueContext = DriverRouteChoice & { routeName: string; pitak: "A" | "B"; stopName: string };
 
 export class DriverRouteError extends Error {
   readonly status?: number;
@@ -115,6 +119,16 @@ export function driverRouteSaveInput(draft: DriverRouteChoice | null, routes: Dr
 export function driverRouteSessionKey(endpoint: string, token: string): string { return JSON.stringify([endpoint, token]); }
 export function canJoinLegacyDriverQueue(gate: DriverRouteGate, sessionKey: string): boolean {
   return gate.sessionKey === sessionKey && gate.ready && !gate.hasChoice && !gate.mutating;
+}
+export function canJoinDriverQueue(gate: DriverRouteGate, sessionKey: string): boolean {
+  return gate.sessionKey === sessionKey && gate.ready && !gate.mutating &&
+    (!gate.hasChoice || Boolean(gate.choice && gate.routeAvailable));
+}
+export function driverQueueChoiceInput(gate: DriverRouteGate, sessionKey: string) {
+  if (!canJoinDriverQueue(gate, sessionKey)) throw new DriverRouteError("Обнови сохранённый маршрут перед входом в очередь.");
+  return gate.hasChoice && gate.choice ? {
+    route_id: gate.choice.routeId, direction: gate.choice.direction, expected_updated_at: gate.choice.routeUpdatedAt,
+  } : undefined;
 }
 export function canMutateDriverRoute(state: { busy: boolean; queued: boolean; activeTrip: boolean; pendingOffer: boolean }): boolean {
   return !state.busy && !state.queued && !state.activeTrip && !state.pendingOffer;

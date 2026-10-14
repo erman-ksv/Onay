@@ -20,7 +20,7 @@ export function orderedOfferCandidates(
 ): QueueEntry[] {
   const attempted = new Set(order.attemptedDriverIds ?? []);
   return entries.filter(entry => {
-    if (attempted.has(entry.driverId) || entry.pendingOfferOrderId || entry.availableSeats < order.seats) {
+    if (entry.routeContext || attempted.has(entry.driverId) || entry.pendingOfferOrderId || entry.availableSeats < order.seats) {
       return false;
     }
     return order.pickupPoint === "D"

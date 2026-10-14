@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  canJoinLegacyDriverQueue, canMutateDriverRoute, createDriverRouteClient, createDriverRouteRequestScope,
+  canJoinDriverQueue, driverQueueChoiceInput, canJoinLegacyDriverQueue, canMutateDriverRoute, createDriverRouteClient, createDriverRouteRequestScope,
   driverDirectionLabel, DriverRouteError, driverRouteSaveInput, driverRouteSessionKey, orderedDriverStops,
   parseDriverRouteCatalog, parseDriverRouteSnapshot, refreshDriverRouteDraft,
 } from "../lib/driver-routes.ts";
@@ -26,6 +26,17 @@ const deferred = () => {
   return { promise, resolve };
 };
 const invalid = error => error instanceof DriverRouteError && error.code === "INVALID_RESPONSE";
+
+test("configured queue entry requires the current resolved saved choice and sends its exact version", () => {
+  const gate = { sessionKey: "current", ready: true, hasChoice: true, mutating: false, choice, routeAvailable: true };
+  assert.equal(canJoinDriverQueue(gate, "current"), true);
+  assert.deepEqual(driverQueueChoiceInput(gate, "current"), { route_id: choice.routeId, direction: choice.direction, expected_updated_at: version });
+  for (const patch of [{ ready: false }, { mutating: true }, { routeAvailable: false }, { choice: undefined }, { sessionKey: "previous" }]) {
+    assert.equal(canJoinDriverQueue({ ...gate, ...patch }, "current"), false);
+    assert.throws(() => driverQueueChoiceInput({ ...gate, ...patch }, "current"));
+  }
+  assert.equal(driverQueueChoiceInput({ ...gate, hasChoice: false, choice: undefined }, "current"), undefined);
+});
 
 test("catalog validates configured endpoints and ordered unique stops without repairing malformed data", () => {
   assert.deepEqual(parseDriverRouteCatalog({ routes: [route] }), [route]);

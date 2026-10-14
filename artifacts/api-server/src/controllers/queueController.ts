@@ -8,6 +8,8 @@ import { translate } from "../utils/i18n";
 import { emitQueueUpdate } from "../utils/realtime";
 import { boundedInteger, pickEnum } from "../utils/validation";
 import { processOrderDispatch } from "../services/orderDispatchService";
+import { readDriverRouteChoiceInput } from "../utils/driverRoute";
+import { queueStatusView } from "../services/queueView";
 
 function getLocation(request: Request): Coordinates {
   const raw = request.body?.location;
@@ -45,26 +47,17 @@ function assertDriver(request: Request): string {
 }
 
 export async function getQueueStatus(request: Request, response: Response): Promise<void> {
-  response.json({
-    zone: {
-      id: PYATAK_ZONE.id,
-      name: PYATAK_ZONE.name,
-      center: PYATAK_ZONE.center,
-      geofence_meters: PYATAK_ZONE.radiusMeters,
-    },
-    queue_point: PYATAK_ZONE.center,
-    geofence_meters: PYATAK_ZONE.radiusMeters,
-    queue: await store.queueSnapshot(),
-    your_position: request.auth
-      ? await store.getQueuePosition(request.auth.userId)
-      : null,
-  });
+  response.json(await queueStatusView(request.auth?.user));
 }
 
 export async function joinQueue(request: Request, response: Response): Promise<void> {
   const driverId = assertDriver(request);
+  if (Object.keys(request.body ?? {}).some(key => !["location", "available_seats", "route_choice"].includes(key))) {
+    throw new AppError(400, "Unsupported queue field", "VALIDATION_ERROR");
+  }
+  const selection = request.body?.route_choice === undefined ? undefined : readDriverRouteChoiceInput(request.body.route_choice);
   const location = getLocation(request);
-  if (!isWithinRadius(location, PYATAK_ZONE.center, PYATAK_ZONE.radiusMeters)) {
+  if (!selection && !isWithinRadius(location, PYATAK_ZONE.center, PYATAK_ZONE.radiusMeters)) {
     throw new AppError(
       422,
       translate(request.auth?.locale ?? "ru", "outsideGeofence"),
@@ -100,7 +93,7 @@ export async function joinQueue(request: Request, response: Response): Promise<v
     activeOrderIds: existing?.activeOrderIds,
     currentOrderId: existing?.currentOrderId,
     seatLockExpiresAt: existing?.seatLockExpiresAt,
-  }, request.auth?.user.sessionVersion);
+  }, request.auth?.user.sessionVersion, selection);
   await processOrderDispatch(request.app.locals.io);
   const entry = await store.getQueueEntry(driverId);
   await emitQueueUpdate(request.app.locals.io, {
@@ -138,7 +131,7 @@ export async function updateQueueLocation(request: Request, response: Response):
     throw new AppError(404, "Driver is not in the queue", "NOT_IN_QUEUE");
   }
   if (
-    current.status === "searching" &&
+    !current.routeContext && current.status === "searching" &&
     !isWithinRadius(location, PYATAK_ZONE.center, PYATAK_ZONE.radiusMeters)
   ) {
     throw new AppError(
@@ -168,6 +161,9 @@ export async function updateQueueStatus(request: Request, response: Response): P
   }
   if (current.pendingOfferOrderId) {
     throw new AppError(409, "Accept or reject the pending offer before changing status", "QUEUE_BUSY");
+  }
+  if (current.routeContext) {
+    throw new AppError(409, "Order dispatch for configured routes is not available yet", "ROUTE_DISPATCH_NOT_AVAILABLE");
   }
   const allowedTransitions: Record<DriverQueueStatus, readonly DriverQueueStatus[]> = {
     searching: ["picking_up", "in_transit"],

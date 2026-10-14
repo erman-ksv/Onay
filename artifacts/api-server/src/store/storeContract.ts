@@ -72,7 +72,7 @@ export interface Store {
   getQueueEntry(driverId: string): MaybePromise<QueueEntry | undefined>;
   removeDriverFromFifo(driverId: string): MaybePromise<QueueEntry | undefined>;
   returnDriverToFifo(driverId: string): MaybePromise<QueueEntry | undefined>;
-  joinQueue(entry: QueueEntry, expectedSessionVersion?: number): MaybePromise<QueueEntry>;
+  joinQueue(entry: QueueEntry, expectedSessionVersion?: number, selection?: DriverRouteChoiceInput): MaybePromise<QueueEntry>;
   updateQueueEntry(
     driverId: string,
     patch: Partial<QueueEntry>,

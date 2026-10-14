@@ -73,7 +73,7 @@ services.
 ## Queue and orders
 
 - `GET /api/queue` — current FIFO queue, Pyatak zone and your position.
-- `POST /api/queue/join` — driver joins within the configured Pyatak geofence.
+- `POST /api/queue/join` — driver joins the legacy Pyatak zone or the selected configured route's pitak A/B geofence.
 - `PATCH /api/queue/location` — location update checked by anti-fake GPS middleware.
 - `PATCH /api/queue/status` — `searching`, `picking_up`, `en_route_to_c`, `arrived_at_c`, `in_transit`.
 - `GET /api/fares/stops?route_id=pyatak` — route-stop catalog and `price_per_stop`.
@@ -238,11 +238,27 @@ Save returns HTTP 404 `ROUTE_NOT_FOUND` for a missing route, HTTP 409
 `ROUTE_NOT_CONFIGURED` for an unavailable current configuration. Malformed
 strings or direction values return HTTP 400 `VALIDATION_ERROR`.
 
-This is a planning choice. The current global queue still uses its legacy
-Point C/D dispatch rules. Any saved choice blocks legacy queue joins with HTTP
-409 `ROUTE_QUEUE_NOT_AVAILABLE`, including a choice that has become unavailable.
-Clearing the choice restores legacy queue entry. This does not change matching,
-offers, driver GPS, queue contexts, historical orders, or session versions.
+Configured enrollment uses `POST /api/queue/join` with `location`,
+`available_seats` and `route_choice: { route_id, direction, expected_updated_at }`.
+The latter must match the live saved choice and the current route revision.
+The server derives pitak A for `a_to_b`, B for `b_to_a`, and validates the
+administrator's endpoint coordinates and radius inside the queue transaction.
+Caller-supplied queue geometry or context is rejected. Omitting `route_choice`
+while a choice is saved retains HTTP 409 `ROUTE_QUEUE_NOT_AVAILABLE`.
+
+The queue entry stores an immutable `routeContext` snapshot. Positions count
+drivers only in the same route/direction/pitak lane; legacy drivers remain in
+their separate lane. Rejoining retains configured capacity and original FIFO
+time. Leave the queue before changing the saved route. `GET /api/queue` exposes
+`route_queue`, `your_entry`, the relevant zone and only the driver's own lane;
+administrators may inspect all lanes. The private position event includes
+`route_context`. Migration `0004_route_queue_context` adds nullable JSONB to
+`tezjet_driver_queue`; existing entries remain legacy.
+
+This stage implements enrollment only. Configured lanes are excluded from
+legacy C/D availability, offers and direct claims; manual configured status
+changes return `ROUTE_DISPATCH_NOT_AVAILABLE`. Configured-route orders and
+Smart Pickup remain separate work. Clearing a choice restores legacy entry.
 
 For an existing PostgreSQL database, run
 `pnpm --filter @workspace/db run migrate` before starting this API version.

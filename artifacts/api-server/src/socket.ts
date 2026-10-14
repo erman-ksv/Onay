@@ -6,6 +6,7 @@ import { verifyAccessToken } from "./utils/token";
 import { logger } from "./lib/logger";
 import { PYATAK_ZONE, REQUIRE_DRIVER_APPROVAL } from "./utils/config";
 import { emitIncomingOrder } from "./utils/realtime";
+import { queueStatusView } from "./services/queueView";
 
 export function createRealtimeServer(httpServer: HttpServer): Server {
   const io = new Server(httpServer, {
@@ -72,15 +73,13 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
       ],
     });
     try {
+      const user = await store.getUser(userId);
+      if (!user || user.sessionVersion !== socket.data.sessionVersion || user.role !== socket.data.role) {
+        socket.disconnect(true);
+        return;
+      }
       socket.emit("queue:snapshot", {
-        zone: {
-          id: PYATAK_ZONE.id,
-          name: PYATAK_ZONE.name,
-          center: PYATAK_ZONE.center,
-          geofence_meters: PYATAK_ZONE.radiusMeters,
-        },
-        queue: await store.queueSnapshot(),
-        your_position: await store.getQueuePosition(userId),
+        ...await queueStatusView(user),
         updated_at: new Date().toISOString(),
       });
       if (socket.data.role === "driver") {
