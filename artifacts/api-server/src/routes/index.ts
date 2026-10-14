@@ -7,6 +7,7 @@ import notificationRouter from "./notifications";
 import addressRouter from "./address";
 import fareRouter from "./fare";
 import adminRouter from "./admin";
+import driverRouter from "./driver";
 
 const router: IRouter = Router();
 
@@ -18,5 +19,7 @@ router.use(notificationRouter);
 router.use(addressRouter);
 router.use(fareRouter);
 router.use(adminRouter);
+router.use(driverRouter);
 
 export default router;
+

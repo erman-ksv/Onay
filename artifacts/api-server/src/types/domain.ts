@@ -66,6 +66,36 @@ export interface RouteDefinition {
   updatedAt: string;
 }
 
+export type DriverRouteDirection = "a_to_b" | "b_to_a";
+
+/** A planning preference only; it does not make the legacy queue route-aware. */
+export interface DriverRouteChoice {
+  routeId: string;
+  direction: DriverRouteDirection;
+  routeUpdatedAt: string;
+}
+
+/** Private driver catalog projection, without pricing or account data. */
+export interface DriverRouteOption {
+  id: string;
+  name: string;
+  updatedAt: string;
+  stops: RouteStop[];
+  pitaks: NonNullable<RouteDefinition["pitaks"]>;
+}
+
+export type DriverRouteUnavailableReason =
+  | "ROUTE_MISSING"
+  | "ROUTE_INACTIVE"
+  | "ROUTE_CHANGED"
+  | "ROUTE_NOT_CONFIGURED";
+
+export interface DriverRouteSelection {
+  choice: DriverRouteChoice | null;
+  route: DriverRouteOption | null;
+  unavailable_reason: DriverRouteUnavailableReason | null;
+}
+
 export interface FareQuote {
   currency: "KZT";
   routeId: string;
@@ -92,6 +122,8 @@ export interface User {
   profileLocked: boolean;
   sessionVersion: number;
   driverApprovalStatus?: DriverApprovalStatus;
+  /** Exposed only through the authenticated driver's route endpoint. */
+  driverRouteChoice?: DriverRouteChoice;
   lastLocation?: Coordinates;
   createdAt: string;
 }

@@ -1,0 +1,230 @@
+name: Driver route planning browser QA
+
+on:
+  pull_request:
+    paths:
+      - "artifacts/api-server/**"
+      - "lib/db/**"
+      - "mobile/tezjet-app/**"
+      - "scripts/driver-route-browser-qa.py"
+      - ".github/workflows/driver-route-qa.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".npmrc"
+      - "tsconfig*.json"
+  push:
+    branches:
+      - main
+    paths:
+      - "artifacts/api-server/**"
+      - "lib/db/**"
+      - "mobile/tezjet-app/**"
+      - "scripts/driver-route-browser-qa.py"
+      - ".github/workflows/driver-route-qa.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".npmrc"
+      - "tsconfig*.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: driver-route-qa-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-qa:
+    name: Real driver route and direction planning QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: tezjet_driver_route_qa
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d tezjet_driver_route_qa"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tezjet_driver_route_qa
+      TEZJET_STORAGE_ADAPTER: postgres
+      NODE_ENV: development
+      ADMIN_PHONE: "+998900000001"
+      SESSION_SECRET: tezjet-driver-route-qa-session-secret-at-least-32-characters
+      EXPO_PUBLIC_API_URL: http://127.0.0.1:5000
+      CI: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck workspace
+        run: pnpm run typecheck
+
+      - name: Provision PostgreSQL schema
+        run: pnpm --filter @workspace/db run migrate
+
+      - name: Build API
+        run: pnpm --filter @workspace/api-server run build
+
+      - name: API integration regressions against PostgreSQL
+        run: node --test artifacts/api-server/test/*.test.mjs
+
+      - name: Install separate Expo app dependencies
+        working-directory: mobile/tezjet-app
+        run: pnpm install --ignore-workspace
+
+      - name: Typecheck Expo app
+        working-directory: mobile/tezjet-app
+        run: pnpm run typecheck
+
+      - name: Test Expo app
+        working-directory: mobile/tezjet-app
+        run: pnpm run test
+
+      - name: Export actual Expo app for web
+        working-directory: mobile/tezjet-app
+        run: pnpm exec expo export --platform web --output-dir dist
+
+      - name: Install pinned browser tooling
+        run: |
+          python -m pip install playwright==1.56.0
+          python -m playwright install --with-deps chromium
+
+      - name: Start API
+        working-directory: artifacts/api-server
+        env:
+          NODE_ENV: development
+          PORT: "5000"
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/artifacts/driver-route-qa"
+          setsid node --enable-source-maps ./dist/index.mjs > "$GITHUB_WORKSPACE/artifacts/driver-route-qa/api.log" 2>&1 &
+          echo "$!" > "$GITHUB_WORKSPACE/artifacts/driver-route-qa/api.pid"
+
+      - name: Serve actual exported Expo app
+        run: |
+          test -f mobile/tezjet-app/dist/index.html
+          setsid python -m http.server 4174 --bind 127.0.0.1 --directory mobile/tezjet-app/dist > artifacts/driver-route-qa/frontend.log 2>&1 &
+          echo "$!" > artifacts/driver-route-qa/frontend.pid
+
+      - name: Wait for API and exported Expo app
+        run: |
+          python - <<'PY' 2>&1 | tee artifacts/driver-route-qa/readiness.log
+          import json
+          import time
+          import urllib.request
+
+          deadline = time.monotonic() + 45
+          for label, url, health in (
+              ("API", "http://127.0.0.1:5000/api/healthz", True),
+              ("Expo app", "http://127.0.0.1:4174/", False),
+          ):
+              last_error = "No response"
+              while time.monotonic() < deadline:
+                  try:
+                      with urllib.request.urlopen(url, timeout=2) as response:
+                          body = response.read()
+                          if response.status != 200:
+                              raise RuntimeError(f"HTTP {response.status}")
+                          if health and json.loads(body).get("status") != "ok":
+                              raise RuntimeError("Unexpected health response")
+                          if not health and b"<html" not in body.lower():
+                              raise RuntimeError("Expected exported Expo HTML")
+                      print(f"{label} ready: {url}", flush=True)
+                      break
+                  except Exception as error:
+                      last_error = str(error)
+                      time.sleep(0.5)
+              else:
+                  raise SystemExit(f"{label} did not become ready: {last_error}")
+          PY
+
+      - name: Run driver route planning browser QA
+        run: |
+          python scripts/driver-route-browser-qa.py \
+            --base-url http://127.0.0.1:4174 \
+            --api-url http://127.0.0.1:5000 \
+            --output-dir artifacts/driver-route-qa \
+            2>&1 | tee artifacts/driver-route-qa/browser-qa.log
+
+      - name: Stop saved server processes
+        if: always()
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import signal
+
+          for name in ("frontend", "api"):
+              pid_file = Path("artifacts/driver-route-qa") / f"{name}.pid"
+              if not pid_file.exists():
+                  continue
+              value = pid_file.read_text().strip()
+              if not value.isdigit() or int(value) <= 1:
+                  print(f"Ignoring invalid {name} PID")
+                  continue
+              pid = int(value)
+              try:
+                  if os.getpgid(pid) != pid:
+                      print(f"Ignoring {name} PID without its own process group")
+                      continue
+                  os.killpg(pid, signal.SIGTERM)
+                  print(f"Stopped {name} process group {pid}")
+              except ProcessLookupError:
+                  pass
+          PY
+
+      - name: Redact credentials from QA logs
+        if: always()
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          for path in Path("artifacts/driver-route-qa").glob("*.log"):
+              text = path.read_text(encoding="utf-8", errors="replace")
+              text = re.sub(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", "[redacted-token]", text)
+              text = re.sub(r"(?i)(Bearer\s+)[A-Za-z0-9._~-]+", r"\1[redacted-token]", text)
+              text = re.sub(r'(?i)("(?:access_token|authorization|demo_code|session_secret)"\s*:\s*)"[^"]*"', r'\1"[redacted]"', text)
+              path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Upload screenshots and redacted verification logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: driver-route-qa
+          path: artifacts/driver-route-qa
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,6 +1,8 @@
 import type {
   DeviceRegistration,
   DriverApprovalStatus,
+  DriverRouteChoice,
+  DriverRouteDirection,
   Locale,
   Order,
   OrderOfferChange,
@@ -38,6 +40,12 @@ export interface RouteLayoutInput {
   };
 }
 
+export interface DriverRouteChoiceInput {
+  routeId: string;
+  direction: DriverRouteDirection;
+  expectedUpdatedAt: string;
+}
+
 export interface Store {
   initialize(): MaybePromise<void>;
   createUser(input: {
@@ -55,6 +63,8 @@ export interface Store {
   invalidateSessions(userId: string): MaybePromise<User>;
   /** Activate a non-admin mode and invalidate the previous session atomically. */
   activateUserRole(userId: string, nextRole: "passenger" | "driver", expectedSessionVersion?: number): MaybePromise<User>;
+  /** Change planning preference only while the live driver has no queue/order work. */
+  setDriverRouteChoice(userId: string, input: DriverRouteChoiceInput | null, expectedSessionVersion: number): MaybePromise<DriverRouteChoice | null>;
 
   saveOtp(challenge: OtpChallenge): MaybePromise<void>;
   consumeOtp(phoneNumber: string, code: string): MaybePromise<OtpChallenge | undefined>;
