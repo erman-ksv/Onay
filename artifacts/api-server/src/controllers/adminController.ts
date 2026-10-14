@@ -6,6 +6,7 @@ import { PYATAK_ZONE, updatePyatakCenter } from "../utils/config";
 import { isValidCoordinates } from "../utils/geo";
 import { AppError } from "../utils/errors";
 import { serializeOrder, serializeUser } from "../utils/serialize";
+import { readRouteLayoutInput } from "../utils/routeLayout";
 import { boundedInteger, optionalString, pickEnum, requiredString } from "../utils/validation";
 
 function routeId(value: unknown): string {
@@ -95,6 +96,16 @@ export async function getAdminRoute(request: Request, response: Response): Promi
   response.json({ route });
 }
 
+/** Save the ordered static route geometry and optional endpoint pitaks together. */
+export async function updateRouteLayout(request: Request, response: Response): Promise<void> {
+  const id = requiredString(request.params["routeId"], "route_id", 80);
+  const route = await store.updateRouteLayout(id, readRouteLayoutInput(request.body));
+  if (!route) {
+    throw new AppError(404, "Route not found", "ROUTE_NOT_FOUND");
+  }
+  response.json({ route });
+}
+
 export async function createRoute(request: Request, response: Response): Promise<void> {
   let route;
   try {
@@ -155,11 +166,8 @@ export async function deleteRoute(request: Request, response: Response): Promise
 }
 
 export async function addStop(request: Request, response: Response): Promise<void> {
-  const route = await store.getRoute(requiredString(request.params["routeId"], "route_id", 80));
-  if (!route) {
-    throw new AppError(404, "Route not found", "ROUTE_NOT_FOUND");
-  }
-  const stop = await store.addRouteStop(route.id, {
+  const id = requiredString(request.params["routeId"], "route_id", 80);
+  const stop = await store.addRouteStop(id, {
     code: requiredString(request.body?.code, "code", 40).toUpperCase(),
     name: requiredString(request.body?.name, "name", 120),
     sequence:
@@ -171,6 +179,9 @@ export async function addStop(request: Request, response: Response): Promise<voi
         ? undefined
         : boundedInteger(request.body.position, "position", 1, 100_000),
   });
+  if (!stop) {
+    throw new AppError(404, "Route not found", "ROUTE_NOT_FOUND");
+  }
   response.status(201).json({ stop });
 }
 

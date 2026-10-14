@@ -29,6 +29,7 @@ export class AdminApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    public readonly code?: string,
   ) {
     super(message);
     this.name = "AdminApiError";
@@ -36,7 +37,7 @@ export class AdminApiError extends Error {
 }
 
 type Options = {
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PUT";
   token?: string;
   body?: unknown;
   signal?: AbortSignal;
@@ -58,10 +59,11 @@ export async function adminRequest<T>(path: string, options: Options = {}): Prom
   });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
-    const error = payload as { error?: { message?: string } } | null;
+    const error = payload as { error?: { message?: string; code?: string } } | null;
     throw new AdminApiError(
       response.status,
       error?.error?.message || "Сервер вернул ошибку " + response.status,
+      error?.error?.code,
     );
   }
   return payload as T;
@@ -105,3 +107,62 @@ export async function loadDirectories(token: string, signal?: AbortSignal): Prom
 export async function closeAdminSession(token: string): Promise<void> {
   await adminRequest<void>("/auth/logout", { token, method: "POST" });
 }
+
+export type AdminRouteStop = {
+  id: string;
+  code: string;
+  name: string;
+  sequence: number;
+  position: number;
+  location?: { lat: number; lng: number; timestamp?: number };
+};
+
+export type AdminRoute = {
+  id: string;
+  name: string;
+  active: boolean;
+  currency: "KZT";
+  pricePerStopKzt: number;
+  updatedAt: string;
+  stops: AdminRouteStop[];
+  pitaks?: { aStopCode: string; bStopCode: string; radiusMeters: number };
+};
+
+export type RouteLayoutInput = {
+  expected_updated_at: string;
+  stops: Array<{ id?: string; code: string; name: string; location?: { lat: number; lng: number } }>;
+  pitaks?: { a_stop_code: string; b_stop_code: string; radius_meters: number };
+};
+
+function readRoute(value: unknown): AdminRoute {
+  const route = value as AdminRoute | undefined;
+  if (!route || typeof route.id !== "string" || typeof route.name !== "string" ||
+      typeof route.updatedAt !== "string" || !route.updatedAt || !Array.isArray(route.stops) ||
+      route.stops.some(stop => !stop || typeof stop.id !== "string" || typeof stop.code !== "string" || typeof stop.name !== "string")) {
+    throw new AdminApiError(502, "Некорректный ответ каталога маршрутов.");
+  }
+  return route;
+}
+
+export async function loadAdminRoutes(token: string, signal?: AbortSignal): Promise<AdminRoute[]> {
+  const result = await adminRequest<{ routes: unknown[] }>("/admin/routes", { token, signal });
+  if (!Array.isArray(result.routes)) throw new AdminApiError(502, "Некорректный ответ каталога маршрутов.");
+  return result.routes.map(readRoute);
+}
+
+export async function loadAdminRoute(token: string, routeId: string, signal?: AbortSignal): Promise<AdminRoute> {
+  const result = await adminRequest<{ route: unknown }>("/admin/routes/" + encodeURIComponent(routeId), { token, signal });
+  return readRoute(result.route);
+}
+
+/** The existing server creates an ID and applies its default fare; no tariff editing here. */
+export async function createAdminRoute(token: string, name: string): Promise<AdminRoute> {
+  const result = await adminRequest<{ route: unknown }>("/admin/routes", { token, method: "POST", body: { name: name.trim() } });
+  return readRoute(result.route);
+}
+
+export async function saveAdminRouteLayout(token: string, routeId: string, layout: RouteLayoutInput): Promise<AdminRoute> {
+  const result = await adminRequest<{ route: unknown }>("/admin/routes/" + encodeURIComponent(routeId) + "/layout", { token, method: "PUT", body: layout });
+  return readRoute(result.route);
+}
+

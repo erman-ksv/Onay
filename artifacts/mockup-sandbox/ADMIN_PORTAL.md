@@ -1,6 +1,6 @@
-# TezJet — first working admin web screen
+# TezJet — admin web portal
 
-The existing React/Vite `@workspace/mockup-sandbox` now has a functional, **read-only** route `/admin` (in addition to the existing mockup previews). It reads the real passenger and driver directories via the protected TezJet API. This is a development-stage admin UI; it is **not** an independently deployed production admin app.
+The existing React/Vite `@workspace/mockup-sandbox` has a functional route `/admin` (in addition to the existing mockup previews). It reads the real passenger and driver directories and configures route stops and endpoint pitaks through the protected TezJet API. This is a development-stage admin UI; it is **not** an independently deployed production admin app.
 
 ## Local setup
 
@@ -15,7 +15,12 @@ The existing React/Vite `@workspace/mockup-sandbox` now has a functional, **read
 
 - Secure **API-side** admin role authorization for lists of passengers and drivers, with role/status badges.
 - Search directory by name, phone or ID; manual reload; responsive UI. Data is retrieved from `GET /api/admin/passengers` and `GET /api/admin/drivers`.
-- No driver approvals, order cancellation, pitak updates, fare editing, or mutations in this first screen.
+- The separate **Маршруты и остановки** navigation loads the real route catalog with `GET /api/admin/routes` and the selected route with `GET /api/admin/routes/:id`. The existing passenger/driver directory remains available.
+- Create a route by name using `POST /api/admin/routes`; the server supplies its UUID, active state and default fare (500 KZT per stop). This screen does not edit fares.
+- Add, edit, remove and move stops up/down. Each stop has a code, name, latitude and longitude; intermediate stops can have both coordinates blank. Existing stop IDs are preserved; new IDs are assigned by the server. Array order becomes canonical sequence/position 1..N.
+- Enable **Настроить питаки A/B**, select the first stop as A and the last as B, and enter an integer radius from 10 to 5000 metres. Both endpoints need coordinates and must differ. Codes are trimmed and normalized to uppercase; duplicate codes, incomplete coordinate pairs and nonfinite/out-of-bounds values are rejected. A route can be saved as a draft without pitaks; disabling the checkbox clears an existing pitak configuration on save.
+- **Сохранить остановки и питаки** sends one full `PUT /api/admin/routes/:id/layout` with `expected_updated_at`, stops and optional pitaks. Success is shown only after the server accepts and returns the saved route. Errors retain the draft. A `409 ROUTE_CHANGED` keeps edits visible and blocks another save until an explicit reload; the UI explains that reload replaces the draft before doing so. Refreshing the catalog and late GET responses cannot overwrite edits. Switching routes with edits also requires explicit draft replacement. Section navigation retains the in-memory draft.
+- No driver approvals, order cancellation, fare editing, matching, GPS tracking or queue operations are added by the route layout screen.
 - Vite's development server proxies same-origin `/api` requests to the backend. **Production builds do not include Vite's dev proxy.** An operator must configure an HTTPS reverse proxy or equivalent same-origin API routing before deployment. Serve the admin panel only over HTTPS with proper access controls, an appropriate CSP, and restricted admin credentials.
-- This UI has not been acceptance-tested in a mobile browser or against a public production backend; CI typecheck/build is not full end-to-end testing.
-- The original TezJet section-9 task for an administrative user directory should be marked complete only after independent UI/browser acceptance with the real API, not merely when this PR merges.
+- A local typecheck/build does not establish acceptance against a public production backend; route API behavior and browser checks should be verified in the operator's target environment before rollout.
+

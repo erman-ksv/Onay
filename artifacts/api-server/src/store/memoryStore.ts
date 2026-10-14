@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { OFFER_TIMEOUT_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
-import type { Store } from "./storeContract";
+import type { RouteLayoutInput, Store } from "./storeContract";
+import { mutateRouteStop, nextRouteUpdatedAt, replaceRouteLayout } from "../utils/routeLayout";
 import { canTransitionOrder, claimQueueEntry, hasActiveOrders, joinQueueEntry, releaseQueueEntry, transitionQueueEntry } from "./orderLifecycle";
 import { AppError } from "../utils/errors";
 import { acceptQueueOffer, assertOrderOfferPatch, assertQueueOfferPatch, compareOfferDrivers, hasLiveOrderOffer, orderedOfferCandidates, releaseQueueOffer, reserveQueueOffer } from "./orderOffers";
@@ -463,17 +464,20 @@ class MemoryStore implements Store {
   }
 
   listRoutes(): RouteDefinition[] {
-    return [...this.routes.values()].map((route) => ({
-      ...route,
-      stops: route.stops.map((stop) => ({ ...stop })),
-    }));
+    return [...this.routes.values()].map((route) => structuredClone(route));
   }
 
   getRoute(routeId: string): RouteDefinition | undefined {
     const route = this.routes.get(routeId);
-    return route
-      ? { ...route, stops: route.stops.map((stop) => ({ ...stop })) }
-      : undefined;
+    return route ? structuredClone(route) : undefined;
+  }
+
+  updateRouteLayout(routeId: string, input: RouteLayoutInput): RouteDefinition | undefined {
+    const current = this.routes.get(routeId);
+    if (!current) return undefined;
+    const route = replaceRouteLayout(current, input);
+    this.routes.set(routeId, route);
+    return structuredClone(route);
   }
 
   createRoute(input: {
@@ -508,7 +512,7 @@ class MemoryStore implements Store {
     if (!route) {
       return undefined;
     }
-    Object.assign(route, patch, { updatedAt: new Date().toISOString() });
+    this.routes.set(routeId, { ...route, ...patch, updatedAt: nextRouteUpdatedAt(route.updatedAt) });
     return this.getRoute(routeId);
   }
 
@@ -524,19 +528,10 @@ class MemoryStore implements Store {
     if (!route) {
       return undefined;
     }
-    const sequence = input.sequence ?? route.stops.length + 1;
-    const position = input.position ?? sequence;
-    const stop: RouteStop = {
-      id: randomUUID(),
-      code: input.code,
-      name: input.name,
-      sequence,
-      position,
-    };
-    route.stops.push(stop);
-    route.stops.sort((a, b) => a.sequence - b.sequence);
-    route.updatedAt = new Date().toISOString();
-    return { ...stop };
+    const changed = mutateRouteStop(route, { kind: "add", input });
+    if (!changed?.stop) return undefined;
+    this.routes.set(routeId, changed.route);
+    return structuredClone(changed.stop);
   }
 
   updateRouteStop(
@@ -545,14 +540,13 @@ class MemoryStore implements Store {
     patch: Partial<Pick<RouteStop, "code" | "name" | "sequence" | "position">>,
   ): RouteStop | undefined {
     const route = this.routes.get(routeId);
-    const stop = route?.stops.find((candidate) => candidate.id === stopId);
-    if (!route || !stop) {
+    if (!route) {
       return undefined;
     }
-    Object.assign(stop, patch);
-    route.stops.sort((a, b) => a.sequence - b.sequence);
-    route.updatedAt = new Date().toISOString();
-    return { ...stop };
+    const changed = mutateRouteStop(route, { kind: "update", stopId, patch });
+    if (!changed?.stop) return undefined;
+    this.routes.set(routeId, changed.route);
+    return structuredClone(changed.stop);
   }
 
   deleteRouteStop(routeId: string, stopId: string): boolean {
@@ -560,12 +554,9 @@ class MemoryStore implements Store {
     if (!route) {
       return false;
     }
-    const originalLength = route.stops.length;
-    route.stops = route.stops.filter((stop) => stop.id !== stopId);
-    if (route.stops.length === originalLength) {
-      return false;
-    }
-    route.updatedAt = new Date().toISOString();
+    const changed = mutateRouteStop(route, { kind: "delete", stopId });
+    if (!changed) return false;
+    this.routes.set(routeId, changed.route);
     return true;
   }
 

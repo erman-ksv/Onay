@@ -46,6 +46,8 @@ export interface RouteStop {
   name: string;
   sequence: number;
   position: number;
+  /** Administrator-configured static point; unrelated to driver location updates. */
+  location?: Coordinates;
 }
 
 export interface RouteDefinition {
@@ -55,6 +57,11 @@ export interface RouteDefinition {
   pricePerStopKzt: number;
   active: boolean;
   stops: RouteStop[];
+  pitaks?: {
+    aStopCode: string;
+    bStopCode: string;
+    radiusMeters: number;
+  };
   createdAt: string;
   updatedAt: string;
 }

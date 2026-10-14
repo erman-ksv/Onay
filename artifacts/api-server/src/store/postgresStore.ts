@@ -1,6 +1,7 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
-import type { Store } from "./storeContract";
+import type { RouteLayoutInput, Store } from "./storeContract";
+import { mutateRouteStop, nextRouteUpdatedAt, replaceRouteLayout } from "../utils/routeLayout";
 import { canTransitionOrder, claimQueueEntry, hasActiveOrders, joinQueueEntry, releaseQueueEntry, transitionQueueEntry } from "./orderLifecycle";
 import { AppError } from "../utils/errors";
 import type {
@@ -913,6 +914,10 @@ export class PostgresStore implements Store {
     return row ? asRoute(row as unknown as Record<string, unknown>) : undefined;
   }
 
+  async updateRouteLayout(routeId: string, input: RouteLayoutInput): Promise<RouteDefinition | undefined> {
+    return this.mutateRoute(routeId, (route) => ({ route: replaceRouteLayout(route, input) }));
+  }
+
   async createRoute(input: { id: string; name: string; pricePerStopKzt: number; active: boolean }): Promise<RouteDefinition> {
     const { db, routesTable } = await this.database();
     const now = new Date().toISOString();
@@ -937,71 +942,65 @@ export class PostgresStore implements Store {
   }
 
   async updateRoute(routeId: string, patch: Partial<Pick<RouteDefinition, "name" | "pricePerStopKzt" | "active">>): Promise<RouteDefinition | undefined> {
-    const { db, routesTable } = await this.database();
-    const current = await this.getRoute(routeId);
-    if (!current) return undefined;
-    const route: RouteDefinition = { ...current, ...patch, updatedAt: new Date().toISOString() };
-    const [row] = await db.update(routesTable).set({
-      name: route.name,
-      active: route.active,
-      pricePerStopKzt: route.pricePerStopKzt,
-      updatedAt: route.updatedAt,
-      payload: route as unknown as Record<string, unknown>,
-    }).where(eq(routesTable.id, routeId)).returning();
-    return row ? asRoute(row as unknown as Record<string, unknown>) : undefined;
+    return this.mutateRoute(routeId, (route) => ({
+      route: { ...route, ...patch, updatedAt: nextRouteUpdatedAt(route.updatedAt) },
+    }));
   }
 
   async deleteRoute(routeId: string): Promise<boolean> {
     const { db, routesTable } = await this.database();
-    const rows = await db.delete(routesTable).where(eq(routesTable.id, routeId)).returning({ id: routesTable.id });
-    return rows.length > 0;
+    return db.transaction(async tx => {
+      const [row] = await tx.select({ id: routesTable.id }).from(routesTable)
+        .where(eq(routesTable.id, routeId)).for("update").limit(1);
+      if (!row) return false;
+      await tx.delete(routesTable).where(eq(routesTable.id, routeId));
+      return true;
+    });
   }
 
   async addRouteStop(routeId: string, input: { code: string; name: string; sequence?: number; position?: number }): Promise<RouteStop | undefined> {
-    const route = await this.getRoute(routeId);
-    if (!route) return undefined;
-    const sequence = input.sequence ?? route.stops.length + 1;
-    const stop: RouteStop = {
-      id: randomUUID(),
-      code: input.code,
-      name: input.name,
-      sequence,
-      position: input.position ?? sequence,
-    };
-    const stops = [...route.stops, stop].sort((a, b) => a.sequence - b.sequence);
-    await this.updateRoutePayload(routeId, { ...route, stops, updatedAt: new Date().toISOString() });
-    return stop;
+    return this.mutateRoute(routeId, (route) => {
+      const changed = mutateRouteStop(route, { kind: "add", input });
+      return changed?.stop ? { route: changed.route, result: changed.stop } : undefined;
+    });
   }
 
   async updateRouteStop(routeId: string, stopId: string, patch: Partial<Pick<RouteStop, "code" | "name" | "sequence" | "position">>): Promise<RouteStop | undefined> {
-    const route = await this.getRoute(routeId);
-    const stop = route?.stops.find((candidate) => candidate.id === stopId);
-    if (!route || !stop) return undefined;
-    const updatedStop = { ...stop, ...patch };
-    const stops = route.stops.map((candidate) => candidate.id === stopId ? updatedStop : candidate)
-      .sort((a, b) => a.sequence - b.sequence);
-    await this.updateRoutePayload(routeId, { ...route, stops, updatedAt: new Date().toISOString() });
-    return updatedStop;
+    return this.mutateRoute(routeId, (route) => {
+      const changed = mutateRouteStop(route, { kind: "update", stopId, patch });
+      return changed?.stop ? { route: changed.route, result: changed.stop } : undefined;
+    });
   }
 
   async deleteRouteStop(routeId: string, stopId: string): Promise<boolean> {
-    const route = await this.getRoute(routeId);
-    if (!route) return false;
-    const stops = route.stops.filter((stop) => stop.id !== stopId);
-    if (stops.length === route.stops.length) return false;
-    await this.updateRoutePayload(routeId, { ...route, stops, updatedAt: new Date().toISOString() });
-    return true;
+    return (await this.mutateRoute(routeId, (route) => {
+      const changed = mutateRouteStop(route, { kind: "delete", stopId });
+      return changed ? { route: changed.route, result: true } : undefined;
+    })) ?? false;
   }
 
-  private async updateRoutePayload(routeId: string, route: RouteDefinition): Promise<void> {
+  /** Every catalog writer reads the current JSON payload under the same lock. */
+  private async mutateRoute<T = RouteDefinition>(
+    routeId: string,
+    mutate: (route: RouteDefinition) => { route: RouteDefinition; result?: T } | undefined,
+  ): Promise<T | undefined> {
     const { db, routesTable } = await this.database();
-    await db.update(routesTable).set({
-      name: route.name,
-      active: route.active,
-      pricePerStopKzt: route.pricePerStopKzt,
-      updatedAt: route.updatedAt,
-      payload: route as unknown as Record<string, unknown>,
-    }).where(eq(routesTable.id, routeId));
+    return db.transaction(async tx => {
+      const [current] = await tx.select().from(routesTable)
+        .where(eq(routesTable.id, routeId)).for("update").limit(1);
+      if (!current) return undefined;
+      const changed = mutate(asRoute(current as unknown as Record<string, unknown>));
+      if (!changed) return undefined;
+      const { route } = changed;
+      const [row] = await tx.update(routesTable).set({
+        name: route.name,
+        active: route.active,
+        pricePerStopKzt: route.pricePerStopKzt,
+        updatedAt: route.updatedAt,
+        payload: route as unknown as Record<string, unknown>,
+      }).where(eq(routesTable.id, routeId)).returning();
+      return changed.result ?? asRoute(row as unknown as Record<string, unknown>) as T;
+    });
   }
 
   async saveDeviceRegistration(userId: string, deviceToken: string, platform: DeviceRegistration["platform"]): Promise<DeviceRegistration> {

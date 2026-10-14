@@ -23,6 +23,21 @@ import type {
 export type MaybePromise<T> = T | Promise<T>;
 export type { OrderOfferChange } from "../types/domain";
 
+export interface RouteLayoutInput {
+  expectedUpdatedAt: string;
+  stops: Array<{
+    id?: string;
+    code: string;
+    name: string;
+    location?: { lat: number; lng: number };
+  }>;
+  pitaks?: {
+    aStopCode: string;
+    bStopCode: string;
+    radiusMeters: number;
+  };
+}
+
 export interface Store {
   initialize(): MaybePromise<void>;
   createUser(input: {
@@ -95,6 +110,8 @@ export interface Store {
 
   listRoutes(): MaybePromise<RouteDefinition[]>;
   getRoute(routeId: string): MaybePromise<RouteDefinition | undefined>;
+  /** Replace only the ordered static layout, rejecting a stale route version. */
+  updateRouteLayout(routeId: string, input: RouteLayoutInput): MaybePromise<RouteDefinition | undefined>;
   createRoute(input: {
     id: string;
     name: string;

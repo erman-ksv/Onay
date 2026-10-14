@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowRight, CheckCircle2, CircleAlert, LockKeyhole, LogOut, RefreshCw, Search, ShieldCheck, Smartphone, Users, UserRound, CarTaxiFront } from "lucide-react";
+import { ArrowRight, CheckCircle2, CircleAlert, LockKeyhole, LogOut, MapPin, RefreshCw, Search, ShieldCheck, Smartphone, Users, UserRound, CarTaxiFront } from "lucide-react";
+import RouteEditor from "./RouteEditor";
 import {
   AdminApiError, closeAdminSession, loadDirectories, sendAdminOtp, verifyAdminOtp,
   type AdminRecord, type AdminSession,
@@ -26,7 +27,7 @@ function IconBadge({ children }: { children: ReactNode }) {
   return <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-900 text-white">{children}</span>;
 }
 
-/** First working admin screen: read-only user directories, no admin actions. */
+/** Protected user directories and route layout administration; credentials stay in memory. */
 export default function AdminPortal() {
   const [session, setSession] = useState<AdminSession | null>(null);
   const [phone, setPhone] = useState("");
@@ -35,6 +36,7 @@ export default function AdminPortal() {
   const [demoCode, setDemoCode] = useState("");
   const [step, setStep] = useState<"phone" | "code">("phone");
   const [tab, setTab] = useState<View>("passengers");
+  const [section, setSection] = useState<"users" | "routes">("users");
   const [filter, setFilter] = useState("");
   const [data, setData] = useState<Directory>(empty);
   const [busy, setBusy] = useState(false);
@@ -49,11 +51,17 @@ export default function AdminPortal() {
     setDemoCode("");
     setStep("phone");
     setLastUpdate(null);
+    setSection("users");
     if (current) {
       try { await closeAdminSession(current.token); }
       catch { /* Session is cleared from this browser regardless of network. */ }
     }
   }, [session]);
+
+  const expireRouteAccess = useCallback(() => {
+    void signOut();
+    setError("Доступ администратора завершён. Войдите снова.");
+  }, [signOut]);
 
   const refresh = useCallback(async (active: AdminSession, signal?: AbortSignal) => {
     setLoading(true);
@@ -157,11 +165,16 @@ export default function AdminPortal() {
   return <div className="min-h-screen bg-[#f5f7fb] text-slate-900">
     <header className="border-b border-slate-200 bg-white">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-5 sm:px-8">
-        <div className="flex items-center gap-3"><IconBadge><CarTaxiFront size={21}/></IconBadge><div><p className="text-lg font-bold leading-tight tracking-tight">TezJet <span className="font-medium text-slate-400">/ Admin</span></p><p className="text-xs text-slate-500">Управление пользователями</p></div></div>
+        <div className="flex items-center gap-3"><IconBadge><CarTaxiFront size={21}/></IconBadge><div><p className="text-lg font-bold leading-tight tracking-tight">TezJet <span className="font-medium text-slate-400">/ Admin</span></p><p className="text-xs text-slate-500">Пользователи и маршруты</p></div></div>
         <div className="flex items-center gap-3"><span className="hidden text-right text-xs text-slate-500 sm:block"><strong className="block text-sm text-slate-800">{session.user.full_name}</strong>Администратор</span><button type="button" onClick={() => void signOut()} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-medium hover:bg-slate-50"><LogOut size={16}/>Выйти</button></div>
       </div>
     </header>
     <main className="mx-auto max-w-7xl px-5 py-9 sm:px-8">
+      <nav aria-label="Разделы панели" className="mb-8 flex flex-wrap gap-2">
+        <button type="button" aria-current={section === "users" ? "page" : undefined} onClick={() => setSection("users")} className={"inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold " + (section === "users" ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50")}><Users size={17}/>Пользователи</button>
+        <button type="button" aria-current={section === "routes" ? "page" : undefined} onClick={() => setSection("routes")} className={"inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold " + (section === "routes" ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50")}><MapPin size={17}/>Маршруты и остановки</button>
+      </nav>
+      <div hidden={section !== "users"}>
       <div className="mb-8"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700">Панель управления</p><h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">Пользователи TezJet</h1><p className="mt-2 text-sm text-slate-500">Просмотр пассажиров и водителей. Данные поступают из защищённого API.</p></div>
       <section aria-label="Статистика пользователей" className="mb-8 grid gap-4 sm:grid-cols-3">
         <div className="rounded-2xl border border-slate-200 bg-white p-5"><div className="mb-5 inline-flex rounded-xl bg-blue-50 p-3 text-blue-600"><Users size={20}/></div><p className="text-sm text-slate-500">Пассажиры</p><p className="mt-1 text-3xl font-bold tabular-nums">{data.passengers.length}</p></div>
@@ -196,6 +209,9 @@ export default function AdminPortal() {
         </div>
         <div className="border-t border-slate-100 px-5 py-4 text-xs text-slate-500">Найдено: {records.length} · Режим только для просмотра. Персональные данные доступны лишь администратору.</div>
       </section>
+      </div>
+      <div hidden={section !== "routes"}><RouteEditor token={session.token} onAccessExpired={expireRouteAccess}/></div>
     </main>
   </div>;
 }
+
