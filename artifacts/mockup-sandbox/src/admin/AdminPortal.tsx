@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { ArrowRight, CheckCircle2, CircleAlert, LockKeyhole, LogOut, MapPin, RefreshCw, Search, ShieldCheck, Smartphone, Users, UserRound, CarTaxiFront } from "lucide-react";
 import RouteEditor from "./RouteEditor";
 import {
@@ -43,14 +43,33 @@ export default function AdminPortal() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const activeSessionToken = useRef<string | null>(null);
+  const directoryRequest = useRef(0);
+  const directoryAbort = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const previousTitle = document.title;
+    const previousLanguage = document.documentElement.lang;
+    document.title = "TezJet — администрирование";
+    document.documentElement.lang = "ru";
+    return () => {
+      document.title = previousTitle;
+      document.documentElement.lang = previousLanguage;
+    };
+  }, []);
 
   const signOut = useCallback(async (current: AdminSession | null = session) => {
+    if ((current?.token ?? null) !== activeSessionToken.current) return;
+    activeSessionToken.current = null;
+    directoryRequest.current++;
+    directoryAbort.current?.abort();
     setSession(null);
     setData(empty);
     setOtp("");
     setDemoCode("");
     setStep("phone");
     setLastUpdate(null);
+    setLoading(false);
     setSection("users");
     if (current) {
       try { await closeAdminSession(current.token); }
@@ -59,37 +78,44 @@ export default function AdminPortal() {
   }, [session]);
 
   const expireRouteAccess = useCallback(() => {
+    if (session?.token !== activeSessionToken.current) return;
     void signOut();
     setError("Доступ администратора завершён. Войдите снова.");
-  }, [signOut]);
+  }, [session, signOut]);
 
-  const refresh = useCallback(async (active: AdminSession, signal?: AbortSignal) => {
+  const refresh = useCallback(async (active: AdminSession) => {
+    if (active.token !== activeSessionToken.current) return;
+    directoryAbort.current?.abort();
+    const controller = new AbortController();
+    directoryAbort.current = controller;
+    const request = ++directoryRequest.current;
+    const isCurrent = () => !controller.signal.aborted &&
+      active.token === activeSessionToken.current && request === directoryRequest.current;
     setLoading(true);
     setError("");
     try {
-      const directory = await loadDirectories(active.token, signal);
-      if (!signal?.aborted) {
+      const directory = await loadDirectories(active.token, controller.signal);
+      if (isCurrent()) {
         setData(directory);
         setLastUpdate(new Date());
       }
     } catch (e) {
-      if (signal?.aborted) return;
+      if (!isCurrent()) return;
       if (e instanceof AdminApiError && (e.status === 401 || e.status === 403)) {
-        await signOut(active);
+        void signOut(active);
         setError("Доступ администратора завершён. Войдите снова.");
       } else {
         setError(e instanceof Error ? e.message : "Не удалось загрузить список.");
       }
     } finally {
-      if (!signal?.aborted) setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [signOut]);
 
   useEffect(() => {
     if (!session) return;
-    const controller = new AbortController();
-    void refresh(session, controller.signal);
-    return () => controller.abort();
+    void refresh(session);
+    return () => directoryAbort.current?.abort();
     // Login changes the token; logout resets the view.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.token]);
@@ -113,6 +139,7 @@ export default function AdminPortal() {
     setError("");
     try {
       const active = await verifyAdminOtp(phone, otp);
+      activeSessionToken.current = active.token;
       setSession(active);
       setOtp("");
       setDemoCode("");
