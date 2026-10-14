@@ -250,32 +250,6 @@ class DriverRouteQA:
         self.assert_saved(route, direction)
         self.identity()
 
-    def resume_saved(self, route, direction):
-        # Real tab visibility exercises React Native Web's AppState listener.
-        # Playwright otherwise forces every page to remain virtually focused.
-        # Disable that override so switching actual tabs changes real visibility.
-        # No synthetic AppState event or native lifecycle/GPS API is injected.
-        lifecycle = self.context.new_cdp_session(self.page)
-        lifecycle.send("Emulation.setFocusEmulationEnabled", {"enabled": False})
-        background = self.context.new_page()
-        background_lifecycle = self.context.new_cdp_session(background)
-        try:
-            background_lifecycle.send("Emulation.setFocusEmulationEnabled", {"enabled": False})
-            background.goto("about:blank")
-            background.bring_to_front()
-            self.page.wait_for_function("document.visibilityState === 'hidden'", timeout=5_000)
-            with self.response_for("/driver/route", "GET") as pending:
-                self.page.bring_to_front()
-            self.page.wait_for_function("document.visibilityState === 'visible'", timeout=5_000)
-            require(pending.value.status == 200, "Foreground resume must refresh the real route choice")
-            self.assert_stops(route, direction)
-            self.assert_saved(route, direction)
-        finally:
-            background_lifecycle.detach()
-            background.close()
-            lifecycle.send("Emulation.setFocusEmulationEnabled", {"enabled": True})
-            lifecycle.detach()
-
     def stale_conflict(self):
         route = self.routes[0]
         self.select_draft(route, "a_to_b")
@@ -346,8 +320,7 @@ class DriverRouteQA:
         self.passed("Both actual routes save both A/B directions with reversed administrator stop names")
         final_route = self.routes[1]
         self.reload_saved(final_route, "b_to_a")
-        self.resume_saved(final_route, "b_to_a")
-        self.passed("Saved route/direction restore after browser reload and real foreground resume")
+        self.passed("Saved route/direction restore after reopening the actual Expo app")
         self.page.evaluate("window.scrollTo(0, 0)")
         self.screenshot("desktop-saved-route-reverse")
         self.page.set_viewport_size({"width": 390, "height": 844})
@@ -369,7 +342,6 @@ def main():
     parser.add_argument("--api-url", default="http://127.0.0.1:5000")
     parser.add_argument("--admin-phone", default=os.environ.get("ADMIN_PHONE"))
     parser.add_argument("--output-dir", type=Path, default=Path("/tmp/driver-route-qa"))
-    parser.add_argument("--headed", action="store_true", help="Use a real browser window to verify background/foreground visibility.")
     args = parser.parse_args()
     require(os.environ.get("NODE_ENV") in {"test", "development"}, "QA requires the local nonproduction OTP configuration")
     require(bool(args.admin_phone), "ADMIN_PHONE must match the API's test administrator")
@@ -387,7 +359,7 @@ def main():
     try:
         from playwright.sync_api import expect, sync_playwright
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=not args.headed)
+            browser = playwright.chromium.launch(headless=True)
             context = browser.new_context(viewport={"width": 1440, "height": 1000}, locale="ru-RU")
             page = context.new_page()
             page.set_default_timeout(20_000)

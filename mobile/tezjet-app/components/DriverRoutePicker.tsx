@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import {
   canMutateDriverRoute, createDriverRouteClient, createDriverRouteRequestScope, driverDirectionLabel,
   driverRouteSessionKey, orderedDriverStops, refreshDriverRouteDraft, DriverRouteError,
@@ -37,7 +37,6 @@ export default function DriverRoutePicker(props: Props) {
   const sessionKey = driverRouteSessionKey(endpoint, token);
   const client = useMemo(() => createDriverRouteClient(endpoint, token), [endpoint, token]);
   const scope = useRef(createDriverRouteRequestScope());
-  const writeInFlight = useRef(false);
   const [routes, setRoutes] = useState<DriverRouteOption[]>([]);
   const [snapshot, setSnapshot] = useState<DriverRouteSnapshot | null>(null);
   const [draft, setDraft] = useState<DriverRouteChoice | null>(null);
@@ -55,7 +54,6 @@ export default function DriverRoutePicker(props: Props) {
 
   const load = useCallback(async (preserveDraft = false, nextNotice = "") => {
     const ticket = scope.current.start();
-    writeInFlight.current = false;
     setLoading(true); setSaving(false); setError(""); setNotice(nextNotice);
     publish(false);
     try {
@@ -78,10 +76,7 @@ export default function DriverRoutePicker(props: Props) {
   useEffect(() => {
     scope.current = createDriverRouteRequestScope();
     void load();
-    const subscription = AppState.addEventListener("change", state => {
-      if (state === "active" && !writeInFlight.current) void load(true);
-    });
-    return () => { subscription.remove(); scope.current.dispose(); };
+    return () => { scope.current.dispose(); };
   }, [load]);
 
   const allowed = canMutateDriverRoute(props);
@@ -105,7 +100,6 @@ export default function DriverRoutePicker(props: Props) {
   async function mutate(clear: boolean) {
     if (disabled || !snapshot || (!clear && !selectedRoute) || (clear && !snapshot.choice)) return;
     const ticket = scope.current.start();
-    writeInFlight.current = true;
     setSaving(true); setError(""); setNotice(""); publish(false, true);
     try {
       let result: DriverRouteSnapshot;
@@ -114,7 +108,6 @@ export default function DriverRoutePicker(props: Props) {
         result = { choice: null, route: null, unavailable_reason: null };
       } else result = await client.save(draftRef.current, routes, ticket.signal);
       if (!scope.current.isCurrent(ticket)) return;
-      writeInFlight.current = false;
       setSnapshot(result); snapshotRef.current = result;
       if (clear && scope.current.draftUnchanged(ticket)) {
         draftRef.current = null; setDraft(null); scope.current.editDraft();
@@ -123,7 +116,6 @@ export default function DriverRoutePicker(props: Props) {
       publish(true, false, result);
     } catch (e) {
       if (!scope.current.isCurrent(ticket)) return;
-      writeInFlight.current = false;
       setSaving(false);
       if (e instanceof DriverRouteError && ["ROUTE_CHANGED", "ROUTE_NOT_FOUND", "ROUTE_INACTIVE", "ROUTE_NOT_CONFIGURED"].includes(e.code ?? "")) {
         void load(true, e.code === "ROUTE_CHANGED"
