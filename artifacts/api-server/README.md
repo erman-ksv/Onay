@@ -206,6 +206,50 @@ stop endpoints reject deletion or code changes of configured pitaks, or changes
 that move them away from the first/last positions, with HTTP 409
 `ROUTE_LAYOUT_EDITOR_REQUIRED`; use the layout editor for those changes.
 
+### Driver planning route and direction
+
+Authenticated drivers, approved when `REQUIRE_DRIVER_APPROVAL` is enabled, can
+save a planning route and direction separately from their public account data:
+
+- `GET /api/driver/routes` returns `{ "routes": [...] }` containing only active
+  routes with valid configured first/last pitaks A/B and endpoint coordinates.
+  Each option contains `id`, `name`, `updatedAt`, ordered `stops`, and
+  `pitaks: { aStopCode, bStopCode, radiusMeters }`.
+- `GET /api/driver/route` returns `{ "choice": null, "route": null,
+  "unavailable_reason": null }` when no choice is saved. A saved choice is
+  `{ routeId, direction, routeUpdatedAt }`, where `direction` is `a_to_b` or
+  `b_to_a`. A usable choice includes its current route option.
+- `PUT /api/driver/route` accepts `{ "route_id": "configured-route-id",
+  "direction": "a_to_b", "expected_updated_at": "exact-catalog-updatedAt" }`
+  and returns the same shape as the private GET endpoint.
+- `DELETE /api/driver/route` clears the choice and returns HTTP 204.
+
+Missing, inactive, changed, or unconfigured routes leave the saved choice
+explicitly present. Their private GET response has `route: null` and
+`unavailable_reason` set to `ROUTE_MISSING`, `ROUTE_INACTIVE`, `ROUTE_CHANGED`,
+or `ROUTE_NOT_CONFIGURED`. No fallback route is selected. Direction describes
+the planning preference; catalog stops always remain in A-to-B order.
+
+Saving or clearing checks the live driver mode, session, and approval atomically.
+Any queue record, pending offer, or unfinished order involving the user as
+driver, passenger, or offered driver returns HTTP 409 `DRIVER_ROUTE_BUSY`.
+Save returns HTTP 404 `ROUTE_NOT_FOUND` for a missing route, HTTP 409
+`ROUTE_CHANGED` for a stale version, and HTTP 422 `ROUTE_INACTIVE` or
+`ROUTE_NOT_CONFIGURED` for an unavailable current configuration. Malformed
+strings or direction values return HTTP 400 `VALIDATION_ERROR`.
+
+This is a planning choice. The current global queue still uses its legacy
+Point C/D dispatch rules. Any saved choice blocks legacy queue joins with HTTP
+409 `ROUTE_QUEUE_NOT_AVAILABLE`, including a choice that has become unavailable.
+Clearing the choice restores legacy queue entry. This does not change matching,
+offers, driver GPS, queue contexts, historical orders, or session versions.
+
+For an existing PostgreSQL database, run
+`pnpm --filter @workspace/db run migrate` before starting this API version.
+Migration `0003_driver_route_choice` adds a nullable JSONB
+`tezjet_users.driver_route_choice` column; existing accounts keep no choice.
+The preference survives API restarts and is excluded from public user responses.
+
 ## FIFO queue and active-trip pooling
 
 When a driver accepts an order that uses all remaining seats, the driver is

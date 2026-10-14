@@ -24,6 +24,9 @@ From this directory, run `pnpm install` and then `pnpm start`. Scan the Expo QR 
 - A driver profile can be requested from the same phone account.
 - New driver profiles remain pending until an administrator approves them.
 - Approved drivers can join/leave the queue, update their location, receive incoming offers over Socket.IO, accept orders, and advance the trip status.
+- Approved drivers can view administrator-configured routes, select A → B or B → A with actual endpoint names and ordered stops, and explicitly save the choice. The API restores the saved choice after sign-in or reload; changing servers or sessions loads that session's choice again before queue entry is available.
+- Route selection is currently a planning preference. The existing queue is global, so any saved route choice disables new queue entry and shows **Очередь для выбранного маршрута пока недоступна**. Clear the choice to use the existing queue. Existing offers and trip controls continue to work.
+- Route changes and clearing are unavailable while queued, on a trip, answering an offer, or performing another action. If an administrator changes a route during save, the app refreshes the catalog, keeps the route/direction draft, and requires another explicit save after reviewing the stops. An unavailable saved route remains visible until it is replaced or cleared.
 - The API checks both seat capacity and whether the driver is at or demonstrably approaching the pickup. Merely being at another pickup point is not enough.
 - Signed-in users switch modes through `POST /api/auth/switch-role`; the API returns a new token and preserves the account's roles and driver approval. No extra OTP is needed for an authenticated switch.
 - Switching is blocked while a passenger trip is unfinished or the driver is in the queue or on a trip. Complete or cancel the trip and leave the queue first.
@@ -37,5 +40,7 @@ Orders refresh on reconnect, app resume, and a ten-second interval. Incoming Soc
 Expo EAS can build an Android preview APK and an iOS binary. An Expo account is required; iOS distribution also requires Apple Developer membership. Store publication is a separate release step.
 
 GitHub Actions installs dependencies, checks TypeScript and API/order regressions, exports Android/iOS bundles, generates the Android project, and assembles a debug APK with JavaScript embedded. Successful runs upload `tezjet-android-debug-apk`. The optional repository variable `TEZJET_API_URL` sets the default API for export and the APK; without it, configure the endpoint in the app.
+
+The Expo web export (`pnpm exec expo export --platform web`) uses the same application and route picker for browser validation. React DOM and React Native Web are included for Expo 54; this remains the native mobile application with a browser test surface.
 
 Build and export success must be checked on the current commit. Physical-device API connectivity, location permission behavior, Socket.IO events, background behavior, and iOS native compilation remain unverified until tested on suitable devices or runners. The API also needs a configured OTP delivery service for production sign-in; development responses may show a test code.

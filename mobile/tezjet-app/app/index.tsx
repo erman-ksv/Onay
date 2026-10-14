@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { API, ApiError, errorMessage, request, setApiEndpoint, validateApiEndpoint, type Availability } from "../lib/api";
 import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextTripLabel, nextTripStatus, statusLabels, type RideOrder } from "../lib/orders";
+import DriverRoutePicker from "../components/DriverRoutePicker";
+import { canJoinLegacyDriverQueue, driverRouteSessionKey, type DriverRouteGate } from "../lib/driver-routes";
 
 const TOKEN = "tezjet_access_token";
 const API_ENDPOINT = "tezjet_api_endpoint";
@@ -13,8 +15,8 @@ type Stop = { id: string; code: string; name: string; sequence: number; position
 type Fare = { totalKzt: number; currency: string; distanceStops: number };
 type Profile = { id: string; role: string; active_role?: string; roles?: string[]; driver_approval_status?: "pending" | "approved" | "rejected"; full_name?: string };
 
-function Button({ title, onPress, disabled = false, secondary = false }: { title: string; onPress: () => void; disabled?: boolean; secondary?: boolean }) {
-  return <Pressable onPress={onPress} disabled={disabled} style={[s.button, secondary && s.buttonSecondary, disabled && s.disabled]}><Text style={[s.buttonText, secondary && s.buttonSecondaryText]}>{title}</Text></Pressable>;
+function Button({ title, onPress, disabled = false, secondary = false, testID }: { title: string; onPress: () => void; disabled?: boolean; secondary?: boolean; testID?: string }) {
+  return <Pressable accessibilityRole="button" accessibilityState={{ disabled }} testID={testID} onPress={onPress} disabled={disabled} style={[s.button, secondary && s.buttonSecondary, disabled && s.disabled]}><Text style={[s.buttonText, secondary && s.buttonSecondaryText]}>{title}</Text></Pressable>;
 }
 
 function Stepper({ value, onChange, min = 1, max = 8, disabled = false }: { value: number; onChange: (v: number) => void; min?: number; max?: number; disabled?: boolean }) {
@@ -45,6 +47,12 @@ export default function Home() {
   const [driverSeats, setDriverSeats] = useState(3);
   const [queuePosition, setQueuePosition] = useState<number | null>(null);
   const [driverInQueue, setDriverInQueue] = useState(false);
+  const [driverRouteGate, setDriverRouteGate] = useState<DriverRouteGate>({ sessionKey: "", ready: false, hasChoice: false, mutating: false });
+  const driverRouteGateRef = useRef(driverRouteGate);
+  const updateDriverRouteGate = useCallback((next: DriverRouteGate) => {
+    driverRouteGateRef.current = next;
+    setDriverRouteGate(next);
+  }, []);
   const [socketConnected, setSocketConnected] = useState(false);
   const [incomingOrder, setIncomingOrder] = useState<RideOrder | null>(null);
   const [orders, setOrders] = useState<RideOrder[]>([]);
@@ -73,6 +81,8 @@ export default function Home() {
     setOrders(trackedOrders.current);
   }, []);
   const driverApproved = activeRole === "driver" && profile?.driver_approval_status === "approved";
+  const driverRouteSession = driverRouteSessionKey(apiBase, token);
+  const canJoinDriverQueue = canJoinLegacyDriverQueue(driverRouteGate, driverRouteSession);
   const activeDriverOrders = orders.filter(order => !isClosed(order) && order.driver_id === profile?.id);
   const passengerOrders = orders.filter(order => order.passenger_id === profile?.id);
   const passengerHasActiveOrder = passengerOrders.some(order => !isClosed(order));
@@ -400,11 +410,16 @@ export default function Home() {
   }
 
   async function joinQueue() {
+    const requestToken = token;
+    const requestSession = driverRouteSession;
+    if (!canJoinLegacyDriverQueue(driverRouteGateRef.current, requestSession)) return;
     setBusy(true);
     try {
       const location = await getCoordinates();
+      if (currentToken.current !== requestToken || !canJoinLegacyDriverQueue(driverRouteGateRef.current, requestSession)) return;
       const queueRevisionAtStart = queueRevision.current;
-      const result = await request<{ position: number | null }>("/api/queue/join", token, { method: "POST", body: JSON.stringify({ location, available_seats: driverSeats }) });
+      const result = await request<{ position: number | null }>("/api/queue/join", requestToken, { method: "POST", body: JSON.stringify({ location, available_seats: driverSeats }) });
+      if (currentToken.current !== requestToken) return;
       if (queueRevision.current === queueRevisionAtStart) {
         queueRevision.current += 1;
         setQueuePosition(result.position); setDriverInQueue(result.position !== null);
@@ -512,12 +527,14 @@ export default function Home() {
       activeRole !== "driver" ? <View style={s.card}><Text style={s.heading}>Переключение режима</Text><Text style={s.descDark}>Подключи водительский профиль к своему аккаунту.</Text><Button title="Войти в режим водителя" onPress={() => switchMode("driver")} disabled={busy} /></View>
       : profile.driver_approval_status !== "approved" ? <View style={s.card}><Text style={s.heading}>{profile.driver_approval_status === "rejected" ? "Профиль отклонён" : "Профиль на проверке"}</Text><Text style={s.descDark}>{profile.driver_approval_status === "rejected" ? "Свяжись с поддержкой TezJet, чтобы узнать причину." : "Администратор должен подтвердить водительский профиль. До этого нельзя вставать в очередь или принимать заказы."}</Text><Button title="Проверить статус" onPress={refreshProfile} secondary disabled={busy} /></View>
       : <>
+        <DriverRoutePicker key={driverRouteSession} endpoint={apiBase} token={token} busy={busy} queued={driverInQueue}
+          activeTrip={activeDriverOrders.length > 0} pendingOffer={!!incomingOrder} onStatusChange={updateDriverRouteGate} />
         <View style={s.card}>
           <Text style={s.heading}>Рабочая смена</Text>
           <Text style={s.descDark}>Связь: {socketConnected ? "подключена" : "переподключение…"}</Text>
           <Text style={s.descDark}>Очередь: {driverInQueue ? `позиция ${queuePosition ?? "—"}` : activeDriverOrders.length ? "активный маршрут" : "не в очереди"}</Text>
           <Text style={s.label}>МЕСТА ПРИ ВХОДЕ В ОЧЕРЕДЬ</Text><Stepper value={driverSeats} onChange={setDriverSeats} disabled={busy || driverInQueue || !!incomingOrder || activeDriverOrders.length > 0} />
-          {!driverInQueue && !activeDriverOrders.length ? <Button title={busy ? "Определяем местоположение…" : "Встать в очередь"} onPress={joinQueue} disabled={busy || !!incomingOrder} /> : <><Button title={busy ? "Обновляем…" : "Обновить местоположение"} onPress={updateDriverLocation} disabled={busy} secondary /><Button title="Выйти из очереди" onPress={leaveQueue} disabled={busy || !!incomingOrder || activeDriverOrders.length > 0} secondary /></>}
+          {!driverInQueue && !activeDriverOrders.length ? <Button title={busy ? "Определяем местоположение…" : "Встать в очередь"} testID="driver-queue-join" onPress={joinQueue} disabled={busy || !!incomingOrder || !canJoinDriverQueue} /> : <><Button title={busy ? "Обновляем…" : "Обновить местоположение"} onPress={updateDriverLocation} disabled={busy} secondary /><Button title="Выйти из очереди" onPress={leaveQueue} disabled={busy || !!incomingOrder || activeDriverOrders.length > 0} secondary /></>}
         </View>
         {incomingOrder ? <View style={s.card}><Text style={s.heading}>Новый заказ</Text><Text style={s.descDark}>Точка подачи: {incomingOrder.pickup_point}</Text><Text style={s.descDark}>Куда: {incomingOrder.destination || "смотри маршрут"}</Text><Text style={s.descDark}>Пассажиров: {incomingOrder.seats}</Text><Text style={s.note}>Ответить за {Math.max(0, Math.ceil(((incomingOrder.offer_expires_at ?? now) - now) / 1_000))} сек.</Text><Button title={busy ? "Принимаем…" : "Принять заказ"} onPress={acceptOrder} disabled={busy || !isLiveOffer(incomingOrder, profile.id, now)} /><Button title="Отклонить" onPress={rejectOrder} disabled={busy || !isLiveOffer(incomingOrder, profile.id, now)} secondary /></View> : null}
         {activeDriverOrders.map(activeOrder => <View key={activeOrder.id} style={s.card}><Text style={s.heading}>Текущая поездка</Text><Text style={s.descDark}>Статус: {statusLabels[activeOrder.status]}</Text><Text style={s.descDark}>Точка подачи: {activeOrder.pickup_point}</Text><Text style={s.descDark}>Назначение: {activeOrder.destination || "по маршруту"}</Text>{nextTripStatus(activeOrder) ? <Button title={busy ? "Обновляем…" : nextTripLabel(activeOrder)} onPress={() => progressOrder(activeOrder)} disabled={busy} /> : null}</View>)}

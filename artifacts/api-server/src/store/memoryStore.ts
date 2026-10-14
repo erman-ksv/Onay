@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { OFFER_TIMEOUT_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
-import type { RouteLayoutInput, Store } from "./storeContract";
+import type { DriverRouteChoiceInput, RouteLayoutInput, Store } from "./storeContract";
 import { mutateRouteStop, nextRouteUpdatedAt, replaceRouteLayout } from "../utils/routeLayout";
+import { assertDriverRouteChoiceRoute, validateDriverRouteChoiceInput } from "../utils/driverRoute";
 import { canTransitionOrder, claimQueueEntry, hasActiveOrders, joinQueueEntry, releaseQueueEntry, transitionQueueEntry } from "./orderLifecycle";
 import { AppError } from "../utils/errors";
 import { acceptQueueOffer, assertOrderOfferPatch, assertQueueOfferPatch, compareOfferDrivers, hasLiveOrderOffer, orderedOfferCandidates, releaseQueueOffer, reserveQueueOffer } from "./orderOffers";
@@ -10,6 +11,7 @@ import type {
   DeviceRegistration,
   DriverQueueStatus,
   DriverApprovalStatus,
+  DriverRouteChoice,
   Locale,
   Order,
   OrderOfferChange,
@@ -146,6 +148,37 @@ class MemoryStore implements Store {
     if (user.role !== role) throw new AppError(403, `${role} mode is required`, "FORBIDDEN");
   }
 
+  setDriverRouteChoice(userId: string, input: DriverRouteChoiceInput | null, expectedSessionVersion: number): DriverRouteChoice | null {
+    const value = input === null ? null : validateDriverRouteChoiceInput(input);
+    if (this.users.get(userId)?.sessionVersion !== expectedSessionVersion) {
+      throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+    }
+    this.requireCurrentRole(userId, "driver", expectedSessionVersion);
+    const user = this.users.get(userId)!;
+    if (REQUIRE_DRIVER_APPROVAL && user.driverApprovalStatus !== "approved") {
+      throw new AppError(403, "Driver approval is required", "DRIVER_APPROVAL_REQUIRED");
+    }
+    if (this.queueEntries.has(userId) || [...this.orders.values()].some(order =>
+      order.status !== "completed" && order.status !== "cancelled" &&
+      (order.passengerId === userId || order.driverId === userId || order.offeredDriverId === userId),
+    )) {
+      throw new AppError(409, "Finish active orders and leave the queue before changing the planned route", "DRIVER_ROUTE_BUSY");
+    }
+    if (value === null) {
+      delete user.driverRouteChoice;
+      return null;
+    }
+    const route = this.routes.get(value.routeId);
+    assertDriverRouteChoiceRoute(route, value.expectedUpdatedAt);
+    const choice: DriverRouteChoice = {
+      routeId: route.id,
+      direction: value.direction,
+      routeUpdatedAt: route.updatedAt,
+    };
+    user.driverRouteChoice = structuredClone(choice);
+    return structuredClone(choice);
+  }
+
   consumeOtp(phoneNumber: string, code: string): OtpChallenge | undefined {
     const challenge = this.otpChallenges.get(phoneNumber);
     if (!challenge || challenge.code !== code || challenge.expiresAt < Date.now()) {
@@ -173,6 +206,9 @@ class MemoryStore implements Store {
 
   joinQueue(entry: QueueEntry, expectedSessionVersion?: number): QueueEntry {
     this.requireCurrentRole(entry.driverId, "driver", expectedSessionVersion);
+    if (this.users.get(entry.driverId)?.driverRouteChoice) {
+      throw new AppError(409, "Queue entry for a configured route is not available yet; clear the planned route to use the legacy queue", "ROUTE_QUEUE_NOT_AVAILABLE");
+    }
     const current = this.queueEntries.get(entry.driverId);
     if (current && (hasActiveOrders(current) || current.pendingOfferOrderId || current.inFifo === false)) {
       throw new AppError(409, "Driver cannot rejoin while an order or route is active", "QUEUE_BUSY");

@@ -1,13 +1,15 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
-import type { RouteLayoutInput, Store } from "./storeContract";
+import type { DriverRouteChoiceInput, RouteLayoutInput, Store } from "./storeContract";
 import { mutateRouteStop, nextRouteUpdatedAt, replaceRouteLayout } from "../utils/routeLayout";
+import { assertDriverRouteChoiceRoute, validateDriverRouteChoiceInput } from "../utils/driverRoute";
 import { canTransitionOrder, claimQueueEntry, hasActiveOrders, joinQueueEntry, releaseQueueEntry, transitionQueueEntry } from "./orderLifecycle";
 import { AppError } from "../utils/errors";
 import type {
   Coordinates,
   DeviceRegistration,
   DriverApprovalStatus,
+  DriverRouteChoice,
   Locale,
   Order,
   OrderOfferChange,
@@ -44,6 +46,9 @@ function asUser(row: Record<string, unknown>): User {
     profileLocked: Boolean(row.profileLocked),
     sessionVersion: Number(row.sessionVersion),
     driverApprovalStatus: row.driverApprovalStatus as DriverApprovalStatus | undefined,
+    ...(row.driverRouteChoice == null ? {} : {
+      driverRouteChoice: structuredClone(row.driverRouteChoice) as DriverRouteChoice,
+    }),
     lastLocation: (row.lastLocation ?? undefined) as Coordinates | undefined,
     createdAt: String(row.createdAt),
   };
@@ -313,6 +318,49 @@ export class PostgresStore implements Store {
     });
   }
 
+  async setDriverRouteChoice(userId: string, input: DriverRouteChoiceInput | null, expectedSessionVersion: number): Promise<DriverRouteChoice | null> {
+    const value = input === null ? null : validateDriverRouteChoiceInput(input);
+    const { db, usersTable, driverQueueTable, ordersTable, routesTable } = await this.database();
+    return db.transaction(async tx => {
+      // Offer/lifecycle operations acquire queue locks before user locks.
+      // Never wait for a queue or order lock after locking this user.
+      const [queued] = await tx.select({ id: driverQueueTable.driverId }).from(driverQueueTable)
+        .where(eq(driverQueueTable.driverId, userId)).for("update").limit(1);
+      const [userRow] = await tx.select().from(usersTable)
+        .where(eq(usersTable.id, userId)).for("update").limit(1);
+      if (!userRow || userRow.sessionVersion !== expectedSessionVersion) {
+        throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+      }
+      if (userRow.role !== "driver") throw new AppError(403, "driver mode is required", "FORBIDDEN");
+      if (REQUIRE_DRIVER_APPROVAL && userRow.driverApprovalStatus !== "approved") {
+        throw new AppError(403, "Driver approval is required", "DRIVER_APPROVAL_REQUIRED");
+      }
+      // A join that acquired the user SHARE lock first has committed by now.
+      // A join still waiting for it must validate the choice before committing.
+      const [newQueue] = queued ? [queued] : await tx.select({ id: driverQueueTable.driverId }).from(driverQueueTable)
+        .where(eq(driverQueueTable.driverId, userId)).limit(1);
+      const [activeOrder] = await tx.select({ id: ordersTable.id }).from(ordersTable).where(and(
+        sql`${ordersTable.status} NOT IN ('completed', 'cancelled')`,
+        or(eq(ordersTable.passengerId, userId), eq(ordersTable.driverId, userId), eq(ordersTable.offeredDriverId, userId)),
+      )).limit(1);
+      if (newQueue || activeOrder) {
+        throw new AppError(409, "Finish active orders and leave the queue before changing the planned route", "DRIVER_ROUTE_BUSY");
+      }
+      let choice: DriverRouteChoice | null = null;
+      if (value !== null) {
+        const [routeRow] = await tx.select().from(routesTable)
+          .where(eq(routesTable.id, value.routeId)).for("share").limit(1);
+        const route = routeRow ? asRoute(routeRow as unknown as Record<string, unknown>) : undefined;
+        assertDriverRouteChoiceRoute(route, value.expectedUpdatedAt);
+        choice = { routeId: route.id, direction: value.direction, routeUpdatedAt: route.updatedAt };
+      }
+      await tx.update(usersTable).set({
+        driverRouteChoice: choice as unknown as Record<string, unknown> | null,
+      }).where(eq(usersTable.id, userId));
+      return choice ? structuredClone(choice) : null;
+    });
+  }
+
   async consumeOtp(phoneNumber: string, code: string): Promise<OtpChallenge | undefined> {
     const { db, otpChallengesTable } = await this.database();
     const [row] = await db.delete(otpChallengesTable).where(and(
@@ -377,6 +425,9 @@ export class PostgresStore implements Store {
         throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
       }
       if (user.role !== "driver") throw new AppError(403, "driver mode is required", "FORBIDDEN");
+      if (user.driverRouteChoice) {
+        throw new AppError(409, "Queue entry for a configured route is not available yet; clear the planned route to use the legacy queue", "ROUTE_QUEUE_NOT_AVAILABLE");
+      }
       return asQueueEntry(row as unknown as Record<string, unknown>);
     });
   }
