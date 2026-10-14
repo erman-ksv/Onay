@@ -420,9 +420,13 @@ test("both adapters block nonterminal order relations without a queue row and al
           await adapter.setDriverApproval(driver.user.id, "approved");
           driver.user = structuredClone(await adapter.getUser(driver.user.id));
         }
+        const token = production.createAccessToken({ sub: driver.user.id, role: driver.user.role, locale: driver.user.locale, sessionVersion: driver.user.sessionVersion, sessionId: randomUUID() });
         for (const [index, status] of ["searching", "en_route_to_c", "arrived_at_c", "in_transit"].entries()) {
           const order = await adapter.updateOrder(history[index].id, { status });
           for (const input of [choiceInput(route), null]) await assert.rejects(async () => adapter.setDriverRouteChoice(driver.user.id, input, driver.user.sessionVersion), { statusCode: 409, code: "DRIVER_ROUTE_BUSY" });
+          if (adapterName === "PostgresStore") {
+            for (const method of ["PUT", "DELETE"]) assertError(await request("/driver/route", { token, method, ...(method === "PUT" ? { body: choiceBody(route) } : {}) }), 409, "DRIVER_ROUTE_BUSY");
+          }
           assert.equal((await adapter.getUser(driver.user.id)).driverRouteChoice, undefined);
           assert.deepEqual(await adapter.getOrder(order.id), order);
           await adapter.updateOrder(order.id, { status: "completed" });
