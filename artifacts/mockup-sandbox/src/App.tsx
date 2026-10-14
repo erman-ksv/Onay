@@ -1,6 +1,7 @@
 import { useEffect, useState, type ComponentType } from "react";
 
 import { modules as discoveredModules } from "./.generated/mockup-components";
+import AdminPortal from "./admin/AdminPortal";
 
 type ModuleMap = Record<string, () => Promise<Record<string, unknown>>>;
 
@@ -129,6 +130,12 @@ function getPreviewPath(): string | null {
 }
 
 function App() {
+  // The admin UI runs in this existing Vite shell without changing canvas previews.
+  const base = getBasePath();
+  const pathname = window.location.pathname;
+  const localPath = base && pathname.startsWith(base + "/") ? pathname.slice(base.length) : pathname;
+  if (localPath === "/admin" || localPath === "/admin/") return <AdminPortal />;
+
   const previewPath = getPreviewPath();
 
   if (previewPath) {

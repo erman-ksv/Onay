@@ -140,6 +140,7 @@ Admin JWTs can manage the route catalog:
 - `GET|POST /api/admin/routes`
   `GET` accepts optional `?active=true` or `?active=false`; omitted returns all routes, invalid values return HTTP 400. Does not modify routes.
 - `GET /api/admin/routes/:routeId` — read one route and its configured stops (admin-only, 404 if absent).
+- `PUT /api/admin/routes/:routeId/layout` — replace ordered stops and static pitaks A/B together (admin-only; contract below).
 - `PATCH|DELETE /api/admin/routes/:routeId`
 - `POST /api/admin/routes/:routeId/stops`
 - `PATCH|DELETE /api/admin/routes/:routeId/stops/:stopId`
@@ -159,6 +160,51 @@ The queue point update requires an admin JWT. Coordinates are validated before
 being applied, and the new center is used immediately by driver queue joins,
 location updates, queue status responses, and realtime queue events. The current
 in-memory adapter keeps this setting until the API process restarts.
+
+### Static route layout and pitaks A/B
+
+Read the route first and send its exact `updatedAt` as `expected_updated_at`:
+
+```json
+{
+  "expected_updated_at": "2026-10-14T12:00:00.000Z",
+  "stops": [
+    { "id": "existing-a-id", "code": "A", "name": "Pitak A", "location": { "lat": 41.3111, "lng": 69.2797 } },
+    { "code": "M", "name": "Intermediate stop", "location": { "lat": 41.32, "lng": 69.29 } },
+    { "id": "existing-b-id", "code": "B", "name": "Pitak B", "location": { "lat": 41.33, "lng": 69.3 } }
+  ],
+  "pitaks": { "a_stop_code": "A", "b_stop_code": "B", "radius_meters": 150 }
+}
+```
+
+The response is `{ "route": ... }`, using the same camel-case route shape as
+the route reads. Stops gain optional `location: { lat, lng, timestamp }`, with a
+server timestamp for the static point. A configured route gains
+`pitaks: { aStopCode, bStopCode, radiusMeters }`. These are catalog geometry and
+do not change driver GPS checks, matching, queuing, or order dispatch.
+
+The array order sets both `sequence` and `position` to `1..N`. Existing stop IDs
+must belong to this route; omit an ID to create a stop with a server-generated
+ID. Duplicate IDs or codes are rejected. Codes are trimmed, uppercased and
+limited to 40 characters; names are trimmed and limited to 120 characters. A
+layout has at most 1000 stops. Coordinates must be finite JSON numbers, with
+latitude between -90 and 90 and longitude between -180 and 180. Pitaks A/B must
+refer to distinct first/last stops that both have coordinates, and the radius
+must be an integer between 10 and 5000 meters.
+
+Omit `pitaks` to save a draft without configured endpoints; this removes any
+previous pitaks configuration. An empty draft is accepted. The replacement
+preserves route name, price, active state, creation time, and historical order
+snapshots. PostgreSQL stores the layout in the existing route JSON payload;
+no schema migration is needed.
+
+A stale version returns HTTP 409 `ROUTE_CHANGED`; reload the route before
+reviewing and retrying. Versions advance on every catalog mutation, including
+multiple saves in the same millisecond. All route writers use the same row lock
+in PostgreSQL to preserve concurrent layout and metadata changes. The older
+stop endpoints reject deletion or code changes of configured pitaks, or changes
+that move them away from the first/last positions, with HTTP 409
+`ROUTE_LAYOUT_EDITOR_REQUIRED`; use the layout editor for those changes.
 
 ## FIFO queue and active-trip pooling
 
@@ -201,3 +247,4 @@ outbox are needed for coordinated delivery across multiple API instances.
 Use `GET /api/notifications/config` for client notification settings,
 `POST /api/notifications/devices` to register a push token, and
 `POST /api/notifications/test-alert` to verify the high-priority client path.
+
