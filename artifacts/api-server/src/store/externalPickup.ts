@@ -262,7 +262,9 @@ export function liveExternalOfferValid(order: Order, entry: QueueEntry | undefin
   try {
     const selection = { routeId: order.routeContext.routeId, direction: order.routeContext.direction, expectedUpdatedAt: order.routeContext.routeUpdatedAt, destinationStopId: order.fare.destinationStop.id };
     buildExternalPickupDetails(route, selection, order.pickupLocation);
-    return JSON.stringify(normalizeExternalPickupSettings(route!.externalPickup)) === JSON.stringify(pickup.settings) &&
+    // PostgreSQL JSONB may reorder keys in the persisted snapshot. Compare
+    // canonical policy values, not the provider object's insertion order.
+    return JSON.stringify(normalizeExternalPickupSettings(route!.externalPickup)) === JSON.stringify(normalizeExternalPickupSettings(pickup.settings)) &&
       eligibleExternalCandidate({ ...entry, pendingOfferOrderId: undefined, availableSeats: entry.availableSeats + order.seats }, route, selection, order.seats, [], now);
   } catch { return false; }
 }
