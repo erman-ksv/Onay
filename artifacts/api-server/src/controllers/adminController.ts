@@ -8,6 +8,7 @@ import { AppError } from "../utils/errors";
 import { serializeOrder, serializeUser } from "../utils/serialize";
 import { readRouteLayoutInput } from "../utils/routeLayout";
 import { boundedInteger, optionalString, pickEnum, requiredString } from "../utils/validation";
+import { normalizeExternalPickupSettings } from "../store/externalPickup";
 
 function routeId(value: unknown): string {
   const raw = value === undefined ? randomUUID() : requiredString(value, "route_id", 80);
@@ -93,6 +94,32 @@ export async function getAdminRoute(request: Request, response: Response): Promi
   if (!route) {
     throw new AppError(404, "Route not found", "ROUTE_NOT_FOUND");
   }
+  response.json({ route });
+}
+
+export async function updateExternalPickupSettings(request: Request, response: Response): Promise<void> {
+  const body = request.body as unknown;
+  if (!body || typeof body !== "object" || Array.isArray(body) ||
+      Object.keys(body).some(key => !["expected_updated_at", "settings"].includes(key))) {
+    throw new AppError(400, "Invalid external pickup settings request", "VALIDATION_ERROR");
+  }
+  const input = body as Record<string, unknown>;
+  const raw = input.settings;
+  const mapping = {
+    enabled: "enabled", service_radius_meters: "serviceRadiusMeters", price_per_km_kzt: "pricePerKmKzt",
+    gps_max_age_seconds: "gpsMaxAgeSeconds", quote_ttl_seconds: "quoteTtlSeconds",
+    pickup_grace_seconds: "pickupGraceSeconds", max_pickup_seconds: "maxPickupSeconds", fare_rounding: "fareRounding",
+  } as const;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw) ||
+      Object.keys(raw).some(key => !Object.hasOwn(mapping, key))) {
+    throw new AppError(400, "Invalid external pickup settings", "VALIDATION_ERROR");
+  }
+  const mapped = Object.fromEntries(Object.entries(raw).map(([key, value]) => [mapping[key as keyof typeof mapping], value]));
+  const route = await store.updateExternalPickupSettings(requiredString(request.params["routeId"], "route_id", 80), {
+    expectedUpdatedAt: requiredString(input.expected_updated_at, "expected_updated_at", 80),
+    settings: normalizeExternalPickupSettings(mapped),
+  });
+  if (!route) throw new AppError(404, "Route not found", "ROUTE_NOT_FOUND");
   response.json({ route });
 }
 

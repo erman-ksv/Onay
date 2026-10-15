@@ -29,6 +29,17 @@ export function serializeOrder(order: Order, maskPassenger = false) {
     pickup_point: order.pickupPoint,
     pickup_location: order.pickupLocation,
     pickup_address: order.pickupAddress,
+    ...(order.externalPickup ? { external_pickup: {
+      pickup_address: order.externalPickup.pickupAddress,
+      requires_price_confirmation: order.externalPickup.requiresPriceConfirmation,
+      road_distance_meters: order.externalPickup.roadDistanceMeters,
+      road_duration_seconds: order.externalPickup.roadDurationSeconds,
+      base_fare_kzt: order.externalPickup.baseFareKzt,
+      pickup_surcharge_kzt: order.externalPickup.pickupSurchargeKzt,
+      total_kzt: order.fare.totalKzt,
+      price_per_km_kzt: order.externalPickup.settings.pricePerKmKzt,
+      fare_rounding: order.externalPickup.settings.fareRounding,
+    } } : {}),
     ...(order.routeContext ? {
       route_context: order.routeContext,
       pickup_stop_id: order.fare.pickupStop.id,

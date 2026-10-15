@@ -17,19 +17,22 @@ export function hasLiveOrderOffer(order: Order, now: number): boolean {
 }
 
 /** A configured order must be built from the current catalog in its transaction. */
-export function assertLegacyOrderInput(input: Pick<Order, "pickupPoint" | "routeContext">): void {
-  if (input.routeContext !== undefined || input.pickupPoint === "A" || input.pickupPoint === "B") {
+export function assertLegacyOrderInput(input: Pick<Order, "pickupPoint" | "routeContext" | "externalPickup">): void {
+  if (input.externalPickup !== undefined || input.routeContext !== undefined || input.pickupPoint === "A" || input.pickupPoint === "B") {
     throw new AppError(400, "Use the configured route order method", "ROUTE_ORDER_REQUIRED");
   }
 }
 
 /** Selection happens while the caller owns the live order and candidate queue rows. */
 export function orderedOfferCandidates(
-  order: Pick<Order, "pickupPoint" | "seats" | "attemptedDriverIds" | "routeContext">,
+  order: Pick<Order, "pickupPoint" | "seats" | "attemptedDriverIds" | "routeContext" | "externalPickup">,
   entries: QueueEntry[],
   now: number,
   liveRoute?: RouteDefinition,
 ): QueueEntry[] {
+  // A new driver changes the pickup price. Only explicit passenger confirmation
+  // may reserve an external offer, never the automatic FIFO dispatcher.
+  if (order.externalPickup) return [];
   if (order.routeContext && !routeOrderIsCurrent(order, liveRoute)) return [];
   const attempted = new Set(order.attemptedDriverIds ?? []);
   return entries.filter(entry => {
@@ -90,7 +93,7 @@ export function acceptQueueOffer(entry: QueueEntry, order: Order): QueueEntry {
 
 /** Generic snapshot patches cannot bypass a real pending seat reservation. */
 export function assertOrderOfferPatch(order: Order, patch: Partial<Order>): void {
-  if ("routeContext" in patch || (order.routeContext && Object.keys(patch).length > 0)) {
+  if ("externalPickup" in patch || "routeContext" in patch || ((order.routeContext || order.externalPickup) && Object.keys(patch).length > 0)) {
     throw new AppError(409, "Configured order details cannot be changed", "OFFER_RESERVED");
   }
   if (order.status !== "searching" || !order.offeredDriverId || order.offerExpiresAt === undefined) return;

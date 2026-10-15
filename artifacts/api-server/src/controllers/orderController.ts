@@ -127,7 +127,12 @@ export async function listOrderRoutes(request: Request, response: Response): Pro
   const routes = (await store.listRoutes()).flatMap(route => {
     if (route.active !== true) return [];
     const option = driverRouteOption(route);
-    return option ? [{ ...option, currency: route.currency, pricePerStopKzt: route.pricePerStopKzt }] : [];
+    return option ? [{ ...option, currency: route.currency, pricePerStopKzt: route.pricePerStopKzt,
+      ...(route.externalPickup?.enabled ? { external_pickup: {
+        enabled: true, service_radius_meters: route.externalPickup.serviceRadiusMeters,
+        price_per_km_kzt: route.externalPickup.pricePerKmKzt, fare_rounding: route.externalPickup.fareRounding,
+      } } : {}),
+    }] : [];
   });
   response.json({ routes });
 }
@@ -294,6 +299,13 @@ export async function acceptOrder(request: Request, response: Response): Promise
   }
   const updated = await store.acceptOrderOffer(order.id, driverId, undefined, request.auth?.user.sessionVersion);
   if (!updated) {
+    if (order.externalPickup) {
+      const reopened = await store.getOrder(order.id);
+      if (reopened?.status === "searching" && !reopened.driverId && !reopened.offeredDriverId &&
+          reopened.externalPickup?.requiresPriceConfirmation) {
+        await publishOrderOfferChanges(getSocket(request), [{ order: reopened, previousDriverId: driverId }]);
+      }
+    }
     throw new AppError(409, "Order is no longer available", "ORDER_UNAVAILABLE");
   }
   emitOrderUpdate(getSocket(request), updated);
@@ -305,7 +317,10 @@ export async function acceptOrder(request: Request, response: Response): Promise
   response.json({
     message: translate(request.auth?.locale ?? "ru", "seatLocked"),
     order: serializeOrder(updated, true),
-    seat_lock_minutes: order.pickupPoint !== "D" ? 7 : null,
+    seat_lock_minutes: updated.externalPickup ? null : order.pickupPoint !== "D" ? 7 : null,
+    ...(updated.externalPickup ? {
+      pickup_wait_seconds: updated.externalPickup.roadDurationSeconds + updated.externalPickup.settings.pickupGraceSeconds,
+    } : {}),
   });
 }
 

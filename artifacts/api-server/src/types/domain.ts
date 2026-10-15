@@ -63,8 +63,70 @@ export interface RouteDefinition {
     bStopCode: string;
     radiusMeters: number;
   };
+  /** Disabled unless the administrator supplies the complete explicit policy. */
+  externalPickup?: ExternalPickupSettings;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ExternalPickupSettings {
+  enabled: boolean;
+  serviceRadiusMeters: number;
+  pricePerKmKzt: number;
+  gpsMaxAgeSeconds: number;
+  quoteTtlSeconds: number;
+  pickupGraceSeconds: number;
+  maxPickupSeconds: number;
+  fareRounding: "ceil_kzt" | "nearest_kzt";
+}
+
+export interface ExternalPickupSelectionInput {
+  routeId: string;
+  direction: DriverRouteDirection;
+  expectedUpdatedAt: string;
+  destinationStopId?: string;
+}
+
+/** Authenticated server quote; precise driver coordinates never enter its token. */
+export interface ExternalPickupQuote {
+  version: 1;
+  quoteId: string;
+  passengerId: string;
+  sessionVersion: number;
+  selection: ExternalPickupSelectionInput;
+  pickupLocation: Coordinates;
+  seats: number;
+  driverId: string;
+  driverEnrollmentId: string;
+  driverLocationFingerprint: string;
+  roadDistanceMeters: number;
+  roadDurationSeconds: number;
+  baseFareKzt: number;
+  pickupSurchargeKzt: number;
+  totalKzt: number;
+  settings: ExternalPickupSettings;
+  quotedAt: number;
+  expiresAt: number;
+  orderId?: string;
+  expectedOrderUpdatedAt?: string;
+  expectedAttemptedDriverIds?: string[];
+  pickupAddress?: string;
+}
+
+export interface ExternalPickupSnapshot {
+  version: 1;
+  quoteId: string;
+  requiresPriceConfirmation: boolean;
+  driverEnrollmentId: string;
+  driverLocationFingerprint: string;
+  roadDistanceMeters: number;
+  roadDurationSeconds: number;
+  baseFareKzt: number;
+  pickupSurchargeKzt: number;
+  settings: ExternalPickupSettings;
+  quotedAt: number;
+  quoteExpiresAt: number;
+  pickupAddress?: string;
 }
 
 export type DriverRouteDirection = "a_to_b" | "b_to_a";
@@ -192,6 +254,8 @@ export interface Order {
   routeContext?: RouteQueueContext;
   pickupLocation: Coordinates;
   pickupAddress?: NormalizedAddress;
+  /** Exact external target is pickupLocation; stop-based fare remains origin -> destination. */
+  externalPickup?: ExternalPickupSnapshot;
   routeStops: RouteStop[];
   fare: FareQuote;
   destination: string;

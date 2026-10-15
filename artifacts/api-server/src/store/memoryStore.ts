@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { OFFER_TIMEOUT_MS, OTP_TTL_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
 import { normalizePhone } from "../utils/phone";
-import type { DriverRouteChoiceInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderSelectionInput, Store } from "./storeContract";
+import type { DriverRouteChoiceInput, ExternalPickupSelectionInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderSelectionInput, Store } from "./storeContract";
 import { emptyOtpRateState, OTP_CLEANUP_BATCH_SIZE, otpFailureState, otpPhoneBlock, otpRateExpiresAt, otpRateKey, recordOtpFailure, takeOtpIp, takeOtpSend } from "./otpProtection";
 import type { OtpRateKind, OtpRateState } from "./otpProtection";
 import { mutateRouteStop, nextRouteUpdatedAt, replaceRouteLayout } from "../utils/routeLayout";
@@ -13,12 +13,15 @@ import { acceptQueueOffer, assertLegacyOrderInput, assertOrderOfferPatch, assert
 import { buildRouteOrder, validateRouteOrderSelectionInput } from "../utils/routeOrder";
 import { boundedInteger } from "../utils/validation";
 import { assertLineOrderTransition, createLineCollectionState, isCollecting, lineOrderIds, prepareLineDeparture } from "./lineCollection";
+import { assertExternalQuoteCurrent, buildConfirmedExternalOrder, buildExternalPickupDetails, eligibleExternalCandidate, externalPickupLeaseMs, liveExternalOfferValid, nextOrderUpdatedAt, normalizeExternalPickupSettings, repriceExternalOrder, validateExternalPickupSelectionInput } from "./externalPickup";
 import type {
   Coordinates,
   DeviceRegistration,
   DriverQueueStatus,
   DriverApprovalStatus,
   DriverRouteChoice,
+  ExternalPickupQuote,
+  ExternalPickupSettings,
   Locale,
   Order,
   OrderOfferChange,
@@ -433,6 +436,72 @@ class MemoryStore implements Store {
     return { available: eligibleDriverCount > 0, eligibleDriverCount, fare: routeOrder.fare };
   }
 
+  getExternalPickupCandidates(selection: ExternalPickupSelectionInput, seats: number, excludedDriverIds: string[] = []): { route: RouteDefinition; candidates: QueueEntry[] } {
+    selection = validateExternalPickupSelectionInput(selection);
+    seats = boundedInteger(seats, "seats", 1, 8);
+    const route = this.routes.get(selection.routeId);
+    // Validate the configured route, pickup policy, and destination before exposing candidates.
+    buildExternalPickupDetails(route, selection);
+    const now = Date.now();
+    const candidates = this.eligibleOfferEntries().filter(entry =>
+      eligibleExternalCandidate(entry, route!, selection, seats, excludedDriverIds, now),
+    );
+    return structuredClone({ route: route!, candidates });
+  }
+
+  updateExternalPickupSettings(routeId: string, input: { expectedUpdatedAt: string; settings: ExternalPickupSettings }): RouteDefinition | undefined {
+    const route = this.routes.get(routeId);
+    if (!route) return undefined;
+    if (route.updatedAt !== input.expectedUpdatedAt) {
+      throw new AppError(409, "Route changed; reload the catalog", "ROUTE_CHANGED");
+    }
+    const settings = normalizeExternalPickupSettings(input.settings);
+    const updated = { ...route, externalPickup: settings, updatedAt: nextRouteUpdatedAt(route.updatedAt) };
+    this.routes.set(routeId, updated);
+    return structuredClone(updated);
+  }
+
+  confirmExternalPickupQuote(quote: ExternalPickupQuote, passengerId: string, expectedSessionVersion: number): { order: Order; created: boolean; changed: boolean } {
+    if (quote.passengerId !== passengerId) {
+      throw new AppError(403, "Quote belongs to another passenger", "FORBIDDEN");
+    }
+    this.requireCurrentRole(passengerId, "passenger", expectedSessionVersion);
+    const orderId = quote.orderId ?? quote.quoteId;
+    const existing = this.orders.get(orderId);
+    if (existing && existing.passengerId !== passengerId) {
+      throw new AppError(403, "Order belongs to another passenger", "FORBIDDEN");
+    }
+    // The original UUID is a permanent idempotency key, including after a
+    // later repricing. Replaying it can never reserve another driver's seats.
+    if (existing && (!quote.orderId || existing.externalPickup?.quoteId === quote.quoteId)) {
+      return { order: structuredClone(existing), created: false, changed: false };
+    }
+    if (quote.orderId && !existing) {
+      throw new AppError(404, "Order not found", "ORDER_NOT_FOUND");
+    }
+    const passenger = this.users.get(passengerId)!;
+    const driver = this.users.get(quote.driverId);
+    if (!driver || driver.role !== "driver" || (REQUIRE_DRIVER_APPROVAL && driver.driverApprovalStatus !== "approved")) {
+      throw new AppError(409, "Selected driver is no longer available", "QUOTE_CHANGED");
+    }
+    const entry = this.queueEntries.get(quote.driverId);
+    const route = this.routes.get(quote.selection.routeId);
+    const now = Date.now();
+    assertExternalQuoteCurrent(quote, route, entry, passengerId, expectedSessionVersion, now);
+    if (!route || !entry) {
+      throw new AppError(409, "Selected driver is no longer available", "QUOTE_CHANGED");
+    }
+    const order = buildConfirmedExternalOrder(quote, route, {
+      id: passenger.id, phoneNumber: passenger.phoneNumber,
+    }, existing, now);
+    // No await occurs between validation and publishing either value. Build
+    // both first so failed validation cannot leave a partial reservation.
+    const reserved = reserveQueueOffer(entry, order);
+    this.queueEntries.set(entry.driverId, reserved);
+    this.orders.set(order.id, order);
+    return { order: structuredClone(order), created: !existing, changed: true };
+  }
+
   createOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number): Order {
     assertLegacyOrderInput(input);
     this.requireCurrentRole(input.passengerId, "passenger", expectedSessionVersion);
@@ -505,7 +574,7 @@ class MemoryStore implements Store {
   }
 
   private writeOrder(order: Order, patch: Partial<Order>, now = Date.now()): Order {
-    Object.assign(order, patch, { id: order.id, updatedAt: new Date(now).toISOString() });
+    Object.assign(order, patch, { id: order.id, updatedAt: nextOrderUpdatedAt(order.updatedAt, now) });
     return order;
   }
 
@@ -514,6 +583,10 @@ class MemoryStore implements Store {
     if (!entry || entry.pendingOfferOrderId !== order.id || entry.availableSeats < 0) return false;
     if (this.users.get(entry.driverId)?.role !== "driver") return false;
     if (REQUIRE_DRIVER_APPROVAL && this.users.get(entry.driverId)?.driverApprovalStatus !== "approved") return false;
+    if (order.externalPickup) {
+      return liveExternalOfferValid(order, entry,
+        order.routeContext ? this.routes.get(order.routeContext.routeId) : undefined, now);
+    }
     return orderedOfferCandidates(
       { ...order, attemptedDriverIds: [] },
       [{ ...entry, pendingOfferOrderId: undefined, availableSeats: entry.availableSeats + order.seats }],
@@ -526,6 +599,12 @@ class MemoryStore implements Store {
     const previousEntry = previousDriverId ? this.queueEntries.get(previousDriverId) : undefined;
     if (previousEntry) {
       this.queueEntries.set(previousEntry.driverId, releaseQueueOffer(previousEntry, order));
+    }
+    if (order.externalPickup) {
+      if (!previousDriverId && order.externalPickup.requiresPriceConfirmation) return undefined;
+      const repriced = repriceExternalOrder(order, now);
+      this.orders.set(order.id, repriced);
+      return { order: structuredClone(repriced), ...(previousDriverId ? { previousDriverId } : {}) };
     }
     const attemptedDriverIds = [...new Set([
       ...(order.attemptedDriverIds ?? []),
@@ -567,16 +646,27 @@ class MemoryStore implements Store {
   acceptOrderOffer(orderId: string, driverId: string, now = Date.now(), expectedSessionVersion?: number): Order | undefined {
     if (expectedSessionVersion !== undefined) this.requireCurrentRole(driverId, "driver", expectedSessionVersion);
     const order = this.orders.get(orderId);
-    if (!order || order.offeredDriverId !== driverId || !hasLiveOrderOffer(order, now) ||
-      !this.isValidReservedOffer(order, now)) return undefined;
+    if (!order || order.offeredDriverId !== driverId) return undefined;
+    if (!hasLiveOrderOffer(order, now) || !this.isValidReservedOffer(order, now)) {
+      if (order.externalPickup && order.status === "searching" && !order.driverId) {
+        this.advanceOrderOffer(order, now, driverId);
+      }
+      return undefined;
+    }
     const entry = this.queueEntries.get(driverId)!;
-    const updated = this.writeOrder(order, {
+    const updated: Order = {
+      ...order,
       driverId,
       status: order.pickupPoint === "D" ? "in_transit" : "en_route_to_c",
       offerExpiresAt: undefined,
-      seatLockExpiresAt: order.pickupPoint === "D" ? undefined : now + SEAT_LOCK_TTL_MS,
-    }, now);
-    this.queueEntries.set(driverId, acceptQueueOffer(entry, updated));
+      seatLockExpiresAt: order.pickupPoint === "D" ? undefined : now + (order.externalPickup
+        ? externalPickupLeaseMs(order.externalPickup.roadDurationSeconds, order.externalPickup.settings)
+        : SEAT_LOCK_TTL_MS),
+      updatedAt: nextOrderUpdatedAt(order.updatedAt, now),
+    };
+    const accepted = acceptQueueOffer(entry, updated);
+    this.orders.set(order.id, updated);
+    this.queueEntries.set(driverId, accepted);
     return updated.routeContext ? structuredClone(updated) : updated;
   }
 
@@ -835,7 +925,8 @@ class MemoryStore implements Store {
         order.offeredDriverId = undefined;
         order.offerExpiresAt = undefined;
         order.status = "searching";
-        order.updatedAt = new Date().toISOString();
+        order.updatedAt = nextOrderUpdatedAt(order.updatedAt, now);
+        if (order.externalPickup) this.orders.set(order.id, repriceExternalOrder(order, now));
       }
     }
     for (const entry of this.queueEntries.values()) {

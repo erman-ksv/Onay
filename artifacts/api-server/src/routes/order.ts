@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { authenticate, requireRole, requireApprovedDriver } from "../middleware/auth";
 import { antiFakeGPS } from "../middleware/antiFakeGPS";
+import { createExternalPickupQuote, confirmExternalPickup } from "../controllers/externalPickupController";
 import {
   acceptOrder,
   boardOrder,
@@ -23,6 +24,8 @@ const router: IRouter = Router();
 router.get("/orders", authenticate, listOrders);
 router.get("/orders/availability", authenticate, requireRole("passenger"), getOrderAvailability);
 router.get("/orders/routes", authenticate, requireRole("passenger"), listOrderRoutes);
+router.post("/orders/external/quote", authenticate, requireRole("passenger"), createExternalPickupQuote);
+router.post("/orders/external/confirm", authenticate, requireRole("passenger"), confirmExternalPickup);
 router.get("/orders/route/availability", authenticate, requireRole("passenger"), getRouteOrderAvailability);
 router.post(
   "/orders/route",
