@@ -16,6 +16,7 @@ import type { RouteOrderSelectionInput } from "../store/storeContract";
 import { driverRouteOption, readDriverRouteChoiceInput } from "../utils/driverRoute";
 import { isValidCoordinates } from "../utils/geo";
 import { validateRouteOrderSelectionInput } from "../utils/routeOrder";
+import { logger } from "../lib/logger";
 
 function getSocket(request: Request): Server | undefined {
   return request.app.locals.io as Server | undefined;
@@ -352,6 +353,29 @@ export async function updateOrderStatus(request: Request, response: Response): P
     type: "order_released",
     driverId,
   });
+  await processOrderDispatch(getSocket(request));
+  response.json({ order: serializeOrder(updated, true) });
+}
+
+/** Boarding holds the existing seat reservation while the driver waits to depart. */
+export async function boardOrder(request: Request, response: Response): Promise<void> {
+  const driverId = assertDriver(request);
+  if (request.body !== undefined && (request.body === null || typeof request.body !== "object" ||
+      Array.isArray(request.body) || Object.keys(request.body).length > 0)) {
+    throw new AppError(400, "Boarding accepts no editable order fields", "VALIDATION_ERROR");
+  }
+  const order = await getOrderForActor(request, String(request.params["orderId"]));
+  if (order.driverId !== driverId) {
+    throw new AppError(403, "Only the assigned driver can board this passenger", "NOT_ASSIGNED");
+  }
+  const updated = await store.transitionOrder(order.id, driverId, "boarded_waiting", order.status, request.auth?.user.sessionVersion);
+  if (!updated) throw new AppError(409, "Order changed before boarding", "ORDER_UNAVAILABLE");
+  try {
+    emitOrderUpdate(getSocket(request), updated);
+    await emitQueueUpdate(getSocket(request), { type: "passenger_boarded", driverId });
+  } catch (err) {
+    logger.error({ err, orderId: order.id }, "Committed boarding notification failed");
+  }
   await processOrderDispatch(getSocket(request));
   response.json({ order: serializeOrder(updated, true) });
 }

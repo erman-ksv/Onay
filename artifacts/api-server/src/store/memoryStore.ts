@@ -8,10 +8,11 @@ import { mutateRouteStop, nextRouteUpdatedAt, replaceRouteLayout } from "../util
 import { assertDriverRouteChoiceRoute, validateDriverRouteChoiceInput } from "../utils/driverRoute";
 import { canTransitionOrder, claimQueueEntry, hasActiveOrders, joinQueueEntry, releaseQueueEntry, transitionQueueEntry } from "./orderLifecycle";
 import { AppError } from "../utils/errors";
-import { assertRouteQueueTelemetry, resolveRouteQueue, routeQueueSnapshot, sameQueueLane } from "../utils/routeQueue";
+import { assertRouteQueueLocation, assertRouteQueueTelemetry, resolveRouteQueue, routeQueueSnapshot, sameQueueLane } from "../utils/routeQueue";
 import { acceptQueueOffer, assertLegacyOrderInput, assertOrderOfferPatch, assertQueueOfferPatch, compareOfferDrivers, hasLiveOrderOffer, orderedOfferCandidates, releaseQueueOffer, reserveQueueOffer } from "./orderOffers";
 import { buildRouteOrder, validateRouteOrderSelectionInput } from "../utils/routeOrder";
 import { boundedInteger } from "../utils/validation";
+import { assertLineOrderTransition, createLineCollectionState, isCollecting, lineOrderIds, prepareLineDeparture } from "./lineCollection";
 import type {
   Coordinates,
   DeviceRegistration,
@@ -295,24 +296,43 @@ class MemoryStore implements Store {
     return this.updateQueueEntry(driverId, { inFifo: true });
   }
 
-  joinQueue(entry: QueueEntry, expectedSessionVersion?: number, selection?: DriverRouteChoiceInput): QueueEntry {
+  joinQueue(entry: QueueEntry, expectedSessionVersion?: number, selection?: DriverRouteChoiceInput, collectionMode = false): QueueEntry {
     this.requireCurrentRole(entry.driverId, "driver", expectedSessionVersion);
-    if (entry.routeContext) throw new AppError(400, "Queue context is server-owned", "VALIDATION_ERROR");
+    if (entry.routeContext || entry.collectionState !== undefined) throw new AppError(400, "Queue context is server-owned", "VALIDATION_ERROR");
     const user = this.users.get(entry.driverId)!;
     if (user.driverRouteChoice && REQUIRE_DRIVER_APPROVAL && user.driverApprovalStatus !== "approved") {
       throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");
     }
     const current = this.queueEntries.get(entry.driverId);
+    if (current && Boolean(current.collectionState) !== collectionMode) {
+      throw new AppError(409, "Leave the current queue before changing its mode", "QUEUE_BUSY");
+    }
+    if (current?.collectionState && entry.availableSeats !== current.collectionState.capacity) {
+      throw new AppError(409, "Leave the current line before changing vehicle capacity", "QUEUE_BUSY");
+    }
     if (current && (hasActiveOrders(current) || current.pendingOfferOrderId || current.inFifo === false)) {
       throw new AppError(409, "Driver cannot rejoin while an order or route is active", "QUEUE_BUSY");
     }
     const routeContext = resolveRouteQueue(user.driverRouteChoice,
       user.driverRouteChoice ? this.routes.get(user.driverRouteChoice.routeId) : undefined, selection, entry.lastLocation);
+    if (collectionMode && !routeContext) {
+      throw new AppError(409, "A configured route choice is required to join the line", "ROUTE_QUEUE_NOT_AVAILABLE");
+    }
+    if (collectionMode && routeContext) {
+      if (!entry.lastLocation) throw new AppError(422, "Valid location is required", "INVALID_COORDINATES");
+      assertRouteQueueLocation(routeContext, entry.lastLocation);
+    }
     if (current && (!sameQueueLane(current.routeContext, routeContext) || current.routeContext?.routeUpdatedAt !== routeContext?.routeUpdatedAt)) {
       throw new AppError(409, "Leave the previous queue before joining another", "QUEUE_BUSY");
     }
     const joined = joinQueueEntry({ ...entry, pendingOfferOrderId: undefined, routeContext }, current);
     if (current?.routeContext) joined.availableSeats = current.availableSeats;
+    if (collectionMode) {
+      const now = Date.now();
+      joined.collectionState = current?.collectionState
+        ? { ...current.collectionState, locationUpdatedAt: now }
+        : createLineCollectionState(boundedInteger(entry.availableSeats, "availableSeats", 1, 8), now);
+    }
     this.queueEntries.set(entry.driverId, joined);
     return joined.routeContext ? structuredClone(joined) : joined;
   }
@@ -329,6 +349,9 @@ class MemoryStore implements Store {
     if ("routeContext" in patch) throw new AppError(409, "Queue context cannot be changed", "QUEUE_BUSY");
     if (entry.routeContext && patch.lastLocation) assertRouteQueueTelemetry(entry, patch.lastLocation);
     Object.assign(entry, patch);
+    if (entry.collectionState && patch.lastLocation) {
+      entry.collectionState = { ...entry.collectionState, locationUpdatedAt: Date.now() };
+    }
     return entry.routeContext ? structuredClone(entry) : entry;
   }
 
@@ -340,10 +363,30 @@ class MemoryStore implements Store {
     this.queueEntries.delete(driverId);
   }
 
+  departQueue(driverId: string, expectedEnrollmentId: string, expectedSessionVersion?: number): { entry: QueueEntry; orders: Order[]; changed: boolean } {
+    this.requireCurrentRole(driverId, "driver", expectedSessionVersion);
+    if (REQUIRE_DRIVER_APPROVAL && this.users.get(driverId)?.driverApprovalStatus !== "approved") {
+      throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");
+    }
+    const entry = this.queueEntries.get(driverId);
+    if (!entry) throw new AppError(404, "Driver is not in the queue", "NOT_IN_QUEUE");
+    const orders = lineOrderIds(entry).flatMap(id => {
+      const order = this.orders.get(id);
+      return order ? [order] : [];
+    });
+    // No await occurs between the live manifest read and publishing these values.
+    const result = prepareLineDeparture(entry, orders, expectedEnrollmentId);
+    if (result.changed) {
+      this.queueEntries.set(driverId, result.entry);
+      for (const order of result.orders) this.orders.set(order.id, order);
+    }
+    return structuredClone(result);
+  }
+
   getQueue(): QueueEntry[] {
     return [...this.queueEntries.values()]
       .filter((entry) => entry.inFifo !== false)
-      .filter((entry) => !entry.seatLockExpiresAt || entry.seatLockExpiresAt > Date.now())
+      .filter((entry) => isCollecting(entry) || !entry.seatLockExpiresAt || entry.seatLockExpiresAt > Date.now())
       .sort(compareOfferDrivers)
       .map(entry => entry.routeContext ? structuredClone(entry) : entry);
   }
@@ -556,7 +599,7 @@ class MemoryStore implements Store {
   transitionOrder(orderId: string, actorId: string, nextStatus: OrderStatus, expectedStatus?: OrderStatus, expectedSessionVersion?: number): Order | undefined {
     const order = this.orders.get(orderId);
     if (!order || !canTransitionOrder(order, actorId, nextStatus, expectedStatus)) return undefined;
-    if (expectedSessionVersion !== undefined) {
+    if (expectedSessionVersion !== undefined || nextStatus === "boarded_waiting") {
       const role = actorId === order.passengerId ? "passenger" : "driver";
       this.requireCurrentRole(actorId, role, expectedSessionVersion);
       if (role === "driver" && REQUIRE_DRIVER_APPROVAL && this.users.get(actorId)?.driverApprovalStatus !== "approved") {
@@ -564,6 +607,7 @@ class MemoryStore implements Store {
       }
     }
     const entry = order.driverId ? this.queueEntries.get(order.driverId) : undefined;
+    assertLineOrderTransition(entry, order, nextStatus);
     if (entry) this.queueEntries.set(entry.driverId, transitionQueueEntry(entry, order, nextStatus));
     if (nextStatus === "cancelled" && order.status === "searching" && order.offeredDriverId) {
       const offeredEntry = this.queueEntries.get(order.offeredDriverId);
@@ -572,7 +616,7 @@ class MemoryStore implements Store {
     const updated = this.writeOrder(order, {
       status: nextStatus,
       ...(nextStatus === "cancelled" ? { cancelledBy: actorId } : {}),
-      seatLockExpiresAt: nextStatus === "in_transit" || nextStatus === "completed" || nextStatus === "cancelled"
+      seatLockExpiresAt: nextStatus === "boarded_waiting" || nextStatus === "in_transit" || nextStatus === "completed" || nextStatus === "cancelled"
         ? undefined : order.seatLockExpiresAt,
       offerExpiresAt: nextStatus === "cancelled" ? undefined : order.offerExpiresAt,
     });
@@ -773,14 +817,15 @@ class MemoryStore implements Store {
   clearExpiredSeatLocks(): void {
     const now = Date.now();
     for (const order of this.orders.values()) {
+      const entry = order.driverId ? this.queueEntries.get(order.driverId) : undefined;
       if (
-        order.seatLockExpiresAt &&
+        order.seatLockExpiresAt !== undefined &&
         order.seatLockExpiresAt <= now &&
-        order.status === "en_route_to_c"
+        (order.status === "en_route_to_c" ||
+          (order.status === "arrived_at_c" && Boolean(entry?.collectionState)))
       ) {
         const driverId = order.driverId;
         if (driverId) {
-          const entry = this.queueEntries.get(driverId);
           if (entry) {
             this.queueEntries.set(driverId, releaseQueueEntry(entry, order));
           }
@@ -819,6 +864,7 @@ class MemoryStore implements Store {
       "searching",
       "en_route_to_c",
       "arrived_at_c",
+      "boarded_waiting",
       "in_transit",
       "completed",
       "cancelled",

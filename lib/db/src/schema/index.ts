@@ -80,6 +80,7 @@ export const driverQueueTable = pgTable(
     availableSeats: integer("available_seats").notNull(),
     lastLocation: jsonb("last_location").$type<Record<string, unknown>>().notNull(),
     routeContext: jsonb("route_context").$type<Record<string, unknown> | null>(),
+    collectionState: jsonb("collection_state").$type<Record<string, unknown> | null>(),
     priorityLock: boolean("priority_lock").notNull().default(false),
     inFifo: boolean("in_fifo").notNull().default(true),
     activeOrderIds: jsonb("active_order_ids").$type<string[]>().notNull().default([]),

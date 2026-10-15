@@ -54,7 +54,7 @@ export async function processOrderDispatch(io: Server | undefined): Promise<void
         anotherSweepRequested = false;
         const now = Date.now();
         const expiringOrders = (await store.listOrders())
-          .filter((order) => order.status === "en_route_to_c" &&
+          .filter((order) => (order.status === "en_route_to_c" || order.status === "arrived_at_c") &&
             order.seatLockExpiresAt !== undefined && order.seatLockExpiresAt <= now)
           .map((order) => ({ orderId: order.id, driverId: order.driverId }));
         await store.clearExpiredSeatLocks();
