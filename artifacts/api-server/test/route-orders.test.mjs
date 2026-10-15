@@ -180,6 +180,22 @@ async function createHttp(passenger, route, direction = "a_to_b", seats = 2, ext
 async function availabilityHttp(passenger, route, direction = "a_to_b", seats = 2, extra = {}) {
   return request(`/orders/route/availability?${new URLSearchParams({ ...selection(route, direction), seats: String(seats), ...extra })}`, { token: passenger.token });
 }
+async function enrollHttp(f, route, direction, collecting = false) {
+  const driver = await f.createUser();
+  const planned = await request("/driver/route", {
+    token: driver.token, method: "PUT", body: selection(route, direction),
+  });
+  assert.equal(planned.status, 200, JSON.stringify(planned.body));
+  const joined = await request(collecting ? "/queue/line" : "/queue/join", {
+    token: driver.token, method: "POST", body: {
+      route_choice: selection(route, direction), location: at(route, direction), available_seats: 4,
+    },
+  });
+  assert.equal(joined.status, 201, JSON.stringify(joined.body));
+  assert.equal(joined.body.entry.routeContext.direction, direction);
+  assert.equal(Boolean(joined.body.entry.collectionState), collecting);
+  return driver;
+}
 async function waitForBlockedTransactions(count) {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
@@ -314,6 +330,131 @@ test("both adapters keep opposite directions, other routes, legacy queues and in
     assert.deepEqual(availabilityState(await adapter.getRouteOrderAvailability(choiceInput(route), 1)), { available: false, eligibleDriverCount: 0 },
       "Neither driver may own two simultaneous pending offers.");
   }
+});
+
+test("HTTP a driver waiting only at the opposite pitak never makes an unavailable lane bookable in either queue mode", async t => {
+  for (const direction of ["a_to_b", "b_to_a"]) {
+    for (const collecting of [false, true]) await t.test(`${direction}:${collecting ? "collecting" : "configured"}`, async child => {
+      const f = await fixture(child), route = await f.configured();
+      const oppositeDirection = direction === "a_to_b" ? "b_to_a" : "a_to_b";
+      const driver = await enrollHttp(f, route, oppositeDirection, collecting);
+      if (collecting) {
+        // Model elapsed travel without a future device timestamp. Being
+        // physically at the other endpoint must not change the saved lane.
+        await store.updateUser(driver.user.id, { lastLocation: { ...at(route, oppositeDirection), timestamp: Date.now() - 3_600_000 } });
+        const moved = await request("/queue/location", {
+          token: driver.token, method: "PATCH", body: { location: at(route, direction) },
+        });
+        assert.equal(moved.status, 200, JSON.stringify(moved.body));
+        assert.equal(moved.body.entry.routeContext.direction, oppositeDirection);
+        assert.equal(moved.body.entry.routeContext.pitak, oppositeDirection === "a_to_b" ? "A" : "B");
+        assert.equal(moved.body.entry.lastLocation.lat, at(route, direction).lat);
+        assert.equal(moved.body.entry.lastLocation.lng, at(route, direction).lng);
+      }
+      const before = await otherStore.getQueueEntry(driver.user.id), passenger = await f.createUser("passenger");
+      const availability = await availabilityHttp(passenger, route, direction);
+      assert.equal(availability.status, 200, JSON.stringify(availability.body));
+      assert.equal(availability.body.available, false);
+      assert.equal(availability.body.eligible_driver_count, 0);
+      assertError(await createHttp(passenger, route, direction), 409, "NO_DRIVERS");
+      assert.deepEqual(await otherStore.listOrdersForUser(passenger.user.id), [], "An opposite-pitak driver must not cause even a searching order to be inserted.");
+      assert.deepEqual(await otherStore.getQueueEntry(driver.user.id), before, "An unavailable request must preserve the opposite driver's queue position, enrollment, manifest and seats.");
+
+      // A separate passenger starts at the driver's own pitak; the production
+      // GPS speed guard must not be bypassed by teleporting the first passenger.
+      const ownPassenger = await f.createUser("passenger");
+      const ownAvailability = await availabilityHttp(ownPassenger, route, oppositeDirection);
+      assert.equal(ownAvailability.status, 200, JSON.stringify(ownAvailability.body));
+      assert.equal(ownAvailability.body.available, true);
+      assert.equal(ownAvailability.body.eligible_driver_count, 1);
+      const created = await createHttp(ownPassenger, route, oppositeDirection);
+      assert.equal(created.status, 201, JSON.stringify(created.body));
+      assert.equal(created.body.order.offered_driver_id, driver.user.id);
+      assert.equal(created.body.order.route_context.direction, oppositeDirection);
+      assert.equal(created.body.order.route_context.pitak, oppositeDirection === "a_to_b" ? "A" : "B");
+      await assertPending(otherStore, driver, await otherStore.getOrder(created.body.order.id));
+    });
+  }
+});
+
+test("HTTP knowing another lane's order ID grants no visibility, offer control or passenger lifecycle authority", async t => {
+  for (const direction of ["a_to_b", "b_to_a"]) await t.test(direction, async child => {
+    const f = await fixture(child), route = await f.configured(), passenger = await f.createUser("passenger");
+    const assigned = await enrollHttp(f, route, direction, true);
+    const opposite = await enrollHttp(f, route, direction === "a_to_b" ? "b_to_a" : "a_to_b", true);
+    const created = await createHttp(passenger, route, direction);
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const id = created.body.order.id, beforeOrder = await otherStore.getOrder(id);
+    assert.equal(beforeOrder.offeredDriverId, assigned.user.id);
+    const beforeAssigned = await otherStore.getQueueEntry(assigned.user.id);
+    const beforeOpposite = await otherStore.getQueueEntry(opposite.user.id);
+    const unchanged = async () => {
+      assert.deepEqual(await otherStore.getOrder(id), beforeOrder, "A wrong-lane request must not modify the order or transfer its offer.");
+      assert.deepEqual(await otherStore.getQueueEntry(assigned.user.id), beforeAssigned, "The actual offer owner's reservation must remain intact.");
+      assert.deepEqual(await otherStore.getQueueEntry(opposite.user.id), beforeOpposite, "The wrong-lane driver's seats, FIFO and manifest must remain intact.");
+    };
+    const listed = await request("/orders", { token: opposite.token });
+    assert.equal(listed.status, 200, JSON.stringify(listed.body));
+    assert.deepEqual(listed.body.orders, []);
+    for (const [suffix, method, body, status, code] of [
+      ["", "GET", undefined, 404, "ORDER_NOT_FOUND"],
+      ["/accept", "POST", undefined, 409, "ORDER_RESERVED"],
+      // PostgreSQL finds no authenticated actor among the locked order-lane
+      // candidates and rejects before any offer or seat mutation.
+      ["/reject", "POST", undefined, 401, "UNAUTHORIZED"],
+      ["/status", "PATCH", { status: "arrived_at_c" }, 404, "ORDER_NOT_FOUND"],
+      ["/board", "POST", {}, 404, "ORDER_NOT_FOUND"],
+      ["/cancel", "POST", undefined, 404, "ORDER_NOT_FOUND"],
+      ["/offer-first-driver", "POST", undefined, 404, "ORDER_NOT_FOUND"],
+    ]) {
+      assertError(await request(`/orders/${id}${suffix}`, { token: opposite.token, method, ...(body === undefined ? {} : { body }) }), status, code);
+      await unchanged();
+    }
+    const accepted = await request(`/orders/${id}/accept`, { token: assigned.token, method: "POST" });
+    assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+    assert.equal(accepted.body.order.driver_id, assigned.user.id);
+    assert.equal(accepted.body.order.status, "en_route_to_c");
+    assert.equal((await otherStore.getQueueEntry(assigned.user.id)).availableSeats, 2, "The legitimate owner accepts the existing reservation without a second debit.");
+    assert.deepEqual(await otherStore.getQueueEntry(opposite.user.id), beforeOpposite);
+  });
+});
+
+test("HTTP exhausted offers remain searching until their own lane gains a new driver, without falling back to the opposite pitak", async t => {
+  for (const [action, direction] of [["reject", "a_to_b"], ["timeout", "b_to_a"]]) await t.test(action, async child => {
+    const f = await fixture(child), route = await f.configured(), passenger = await f.createUser("passenger");
+    const first = await enrollHttp(f, route, direction, true);
+    const opposite = await enrollHttp(f, route, direction === "a_to_b" ? "b_to_a" : "a_to_b", true);
+    const beforeOpposite = await otherStore.getQueueEntry(opposite.user.id);
+    const created = await createHttp(passenger, route, direction);
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const id = created.body.order.id, offered = await otherStore.getOrder(id);
+    assert.equal(offered.offeredDriverId, first.user.id);
+    if (action === "reject") {
+      const rejected = await request(`/orders/${id}/reject`, { token: first.token, method: "POST" });
+      assert.equal(rejected.status, 200, JSON.stringify(rejected.body));
+    } else {
+      await store.processOrderOffers(offered.offerExpiresAt + 1);
+    }
+    const waiting = await otherStore.getOrder(id);
+    assert.equal(waiting.status, "searching");
+    assert.equal(waiting.driverId, undefined);
+    assert.equal(waiting.offeredDriverId, undefined);
+    assert.equal(waiting.offerExpiresAt, undefined);
+    assert.deepEqual(waiting.attemptedDriverIds, [first.user.id]);
+    await assertIdle(otherStore, first);
+    assert.deepEqual(await otherStore.getQueueEntry(opposite.user.id), beforeOpposite, "A free opposite-lane car must never become an exhaustion fallback.");
+    assert.equal(await store.dispatchOrderOffer(id), undefined);
+    assert.deepEqual(await otherStore.getOrder(id), waiting, "Repeated dispatch with only the opposite lane available must be read-only.");
+
+    // Joining invokes the real dispatcher after the new enrollment commits.
+    const next = await enrollHttp(f, route, direction, true), advanced = await otherStore.getOrder(id);
+    assert.equal(advanced.offeredDriverId, next.user.id);
+    assert.equal(advanced.routeContext.direction, direction);
+    assert.deepEqual(advanced.attemptedDriverIds, [first.user.id, next.user.id]);
+    await assertPending(otherStore, next, advanced);
+    await assertIdle(otherStore, first);
+    assert.deepEqual(await otherStore.getQueueEntry(opposite.user.id), beforeOpposite);
+  });
 });
 
 test("both adapters use strict configured FIFO before location or priorityLock and advance rejection only within its own lane", async t => {

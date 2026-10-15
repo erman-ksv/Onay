@@ -1074,6 +1074,119 @@ test("external selection requires an active collecting enrollment in the correct
   assertError(await request("/orders/external/quote", { token: passenger.token, method: "POST", body: quoteBody(route) }), 409, "NO_DRIVERS");
 });
 
+test("external pickup excludes a physically nearest opposite queue before road ranking and reservation in both directions", async t => {
+  for (const direction of ["a_to_b", "b_to_a"]) await t.test(direction, async child => {
+    const f = await fixture(child), { route } = await configure(f, await f.configured());
+    const oppositeDirection = direction === "a_to_b" ? "b_to_a" : "a_to_b";
+    const wrong = await enroll(f, route, 4, oppositeDirection), target = collectionPickup(route, direction);
+    await move(wrong, target); roadFor(target, 1, 1);
+    const passenger = await f.createUser("passenger"), originalWrong = await otherStore.getQueueEntry(wrong.user.id);
+    const noDriver = await request("/orders/external/quote", { token: passenger.token, method: "POST", body: quoteBody(route, { direction, pickup_location: target, seats: 2 }) });
+    assertError(noDriver, 409, "NO_DRIVERS");
+    await assertNoPassengerOrders(passenger);
+    assert.deepEqual(await otherStore.getQueueEntry(wrong.user.id), originalWrong);
+    assert.equal(routerRequests.length, 0, "An opposite-lane driver must be excluded before contacting the road provider.");
+
+    const right = await enroll(f, route, 4, direction), originalRight = await otherStore.getQueueEntry(right.user.id);
+    roadFor(originalRight.lastLocation, 2500, 500);
+    assert.ok(distanceMeters(originalWrong.lastLocation, target) < distanceMeters(originalRight.lastLocation, target));
+    assert.ok(originalWrong.joinedAt < originalRight.joinedAt, "Even an earlier opposite queue cannot compete for this direction.");
+    const quoted = await quote(passenger, route, { direction, pickup_location: target, seats: 2 });
+    assert.equal(quoted.quote.driver_id, right.user.id);
+    assert.equal(quoted.quote.road_distance_meters, 2500);
+    assert.equal(routerRequests.length, 1);
+    assert.equal(routerRequests[0].searchParams.get("sources").split(";").length, 1);
+    assert.deepEqual(await otherStore.getQueueEntry(wrong.user.id), originalWrong);
+    assert.deepEqual(await otherStore.getQueueEntry(right.user.id), originalRight, "A quote does not reserve seats.");
+
+    const confirmed = await confirm(passenger, quoted);
+    assert.equal(confirmed.status, 201, JSON.stringify(confirmed.body));
+    assert.equal(confirmed.body.order.offered_driver_id, right.user.id);
+    assert.equal(confirmed.body.order.route_context.direction, direction);
+    assert.equal((await capacityInvariant(otherStore, right, 4)).availableSeats, 2);
+    assert.deepEqual(await otherStore.getQueueEntry(wrong.user.id), originalWrong);
+    const reservedOrder = await otherStore.getOrder(confirmed.body.order.id), reservedRight = await otherStore.getQueueEntry(right.user.id);
+    assertError(await request(`/orders/${reservedOrder.id}/accept`, { token: wrong.token, method: "POST" }), 409, "ORDER_RESERVED");
+    assertError(await request(`/orders/${reservedOrder.id}/reject`, { token: wrong.token, method: "POST" }), 401, "UNAUTHORIZED");
+    assert.deepEqual(await otherStore.getOrder(reservedOrder.id), reservedOrder);
+    assert.deepEqual(await otherStore.getQueueEntry(right.user.id), reservedRight);
+    assert.deepEqual(await otherStore.getQueueEntry(wrong.user.id), originalWrong);
+    await accept(right, confirmed.body.order);
+    assert.equal((await capacityInvariant(otherStore, right, 4)).availableSeats, 2);
+    assert.deepEqual(await otherStore.getQueueEntry(wrong.user.id), originalWrong);
+  });
+});
+
+test("external rejection never reprices across queues and permits a fresh quote only after legitimate direction enrollment", async t => {
+  for (const direction of ["a_to_b", "b_to_a"]) await t.test(direction, async child => {
+    const f = await fixture(child), { route } = await configure(f, await f.configured());
+    const oppositeDirection = direction === "a_to_b" ? "b_to_a" : "a_to_b";
+    const wrong = await enroll(f, route, 4, oppositeDirection), target = collectionPickup(route, direction);
+    await move(wrong, target); roadFor(target, 1, 1);
+    const right = await enroll(f, route, 4, direction), passenger = await f.createUser("passenger");
+    const { order } = await externalOrder(passenger, route, { direction, pickup_location: target, seats: 2 });
+    assert.equal(order.offered_driver_id, right.user.id);
+    const rejected = await request(`/orders/${order.id}/reject`, { token: right.token, method: "POST" });
+    assert.equal(rejected.status, 200, JSON.stringify(rejected.body));
+    assert.equal(rejected.body.order.external_pickup.requires_price_confirmation, true);
+    await store.processOrderOffers(); await otherStore.processOrderOffers();
+    const waiting = await otherStore.getOrder(order.id), originalWrong = await otherStore.getQueueEntry(wrong.user.id);
+    const releasedRight = await capacityInvariant(otherStore, right, 4);
+    assert.equal(waiting.status, "searching"); assert.equal(waiting.offeredDriverId, undefined);
+    assert.deepEqual(waiting.attemptedDriverIds, [right.user.id]);
+    assert.equal(waiting.externalPickup.requiresPriceConfirmation, true); assert.equal(releasedRight.availableSeats, 4);
+    const routingCalls = routerRequests.length;
+    const noDriver = await request("/orders/external/quote", { token: passenger.token, method: "POST", body: { order_id: order.id } });
+    assertError(noDriver, 409, "NO_DRIVERS");
+    assert.equal(routerRequests.length, routingCalls);
+    assert.deepEqual(await otherStore.getOrder(order.id), waiting);
+    assert.deepEqual(await otherStore.getQueueEntry(wrong.user.id), originalWrong);
+    assert.deepEqual(await otherStore.getQueueEntry(right.user.id), releasedRight);
+
+    assert.equal((await request("/queue/leave", { token: wrong.token, method: "DELETE" })).status, 204);
+    assert.equal((await request("/driver/route", { token: wrong.token, method: "PUT", body: selection(route, direction) })).status, 200);
+    const joined = await request("/queue/line", { token: wrong.token, method: "POST", body: {
+      ...joinBody(route, 4, direction), location: { ...originFor(route, direction), timestamp: wrong.sampleTimestamp + 600_000 },
+    } });
+    assert.equal(joined.status, 201, JSON.stringify(joined.body));
+    const newEnrollment = joined.body.entry;
+    assert.equal(newEnrollment.routeContext.direction, direction);
+    assert.notEqual(newEnrollment.collectionState.enrollmentId, originalWrong.collectionState.enrollmentId);
+    assert.deepEqual(await otherStore.getOrder(order.id), waiting, "Fresh enrollment still cannot reserve an external order without new passenger consent.");
+    const requoted = await request("/orders/external/quote", { token: passenger.token, method: "POST", body: { order_id: order.id } });
+    assert.equal(requoted.status, 200, JSON.stringify(requoted.body));
+    assert.equal(requoted.body.quote.driver_id, wrong.user.id);
+    assert.deepEqual(await otherStore.getQueueEntry(wrong.user.id), newEnrollment);
+    const confirmed = await confirm(passenger, requoted.body);
+    assert.equal(confirmed.status, 200, JSON.stringify(confirmed.body));
+    assert.equal(confirmed.body.order.id, order.id); assert.equal(confirmed.body.order.offered_driver_id, wrong.user.id);
+    assert.equal(confirmed.body.order.route_context.direction, direction);
+    assert.equal((await capacityInvariant(otherStore, wrong, 4)).availableSeats, 2);
+    assert.deepEqual(await otherStore.getQueueEntry(right.user.id), releasedRight);
+    assert.equal((await store.listOrdersForUser(passenger.user.id)).length, 1);
+  });
+});
+
+test("an external quote cannot reserve a driver who legitimately switches to the opposite queue before confirmation", async t => {
+  const { route, driver, passenger } = await setup(t), quoted = await quote(passenger, route, { seats: 2 });
+  const original = await otherStore.getQueueEntry(driver.user.id);
+  assert.equal(quoted.quote.driver_id, driver.user.id); assert.equal(original.availableSeats, 4);
+  assert.equal((await request("/queue/leave", { token: driver.token, method: "DELETE" })).status, 204);
+  assert.equal((await request("/driver/route", { token: driver.token, method: "PUT", body: selection(route, "b_to_a") })).status, 200);
+  const joined = await request("/queue/line", { token: driver.token, method: "POST", body: {
+    ...joinBody(route, 4, "b_to_a"), location: { ...originFor(route, "b_to_a"), timestamp: original.lastLocation.timestamp + 600_000 },
+  } });
+  assert.equal(joined.status, 201, JSON.stringify(joined.body));
+  const opposite = await otherStore.getQueueEntry(driver.user.id);
+  assert.equal(opposite.routeContext.direction, "b_to_a"); assert.equal(opposite.routeContext.pitak, "B");
+  assert.notEqual(opposite.collectionState.enrollmentId, original.collectionState.enrollmentId);
+  assert.ok(distanceMeters(opposite.lastLocation, original.lastLocation) > pitaks.radiusMeters);
+  assertError(await confirm(passenger, quoted), 409, "PICKUP_QUOTE_CHANGED");
+  await assertNoPassengerOrders(passenger);
+  assert.deepEqual(await otherStore.getQueueEntry(driver.user.id), opposite, "Stale quote confirmation must roll back without debiting or resetting the new B enrollment.");
+  assert.equal((await capacityInvariant(otherStore, driver, 4)).availableSeats, 4);
+});
+
 test("missing or unsafe routing configuration fails closed and never leaks the configured URL", async t => {
   const { route, passenger } = await setup(t), configured = process.env.TEZJET_OSRM_URL;
   try {
