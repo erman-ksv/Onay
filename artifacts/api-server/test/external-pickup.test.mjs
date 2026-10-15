@@ -737,10 +737,14 @@ test("a reverse returning collector and departed enrollments cannot receive an o
   assert.equal((await lineAvailability(passenger, route)).available, false);
   assertError(await requestLineOrder(passenger, route), 409, "NO_DRIVERS");
   await assertNoPassengerOrders(passenger);
-  assert.equal((await lineAvailability(passenger, route, 1, "b_to_a")).available, true);
+  // A different passenger is physically at B; reusing the passenger at A
+  // would correctly trigger the production GPS speed guard on creation.
+  const reversePassenger = await f.createUser("passenger");
+  assert.equal((await lineAvailability(reversePassenger, route, 1, "b_to_a")).available, true);
   assert.equal((await depart(reverse)).status, 200);
-  assert.equal((await lineAvailability(passenger, route, 1, "b_to_a")).available, false);
-  assertError(await requestLineOrder(passenger, route, 1, "b_to_a"), 409, "NO_DRIVERS");
+  assert.equal((await lineAvailability(reversePassenger, route, 1, "b_to_a")).available, false);
+  assertError(await requestLineOrder(reversePassenger, route, 1, "b_to_a"), 409, "NO_DRIVERS");
+  await assertNoPassengerOrders(reversePassenger);
   const entry = await capacityInvariant(otherStore, reverse, 4);
   assert.equal(entry.availableSeats, 2); assert.equal(entry.inFifo, false); assert.equal(entry.collectionState.phase, "departed");
   const travelling = await otherStore.getOrder(external.id);
