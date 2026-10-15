@@ -163,7 +163,7 @@ export async function updateQueueStatus(request: Request, response: Response): P
     throw new AppError(409, "Accept or reject the pending offer before changing status", "QUEUE_BUSY");
   }
   if (current.routeContext) {
-    throw new AppError(409, "Order dispatch for configured routes is not available yet", "ROUTE_DISPATCH_NOT_AVAILABLE");
+    throw new AppError(409, "Use the assigned order lifecycle to change configured trip status", "ROUTE_DISPATCH_NOT_AVAILABLE");
   }
   const allowedTransitions: Record<DriverQueueStatus, readonly DriverQueueStatus[]> = {
     searching: ["picking_up", "in_transit"],

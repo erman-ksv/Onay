@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { OFFER_TIMEOUT_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
-import type { DriverRouteChoiceInput, RouteLayoutInput, Store } from "./storeContract";
+import type { DriverRouteChoiceInput, RouteLayoutInput, RouteOrderInput, Store } from "./storeContract";
 import { mutateRouteStop, nextRouteUpdatedAt, replaceRouteLayout } from "../utils/routeLayout";
 import { assertDriverRouteChoiceRoute, validateDriverRouteChoiceInput } from "../utils/driverRoute";
 import { canTransitionOrder, claimQueueEntry, hasActiveOrders, joinQueueEntry, releaseQueueEntry, transitionQueueEntry } from "./orderLifecycle";
 import { AppError } from "../utils/errors";
-import { assertRouteQueueLocation, resolveRouteQueue, routeQueueSnapshot, sameQueueLane } from "../utils/routeQueue";
-import { acceptQueueOffer, assertOrderOfferPatch, assertQueueOfferPatch, compareOfferDrivers, hasLiveOrderOffer, orderedOfferCandidates, releaseQueueOffer, reserveQueueOffer } from "./orderOffers";
+import { assertRouteQueueTelemetry, resolveRouteQueue, routeQueueSnapshot, sameQueueLane } from "../utils/routeQueue";
+import { acceptQueueOffer, assertLegacyOrderInput, assertOrderOfferPatch, assertQueueOfferPatch, compareOfferDrivers, hasLiveOrderOffer, orderedOfferCandidates, releaseQueueOffer, reserveQueueOffer } from "./orderOffers";
+import { buildRouteOrder } from "../utils/routeOrder";
+import { boundedInteger } from "../utils/validation";
 import type {
   Coordinates,
   DeviceRegistration,
@@ -238,7 +240,7 @@ class MemoryStore implements Store {
     }
     assertQueueOfferPatch(entry, patch);
     if ("routeContext" in patch) throw new AppError(409, "Queue context cannot be changed", "QUEUE_BUSY");
-    if (entry.routeContext && patch.lastLocation) assertRouteQueueLocation(entry.routeContext, patch.lastLocation);
+    if (entry.routeContext && patch.lastLocation) assertRouteQueueTelemetry(entry, patch.lastLocation);
     Object.assign(entry, patch);
     return entry.routeContext ? structuredClone(entry) : entry;
   }
@@ -285,11 +287,24 @@ class MemoryStore implements Store {
   }
 
   getOrderAvailability(pickupPoint: PickupPoint, seats: number): { available: boolean; eligibleDriverCount: number } {
+    assertLegacyOrderInput({ pickupPoint });
     const eligibleDriverCount = orderedOfferCandidates({ pickupPoint, seats }, this.eligibleOfferEntries(), Date.now()).length;
     return { available: eligibleDriverCount > 0, eligibleDriverCount };
   }
 
+  getRouteOrderAvailability(selection: DriverRouteChoiceInput, seats: number): { available: boolean; eligibleDriverCount: number } {
+    selection = validateDriverRouteChoiceInput(selection);
+    seats = boundedInteger(seats, "seats", 1, 8);
+    const route = this.routes.get(selection.routeId);
+    const routeOrder = buildRouteOrder(route, selection);
+    const eligibleDriverCount = orderedOfferCandidates(
+      { ...routeOrder, seats }, this.eligibleOfferEntries(), Date.now(), route,
+    ).length;
+    return { available: eligibleDriverCount > 0, eligibleDriverCount };
+  }
+
   createOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number): Order {
+    assertLegacyOrderInput(input);
     this.requireCurrentRole(input.passengerId, "passenger", expectedSessionVersion);
     const now = new Date().toISOString();
     const order: Order = {
@@ -303,15 +318,32 @@ class MemoryStore implements Store {
   }
 
   createOrderWithOffer(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number): Order | undefined {
+    assertLegacyOrderInput(input);
+    return this.reserveNewOrder(input, expectedSessionVersion);
+  }
+
+  createRouteOrderWithOffer(input: RouteOrderInput, selection: DriverRouteChoiceInput, expectedSessionVersion?: number): Order | undefined {
+    selection = validateDriverRouteChoiceInput(selection);
+    if (!input.pickupLocation) throw new AppError(422, "Pickup location is required", "OUTSIDE_PICKUP_GEOFENCE");
+    const route = this.routes.get(selection.routeId);
+    const details = buildRouteOrder(route, selection, input.pickupLocation);
+    return this.reserveNewOrder({
+      passengerId: input.passengerId, passengerPhone: input.passengerPhone,
+      pickupLocation: input.pickupLocation, seats: boundedInteger(input.seats, "seats", 1, 8),
+      ...details, status: "searching",
+    }, expectedSessionVersion, route);
+  }
+
+  private reserveNewOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number, liveRoute?: RouteDefinition): Order | undefined {
     this.requireCurrentRole(input.passengerId, "passenger", expectedSessionVersion);
     const now = Date.now();
     const next = orderedOfferCandidates(
-      { pickupPoint: input.pickupPoint, seats: input.seats }, this.eligibleOfferEntries(), now,
+      { ...input, attemptedDriverIds: [] }, this.eligibleOfferEntries(), now, liveRoute,
     )[0];
     if (!next) return undefined;
     const timestamp = new Date(now).toISOString();
     const order: Order = {
-      ...input,
+      ...(input.routeContext ? structuredClone(input) : input),
       id: randomUUID(),
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -324,11 +356,12 @@ class MemoryStore implements Store {
     };
     this.queueEntries.set(next.driverId, reserveQueueOffer(next, order));
     this.orders.set(order.id, order);
-    return order;
+    return order.routeContext ? structuredClone(order) : order;
   }
 
   getOrder(orderId: string): Order | undefined {
-    return this.orders.get(orderId);
+    const order = this.orders.get(orderId);
+    return order?.routeContext ? structuredClone(order) : order;
   }
 
   updateOrder(orderId: string, patch: Partial<Order>): Order | undefined {
@@ -337,7 +370,8 @@ class MemoryStore implements Store {
       return undefined;
     }
     assertOrderOfferPatch(order, patch);
-    return this.writeOrder(order, patch);
+    const updated = this.writeOrder(order, patch);
+    return updated.routeContext ? structuredClone(updated) : updated;
   }
 
   private writeOrder(order: Order, patch: Partial<Order>, now = Date.now()): Order {
@@ -348,11 +382,13 @@ class MemoryStore implements Store {
   private isValidReservedOffer(order: Order, now: number): boolean {
     const entry = order.offeredDriverId ? this.queueEntries.get(order.offeredDriverId) : undefined;
     if (!entry || entry.pendingOfferOrderId !== order.id || entry.availableSeats < 0) return false;
+    if (this.users.get(entry.driverId)?.role !== "driver") return false;
     if (REQUIRE_DRIVER_APPROVAL && this.users.get(entry.driverId)?.driverApprovalStatus !== "approved") return false;
     return orderedOfferCandidates(
       { ...order, attemptedDriverIds: [] },
       [{ ...entry, pendingOfferOrderId: undefined, availableSeats: entry.availableSeats + order.seats }],
       now,
+      order.routeContext ? this.routes.get(order.routeContext.routeId) : undefined,
     ).length > 0;
   }
 
@@ -365,7 +401,8 @@ class MemoryStore implements Store {
       ...(order.attemptedDriverIds ?? []),
       ...(previousDriverId ? [previousDriverId] : []),
     ])];
-    const next = orderedOfferCandidates({ ...order, attemptedDriverIds }, this.eligibleOfferEntries(), now)[0];
+    const next = orderedOfferCandidates({ ...order, attemptedDriverIds }, this.eligibleOfferEntries(), now,
+      order.routeContext ? this.routes.get(order.routeContext.routeId) : undefined)[0];
     if (!next && !previousDriverId) return undefined;
     if (next) {
       this.queueEntries.set(next.driverId, reserveQueueOffer(next, order));
@@ -376,7 +413,7 @@ class MemoryStore implements Store {
       offerExpiresAt: next ? now + OFFER_TIMEOUT_MS : undefined,
       attemptedDriverIds,
     }, now);
-    return { order: { ...order }, ...(previousDriverId ? { previousDriverId } : {}) };
+    return { order: order.routeContext ? structuredClone(order) : { ...order }, ...(previousDriverId ? { previousDriverId } : {}) };
   }
 
   dispatchOrderOffer(orderId: string, now = Date.now()): OrderOfferChange | undefined {
@@ -386,26 +423,31 @@ class MemoryStore implements Store {
     return this.advanceOrderOffer(order, now, order.offeredDriverId);
   }
 
-  rejectOrderOffer(orderId: string, driverId: string, now = Date.now()): OrderOfferChange | undefined {
+  rejectOrderOffer(orderId: string, driverId: string, now = Date.now(), expectedSessionVersion?: number): OrderOfferChange | undefined {
+    if (expectedSessionVersion !== undefined) {
+      this.requireCurrentRole(driverId, "driver", expectedSessionVersion);
+      if (REQUIRE_DRIVER_APPROVAL && this.users.get(driverId)?.driverApprovalStatus !== "approved") return undefined;
+    }
     const order = this.orders.get(orderId);
     if (!order || order.offeredDriverId !== driverId || !hasLiveOrderOffer(order, now) ||
       this.queueEntries.get(driverId)?.pendingOfferOrderId !== order.id) return undefined;
     return this.advanceOrderOffer(order, now, driverId);
   }
 
-  acceptOrderOffer(orderId: string, driverId: string, now = Date.now()): Order | undefined {
+  acceptOrderOffer(orderId: string, driverId: string, now = Date.now(), expectedSessionVersion?: number): Order | undefined {
+    if (expectedSessionVersion !== undefined) this.requireCurrentRole(driverId, "driver", expectedSessionVersion);
     const order = this.orders.get(orderId);
     if (!order || order.offeredDriverId !== driverId || !hasLiveOrderOffer(order, now) ||
       !this.isValidReservedOffer(order, now)) return undefined;
     const entry = this.queueEntries.get(driverId)!;
     const updated = this.writeOrder(order, {
       driverId,
-      status: order.pickupPoint === "C" ? "en_route_to_c" : "in_transit",
+      status: order.pickupPoint === "D" ? "in_transit" : "en_route_to_c",
       offerExpiresAt: undefined,
-      seatLockExpiresAt: order.pickupPoint === "C" ? now + SEAT_LOCK_TTL_MS : undefined,
+      seatLockExpiresAt: order.pickupPoint === "D" ? undefined : now + SEAT_LOCK_TTL_MS,
     }, now);
     this.queueEntries.set(driverId, acceptQueueOffer(entry, updated));
-    return updated;
+    return updated.routeContext ? structuredClone(updated) : updated;
   }
 
   processOrderOffers(now?: number): OrderOfferChange[] {
@@ -424,22 +466,30 @@ class MemoryStore implements Store {
     return changes;
   }
 
-  transitionOrder(orderId: string, actorId: string, nextStatus: OrderStatus, expectedStatus?: OrderStatus): Order | undefined {
+  transitionOrder(orderId: string, actorId: string, nextStatus: OrderStatus, expectedStatus?: OrderStatus, expectedSessionVersion?: number): Order | undefined {
     const order = this.orders.get(orderId);
     if (!order || !canTransitionOrder(order, actorId, nextStatus, expectedStatus)) return undefined;
+    if (expectedSessionVersion !== undefined) {
+      const role = actorId === order.passengerId ? "passenger" : "driver";
+      this.requireCurrentRole(actorId, role, expectedSessionVersion);
+      if (role === "driver" && REQUIRE_DRIVER_APPROVAL && this.users.get(actorId)?.driverApprovalStatus !== "approved") {
+        throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");
+      }
+    }
     const entry = order.driverId ? this.queueEntries.get(order.driverId) : undefined;
     if (entry) this.queueEntries.set(entry.driverId, transitionQueueEntry(entry, order, nextStatus));
     if (nextStatus === "cancelled" && order.status === "searching" && order.offeredDriverId) {
       const offeredEntry = this.queueEntries.get(order.offeredDriverId);
       if (offeredEntry) this.queueEntries.set(offeredEntry.driverId, releaseQueueOffer(offeredEntry, order));
     }
-    return this.writeOrder(order, {
+    const updated = this.writeOrder(order, {
       status: nextStatus,
       ...(nextStatus === "cancelled" ? { cancelledBy: actorId } : {}),
       seatLockExpiresAt: nextStatus === "in_transit" || nextStatus === "completed" || nextStatus === "cancelled"
         ? undefined : order.seatLockExpiresAt,
       offerExpiresAt: nextStatus === "cancelled" ? undefined : order.offerExpiresAt,
     });
+    return updated.routeContext ? structuredClone(updated) : updated;
   }
 
   claimOrderForDriver(
@@ -452,6 +502,7 @@ class MemoryStore implements Store {
     const entry = this.queueEntries.get(driverId);
     if (
       !order ||
+      Boolean(order.routeContext) || order.pickupPoint === "A" || order.pickupPoint === "B" ||
       order.status !== "searching" ||
       (order.driverId && order.driverId !== driverId) ||
       (order.offeredDriverId && order.offeredDriverId !== driverId) ||
@@ -488,13 +539,14 @@ class MemoryStore implements Store {
     return [...this.orders.values()]
       .filter((order) => order.passengerId === userId || order.driverId === userId ||
         (order.offeredDriverId === userId && hasLiveOrderOffer(order, Date.now())))
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map(order => order.routeContext ? structuredClone(order) : order);
   }
 
   listOrders(): Order[] {
     return [...this.orders.values()].sort((a, b) =>
       b.createdAt.localeCompare(a.createdAt),
-    );
+    ).map(order => order.routeContext ? structuredClone(order) : order);
   }
 
   listUsers(role?: User["role"]): User[] {

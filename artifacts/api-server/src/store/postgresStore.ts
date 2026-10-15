@@ -1,11 +1,11 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
-import type { DriverRouteChoiceInput, RouteLayoutInput, Store } from "./storeContract";
+import type { DriverRouteChoiceInput, RouteLayoutInput, RouteOrderInput, Store } from "./storeContract";
 import { mutateRouteStop, nextRouteUpdatedAt, replaceRouteLayout } from "../utils/routeLayout";
 import { assertDriverRouteChoiceRoute, validateDriverRouteChoiceInput } from "../utils/driverRoute";
 import { canTransitionOrder, claimQueueEntry, hasActiveOrders, joinQueueEntry, releaseQueueEntry, transitionQueueEntry } from "./orderLifecycle";
 import { AppError } from "../utils/errors";
-import { assertRouteQueueLocation, resolveRouteQueue, routeQueueSnapshot, sameQueueLane } from "../utils/routeQueue";
+import { assertRouteQueueTelemetry, resolveRouteQueue, routeQueueSnapshot, sameQueueLane } from "../utils/routeQueue";
 import type {
   Coordinates,
   DeviceRegistration,
@@ -24,7 +24,9 @@ import type {
   UserRole,
 } from "../types/domain";
 import { OFFER_TIMEOUT_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
-import { acceptQueueOffer, assertOrderOfferPatch, assertQueueOfferPatch, hasLiveOrderOffer, orderedOfferCandidates, releaseQueueOffer, reserveQueueOffer } from "./orderOffers";
+import { acceptQueueOffer, assertLegacyOrderInput, assertOrderOfferPatch, assertQueueOfferPatch, compareOfferDrivers, hasLiveOrderOffer, orderedOfferCandidates, releaseQueueOffer, reserveQueueOffer } from "./orderOffers";
+import { buildRouteOrder } from "../utils/routeOrder";
+import { boundedInteger } from "../utils/validation";
 
 type DbModule = typeof import("@workspace/db");
 
@@ -114,12 +116,13 @@ function orderValues(order: Order) {
 }
 
 /** A reserved offer must still belong to the same eligible queue entry. */
-function queueOwnsEligibleOffer(entry: QueueEntry | undefined, order: Order, now: number): boolean {
+function queueOwnsEligibleOffer(entry: QueueEntry | undefined, order: Order, now: number, liveRoute?: RouteDefinition): boolean {
   if (!entry || entry.pendingOfferOrderId !== order.id) return false;
   return orderedOfferCandidates(
     { ...order, attemptedDriverIds: [] },
     [{ ...entry, pendingOfferOrderId: undefined, availableSeats: entry.availableSeats + order.seats }],
     now,
+    liveRoute,
   ).length > 0;
 }
 
@@ -479,7 +482,7 @@ export class PostgresStore implements Store {
       const current = asQueueEntry(currentRow as unknown as Record<string, unknown>);
       assertQueueOfferPatch(current, patch);
       if ("routeContext" in patch) throw new AppError(409, "Queue context cannot be changed", "QUEUE_BUSY");
-      if (current.routeContext && patch.lastLocation) assertRouteQueueLocation(current.routeContext, patch.lastLocation);
+      if (current.routeContext && patch.lastLocation) assertRouteQueueTelemetry(current, patch.lastLocation);
       const [row] = await tx.update(driverQueueTable).set(values)
         .where(eq(driverQueueTable.driverId, driverId)).returning();
       return row ? asQueueEntry(row as unknown as Record<string, unknown>) : undefined;
@@ -506,7 +509,7 @@ export class PostgresStore implements Store {
       eq(driverQueueTable.inFifo, true),
       or(isNull(driverQueueTable.seatLockExpiresAt), gt(driverQueueTable.seatLockExpiresAt, Date.now())),
     )).orderBy(desc(driverQueueTable.priorityLock), asc(driverQueueTable.joinedAt), asc(driverQueueTable.driverId));
-    return rows.map((row) => asQueueEntry(row as unknown as Record<string, unknown>));
+    return rows.map((row) => asQueueEntry(row as unknown as Record<string, unknown>)).sort(compareOfferDrivers);
   }
 
   async getQueuePosition(driverId: string): Promise<number | null> {
@@ -528,6 +531,7 @@ export class PostgresStore implements Store {
   }
 
   async getOrderAvailability(pickupPoint: PickupPoint, seats: number): Promise<{ available: boolean; eligibleDriverCount: number }> {
+    assertLegacyOrderInput({ pickupPoint });
     const { db, driverQueueTable, usersTable } = await this.database();
     // Availability is a read-only snapshot. Creation repeats this decision
     // under locks so concurrent passengers cannot consume the same offer slot.
@@ -546,14 +550,63 @@ export class PostgresStore implements Store {
     return { available: eligibleDriverCount > 0, eligibleDriverCount };
   }
 
+  async getRouteOrderAvailability(selection: DriverRouteChoiceInput, seats: number): Promise<{ available: boolean; eligibleDriverCount: number }> {
+    const choice = validateDriverRouteChoiceInput(selection);
+    seats = boundedInteger(seats, "seats", 1, 8);
+    const { db, driverQueueTable, usersTable, routesTable } = await this.database();
+    return db.transaction(async tx => {
+      // No queue/user row is locked by this advisory read, so taking the route
+      // SHARE lock here cannot invert the mutation order queue -> user -> route.
+      const [routeRow] = await tx.select().from(routesTable)
+        .where(eq(routesTable.id, choice.routeId)).for("share").limit(1);
+      const route = routeRow ? asRoute(routeRow as unknown as Record<string, unknown>) : undefined;
+      const details = buildRouteOrder(route, choice);
+      const rows = await tx.select({ queue: driverQueueTable }).from(driverQueueTable)
+        .innerJoin(usersTable, eq(usersTable.id, driverQueueTable.driverId)).where(and(
+          isNull(driverQueueTable.pendingOfferOrderId),
+          eq(driverQueueTable.inFifo, true), eq(driverQueueTable.status, "searching"),
+          sql`${driverQueueTable.routeContext}->>'routeId' = ${choice.routeId} AND ${driverQueueTable.routeContext}->>'direction' = ${choice.direction} AND ${driverQueueTable.routeContext}->>'routeUpdatedAt' = ${choice.expectedUpdatedAt} AND ${driverQueueTable.routeContext}->>'pitak' = ${choice.direction === "a_to_b" ? "A" : "B"}`,
+          eq(usersTable.role, "driver"),
+          REQUIRE_DRIVER_APPROVAL ? eq(usersTable.driverApprovalStatus, "approved") : undefined,
+        ));
+      const eligibleDriverCount = orderedOfferCandidates(
+        { ...details, seats }, rows.map(row => asQueueEntry(row.queue as unknown as Record<string, unknown>)), Date.now(), route,
+      ).length;
+      return { available: eligibleDriverCount > 0, eligibleDriverCount };
+    });
+  }
+
   async createOrderWithOffer(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number): Promise<Order | undefined> {
-    const { db, driverQueueTable, usersTable, ordersTable } = await this.database();
+    assertLegacyOrderInput(input);
+    return this.reserveNewOrder(input, expectedSessionVersion);
+  }
+
+  async createRouteOrderWithOffer(input: RouteOrderInput, selection: DriverRouteChoiceInput, expectedSessionVersion?: number): Promise<Order | undefined> {
+    const choice = validateDriverRouteChoiceInput(selection);
+    if (!input.pickupLocation) throw new AppError(422, "Pickup location is required", "OUTSIDE_PICKUP_GEOFENCE");
+    return this.reserveNewOrder({
+      passengerId: input.passengerId, passengerPhone: input.passengerPhone,
+      pickupLocation: structuredClone(input.pickupLocation), seats: boundedInteger(input.seats, "seats", 1, 8),
+    }, expectedSessionVersion, choice);
+  }
+
+  private async reserveNewOrder(
+    input: Omit<Order, "id" | "createdAt" | "updatedAt"> | RouteOrderInput,
+    expectedSessionVersion?: number,
+    selection?: DriverRouteChoiceInput,
+  ): Promise<Order | undefined> {
+    const { db, driverQueueTable, usersTable, ordersTable, routesTable } = await this.database();
+    const legacyInput = input as Omit<Order, "id" | "createdAt" | "updatedAt">;
     return db.transaction(async tx => {
       // This order does not exist yet. Locking queue rows before inserting its
       // new UUID cannot acquire or wait on another existing order row.
       const queueRows = await tx.select().from(driverQueueTable).where(and(
         isNull(driverQueueTable.pendingOfferOrderId),
-        input.pickupPoint === "D" ? eq(driverQueueTable.status, "in_transit") : eq(driverQueueTable.inFifo, true),
+        selection
+          ? and(eq(driverQueueTable.inFifo, true), eq(driverQueueTable.status, "searching"),
+            sql`${driverQueueTable.routeContext}->>'routeId' = ${selection.routeId} AND ${driverQueueTable.routeContext}->>'direction' = ${selection.direction} AND ${driverQueueTable.routeContext}->>'routeUpdatedAt' = ${selection.expectedUpdatedAt} AND ${driverQueueTable.routeContext}->>'pitak' = ${selection.direction === "a_to_b" ? "A" : "B"}`)
+          : and(isNull(driverQueueTable.routeContext), legacyInput.pickupPoint === "D"
+            ? eq(driverQueueTable.status, "in_transit") : eq(driverQueueTable.inFifo, true)),
       )).orderBy(asc(driverQueueTable.driverId)).for("update");
       const entries = queueRows.map(row => asQueueEntry(row as unknown as Record<string, unknown>));
       // Hold the passenger's mode/session through the insert, together with
@@ -566,19 +619,30 @@ export class PostgresStore implements Store {
         throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
       }
       if (passenger.role !== "passenger") throw new AppError(403, "passenger mode is required", "FORBIDDEN");
+      let liveRoute: RouteDefinition | undefined;
+      let orderInput = legacyInput;
+      if (selection) {
+        // Catalog writers own only the route. All existing queue/user locks
+        // precede this route SHARE lock, held through fare/offer persistence.
+        const [routeRow] = await tx.select().from(routesTable)
+          .where(eq(routesTable.id, selection.routeId)).for("share").limit(1);
+        liveRoute = routeRow ? asRoute(routeRow as unknown as Record<string, unknown>) : undefined;
+        orderInput = { ...input, ...buildRouteOrder(liveRoute, selection, input.pickupLocation), status: "searching" };
+      }
       const approvedIds = new Set(users.filter(user => user.role === "driver" &&
         (!REQUIRE_DRIVER_APPROVAL || user.driverApprovalStatus === "approved")).map(user => user.id));
       const now = Date.now();
       const candidate = orderedOfferCandidates(
-        { pickupPoint: input.pickupPoint, seats: input.seats, attemptedDriverIds: [] },
+        { ...orderInput, attemptedDriverIds: [] },
         entries.filter(entry => approvedIds.has(entry.driverId)),
         now,
+        liveRoute,
       )[0];
       if (!candidate) return undefined;
 
       const timestamp = new Date(now).toISOString();
       const order: Order = {
-        ...input,
+        ...orderInput,
         id: randomUUID(),
         status: "searching",
         driverId: undefined,
@@ -603,6 +667,7 @@ export class PostgresStore implements Store {
   }
 
   async createOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number): Promise<Order> {
+    assertLegacyOrderInput(input);
     const { db, ordersTable, usersTable } = await this.database();
     return db.transaction(async tx => {
       // The inserted UUID is new; this acquires no existing order/queue lock
@@ -661,8 +726,8 @@ export class PostgresStore implements Store {
     return this.advanceOrderOffer(orderId, now);
   }
 
-  async rejectOrderOffer(orderId: string, driverId: string, now?: number): Promise<OrderOfferChange | undefined> {
-    return this.advanceOrderOffer(orderId, now, driverId);
+  async rejectOrderOffer(orderId: string, driverId: string, now?: number, expectedSessionVersion?: number): Promise<OrderOfferChange | undefined> {
+    return this.advanceOrderOffer(orderId, now, driverId, expectedSessionVersion);
   }
 
   /** Release and select the next driver while holding one order and its candidate queue rows. */
@@ -670,8 +735,9 @@ export class PostgresStore implements Store {
     orderId: string,
     now?: number,
     rejectingDriverId?: string,
+    expectedSessionVersion?: number,
   ): Promise<OrderOfferChange | undefined> {
-    const { db, ordersTable, driverQueueTable, usersTable } = await this.database();
+    const { db, ordersTable, driverQueueTable, usersTable, routesTable } = await this.database();
     return db.transaction(async tx => {
       const [orderRow] = await tx.select().from(ordersTable)
         .where(eq(ordersTable.id, orderId)).for("update").limit(1);
@@ -685,9 +751,11 @@ export class PostgresStore implements Store {
       const queueRows = await tx.select().from(driverQueueTable).where(or(
         and(
           isNull(driverQueueTable.pendingOfferOrderId),
-          order.pickupPoint === "D"
-            ? eq(driverQueueTable.status, "in_transit")
-            : eq(driverQueueTable.inFifo, true),
+          order.routeContext
+            ? and(eq(driverQueueTable.inFifo, true), eq(driverQueueTable.status, "searching"),
+              sql`${driverQueueTable.routeContext}->>'routeId' = ${order.routeContext.routeId} AND ${driverQueueTable.routeContext}->>'direction' = ${order.routeContext.direction} AND ${driverQueueTable.routeContext}->>'routeUpdatedAt' = ${order.routeContext.routeUpdatedAt} AND ${driverQueueTable.routeContext}->>'pitak' = ${order.routeContext.pitak}`)
+            : and(isNull(driverQueueTable.routeContext), order.pickupPoint === "D"
+              ? eq(driverQueueTable.status, "in_transit") : eq(driverQueueTable.inFifo, true)),
         ),
         order.offeredDriverId ? eq(driverQueueTable.driverId, order.offeredDriverId) : undefined,
       )).orderBy(asc(driverQueueTable.driverId)).for("update");
@@ -695,21 +763,33 @@ export class PostgresStore implements Store {
       const previousEntry = entries.find(entry => entry.driverId === order.offeredDriverId);
       // A revoked driver may still have a queue row. Hold approved user rows
       // through commit so a revocation cannot race this reservation decision.
-      const approvedRows = REQUIRE_DRIVER_APPROVAL && entries.length
-        ? await tx.select({ id: usersTable.id }).from(usersTable).where(and(
+      const liveDrivers = entries.length
+        ? await tx.select().from(usersTable).where(
           inArray(usersTable.id, entries.map(entry => entry.driverId)),
-          eq(usersTable.role, "driver"),
-          eq(usersTable.driverApprovalStatus, "approved"),
-        )).orderBy(asc(usersTable.id)).for("share")
-        : undefined;
-      const approvedIds = approvedRows ? new Set(approvedRows.map(row => row.id)) : undefined;
+        ).orderBy(asc(usersTable.id)).for("share")
+        : [];
+      const approvedIds = new Set(liveDrivers.filter(driver => driver.role === "driver" &&
+        (!REQUIRE_DRIVER_APPROVAL || driver.driverApprovalStatus === "approved")).map(driver => driver.id));
+      if (rejectingDriverId !== undefined && expectedSessionVersion !== undefined) {
+        const actor = liveDrivers.find(driver => driver.id === rejectingDriverId);
+        if (!actor || actor.sessionVersion !== expectedSessionVersion) {
+          throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+        }
+        if (!approvedIds.has(rejectingDriverId)) return undefined;
+      }
+      let liveRoute: RouteDefinition | undefined;
+      if (order.routeContext) {
+        const [routeRow] = await tx.select().from(routesTable)
+          .where(eq(routesTable.id, order.routeContext.routeId)).for("share").limit(1);
+        liveRoute = routeRow ? asRoute(routeRow as unknown as Record<string, unknown>) : undefined;
+      }
       const offerTime = now ?? Date.now();
       const liveOffer = hasLiveOrderOffer(order, offerTime);
       if (rejectingDriverId !== undefined) {
         if (!liveOffer || order.offeredDriverId !== rejectingDriverId ||
           previousEntry?.pendingOfferOrderId !== order.id) return undefined;
-      } else if (liveOffer && (!approvedIds || approvedIds.has(order.offeredDriverId!)) &&
-        queueOwnsEligibleOffer(previousEntry, order, offerTime)) {
+      } else if (liveOffer && approvedIds.has(order.offeredDriverId!) &&
+        queueOwnsEligibleOffer(previousEntry, order, offerTime, liveRoute)) {
         return undefined;
       }
 
@@ -727,8 +807,8 @@ export class PostgresStore implements Store {
         ...(previousDriverId ? [previousDriverId] : []),
       ])];
       const candidate = orderedOfferCandidates({ ...order, attemptedDriverIds },
-        approvedIds ? entries.filter(entry => approvedIds.has(entry.driverId)) : entries,
-        offerTime)[0];
+        entries.filter(entry => approvedIds.has(entry.driverId)),
+        offerTime, liveRoute)[0];
       // Waiting with no available candidate is a read-only result. Notification
       // callers receive changes only when an actual lifecycle update commits.
       if (!candidate && !previousDriverId && order.offerExpiresAt === undefined) return undefined;
@@ -749,8 +829,8 @@ export class PostgresStore implements Store {
     });
   }
 
-  async acceptOrderOffer(orderId: string, driverId: string, now?: number): Promise<Order | undefined> {
-    const { db, ordersTable, driverQueueTable, usersTable } = await this.database();
+  async acceptOrderOffer(orderId: string, driverId: string, now?: number, expectedSessionVersion?: number): Promise<Order | undefined> {
+    const { db, ordersTable, driverQueueTable, usersTable, routesTable } = await this.database();
     return db.transaction(async tx => {
       const [orderRow] = await tx.select().from(ordersTable)
         .where(eq(ordersTable.id, orderId)).for("update").limit(1);
@@ -760,24 +840,28 @@ export class PostgresStore implements Store {
       const [queueRow] = await tx.select().from(driverQueueTable)
         .where(eq(driverQueueTable.driverId, driverId)).for("update").limit(1);
       const entry = queueRow ? asQueueEntry(queueRow as unknown as Record<string, unknown>) : undefined;
-      if (REQUIRE_DRIVER_APPROVAL) {
-        const [driver] = await tx.select({ id: usersTable.id }).from(usersTable).where(and(
-          eq(usersTable.id, driverId),
-          eq(usersTable.role, "driver"),
-          eq(usersTable.driverApprovalStatus, "approved"),
-        )).for("share").limit(1);
-        if (!driver) return undefined;
+      const [driver] = await tx.select().from(usersTable)
+        .where(eq(usersTable.id, driverId)).for("share").limit(1);
+      if (expectedSessionVersion !== undefined && (!driver || driver.sessionVersion !== expectedSessionVersion)) {
+        throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+      }
+      if (!driver || driver.role !== "driver" || (REQUIRE_DRIVER_APPROVAL && driver.driverApprovalStatus !== "approved")) return undefined;
+      let liveRoute: RouteDefinition | undefined;
+      if (order.routeContext) {
+        const [routeRow] = await tx.select().from(routesTable)
+          .where(eq(routesTable.id, order.routeContext.routeId)).for("share").limit(1);
+        liveRoute = routeRow ? asRoute(routeRow as unknown as Record<string, unknown>) : undefined;
       }
       const offerTime = now ?? Date.now();
-      if (!hasLiveOrderOffer(order, offerTime) || !queueOwnsEligibleOffer(entry, order, offerTime)) return undefined;
+      if (!hasLiveOrderOffer(order, offerTime) || !queueOwnsEligibleOffer(entry, order, offerTime, liveRoute)) return undefined;
 
       const updated: Order = {
         ...order,
-        status: order.pickupPoint === "C" ? "en_route_to_c" : "in_transit",
+        status: order.pickupPoint === "D" ? "in_transit" : "en_route_to_c",
         driverId,
         offeredDriverId: driverId,
         offerExpiresAt: undefined,
-        seatLockExpiresAt: order.pickupPoint === "C" ? offerTime + SEAT_LOCK_TTL_MS : undefined,
+        seatLockExpiresAt: order.pickupPoint === "D" ? undefined : offerTime + SEAT_LOCK_TTL_MS,
         updatedAt: new Date(offerTime).toISOString(),
       };
       await tx.update(driverQueueTable).set(queueValues(acceptQueueOffer(entry!, updated)))
@@ -816,8 +900,9 @@ export class PostgresStore implements Store {
     actorId: string,
     nextStatus: OrderStatus,
     expectedStatus?: OrderStatus,
+    expectedSessionVersion?: number,
   ): Promise<Order | undefined> {
-    const { db, ordersTable, driverQueueTable } = await this.database();
+    const { db, ordersTable, driverQueueTable, usersTable } = await this.database();
     return db.transaction(async (tx) => {
       // Every lifecycle operation acquires the order before any queue row.
       const [orderRow] = await tx.select().from(ordersTable).where(eq(ordersTable.id, orderId))
@@ -826,17 +911,28 @@ export class PostgresStore implements Store {
       const order = asOrder(orderRow as unknown as Record<string, unknown>);
       if (!canTransitionOrder(order, actorId, nextStatus, expectedStatus)) return undefined;
       const queueDriverId = order.driverId ?? (nextStatus === "cancelled" ? order.offeredDriverId : undefined);
+      let entry: QueueEntry | undefined;
       if (queueDriverId) {
         const [queueRow] = await tx.select().from(driverQueueTable)
           .where(eq(driverQueueTable.driverId, queueDriverId)).for("update").limit(1);
-        if (queueRow) {
-          const entry = asQueueEntry(queueRow as unknown as Record<string, unknown>);
-          const updatedEntry = order.driverId
-            ? transitionQueueEntry(entry, order, nextStatus)
-            : releaseQueueOffer(entry, order);
-          await tx.update(driverQueueTable).set(queueValues(updatedEntry))
-            .where(eq(driverQueueTable.driverId, queueDriverId));
+        entry = queueRow ? asQueueEntry(queueRow as unknown as Record<string, unknown>) : undefined;
+      }
+      if (expectedSessionVersion !== undefined) {
+        // Acquire the actor only after the order and its queue, matching every
+        // offer operation and preventing revocation from racing this transition.
+        const [actor] = await tx.select().from(usersTable).where(eq(usersTable.id, actorId)).for("share").limit(1);
+        if (!actor || actor.sessionVersion !== expectedSessionVersion) {
+          throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
         }
+        const role = actorId === order.passengerId ? "passenger" : "driver";
+        if (actor.role !== role) throw new AppError(403, `${role} mode is required`, "FORBIDDEN");
+        if (role === "driver" && REQUIRE_DRIVER_APPROVAL && actor.driverApprovalStatus !== "approved") {
+          throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");
+        }
+      }
+      if (entry && queueDriverId) {
+        const updatedEntry = order.driverId ? transitionQueueEntry(entry, order, nextStatus) : releaseQueueOffer(entry, order);
+        await tx.update(driverQueueTable).set(queueValues(updatedEntry)).where(eq(driverQueueTable.driverId, queueDriverId));
       }
       const updated: Order = {
         ...order,
@@ -876,6 +972,7 @@ export class PostgresStore implements Store {
       if (!orderRow) return undefined;
       const order = asOrder(orderRow as unknown as Record<string, unknown>);
       if (
+        order.routeContext || order.pickupPoint === "A" || order.pickupPoint === "B" ||
         order.status !== "searching" ||
         order.offerExpiresAt !== undefined ||
         (order.driverId && order.driverId !== driverId) ||

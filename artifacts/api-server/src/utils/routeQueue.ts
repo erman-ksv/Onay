@@ -41,6 +41,17 @@ export function assertRouteQueueLocation(context: RouteQueueContext, location: C
   }
 }
 
+/** An accepted trip may move away from its enrollment pitak. */
+export function assertRouteQueueTelemetry(entry: QueueEntry, location: Coordinates): void {
+  if (!isValidCoordinates(location) || location.isMocked === true) {
+    throw new AppError(422, "Valid location is required", "INVALID_COORDINATES");
+  }
+  const activeTrip = Boolean(entry.currentOrderId || entry.activeOrderIds?.length);
+  if (entry.routeContext && (entry.pendingOfferOrderId || (!activeTrip && entry.inFifo !== false))) {
+    assertRouteQueueLocation(entry.routeContext, location);
+  }
+}
+
 export function sameQueueLane(a: RouteQueueContext | undefined, b: RouteQueueContext | undefined): boolean {
   return a === undefined || b === undefined ? a === b : a.routeId === b.routeId && a.pitak === b.pitak && a.direction === b.direction;
 }
