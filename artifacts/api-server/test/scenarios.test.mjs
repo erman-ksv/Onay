@@ -9,7 +9,7 @@ const port = 41_000 + (process.pid % 1_000);
 const baseUrl = `http://127.0.0.1:${port}/api`;
 const socketUrl = `http://127.0.0.1:${port}`;
 const schema = `api_scenarios_${randomUUID().replaceAll("-", "")}`;
-const tables = ["tezjet_users", "tezjet_otp_challenges", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes"];
+const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes"];
 const { Pool } = createRequire(new URL("../../../lib/db/package.json", import.meta.url))("pg");
 const queueLocation = {
   lat: 41.3111,
@@ -104,7 +104,14 @@ async function connectSocket(token, prepare = () => {}) {
   return socket;
 }
 
+async function ageFixtureResendIntervals() {
+  // Only this suite's private schema is changed. This models returning after
+  // cooldown while preserving the actual request budget and failure blocks.
+  await adminPool.query(`UPDATE "${schema}".otp_rate_limits SET state = jsonb_set(state, '{nextAllowedAt}', '0'::jsonb) WHERE state ? 'nextAllowedAt'`);
+}
+
 async function registerUser(phoneNumber, role, fullName) {
+  await ageFixtureResendIntervals();
   const otpRequest = await request("/auth/request-otp", {
     method: "POST",
     body: {
@@ -130,6 +137,7 @@ async function registerUser(phoneNumber, role, fullName) {
 }
 
 async function loginUser(phoneNumber) {
+  await ageFixtureResendIntervals();
   const otpRequest = await request("/auth/request-otp", {
     method: "POST",
     body: { phone_number: phoneNumber, role: "passenger", locale: "ru" },

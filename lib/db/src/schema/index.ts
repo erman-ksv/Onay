@@ -40,14 +40,36 @@ export const usersTable = pgTable(
   ],
 );
 
-export const otpChallengesTable = pgTable("tezjet_otp_challenges", {
-  phoneNumber: text("phone_number").primaryKey(),
-  code: text("code").notNull(),
-  role: text("role").notNull(),
-  locale: text("locale").notNull(),
-  fullName: text("full_name"),
-  expiresAt: bigint("expires_at", { mode: "number" }).notNull(),
-});
+export const otpChallengesTable = pgTable(
+  "tezjet_otp_challenges",
+  {
+    phoneNumber: text("phone_number").primaryKey(),
+    code: text("code").notNull(),
+    role: text("role").notNull(),
+    locale: text("locale").notNull(),
+    fullName: text("full_name"),
+    expiresAt: bigint("expires_at", { mode: "number" }).notNull(),
+  },
+  (table) => [index("tezjet_otp_challenges_expiry_idx").on(table.expiresAt)],
+);
+
+/** All identities in this table are purpose-separated keyed hashes. */
+export interface OtpRateState {
+  windowStartedAt: number;
+  count: number;
+  nextAllowedAt: number;
+  blockedUntil: number;
+}
+
+export const otpRateLimitsTable = pgTable(
+  "otp_rate_limits",
+  {
+    key: text("key").primaryKey(),
+    state: jsonb("state").$type<OtpRateState>().notNull(),
+    expiresAt: bigint("expires_at", { mode: "number" }).notNull(),
+  },
+  (table) => [index("otp_rate_limits_expiry_idx").on(table.expiresAt)],
+);
 
 export const driverQueueTable = pgTable(
   "tezjet_driver_queue",

@@ -36,6 +36,13 @@
       "when": 1791979260000,
       "tag": "0004_route_queue_context",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791986400000,
+      "tag": "0005_otp_protection",
+      "breakpoints": true
     }
   ]
 }

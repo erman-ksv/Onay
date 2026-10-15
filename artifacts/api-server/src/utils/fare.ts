@@ -13,7 +13,7 @@ async function getRoute(routeId: unknown): Promise<RouteDefinition> {
   const id = typeof routeId === "string" && routeId.trim() ? routeId.trim() : "pyatak";
   const route = await store.getRoute(id);
   if (!route || !route.active) {
-    throw new AppError(404, `Route not found: ${id}`, "ROUTE_NOT_FOUND");
+    throw new AppError(404, "Route was not found", "ROUTE_NOT_FOUND");
   }
   if (route.stops.length === 0) {
     throw new AppError(409, "Route has no stops", "ROUTE_HAS_NO_STOPS");

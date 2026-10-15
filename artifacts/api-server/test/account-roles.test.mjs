@@ -14,7 +14,7 @@ const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const schema = `account_roles_${randomUUID().replaceAll("-", "")}`;
 const applicationName = `account-roles-${randomUUID()}`;
 const adminPhone = "+77779000099";
-const tables = ["tezjet_users", "tezjet_otp_challenges", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes"];
+const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes"];
 const envKeys = ["DATABASE_URL", "TEZJET_STORAGE_ADAPTER", "NODE_ENV", "SESSION_SECRET", "ADMIN_PHONE", "REQUIRE_DRIVER_APPROVAL", "PYATAK_CENTER_LAT", "PYATAK_CENTER_LNG"];
 const originalEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
 let moduleDirectory;
@@ -163,7 +163,15 @@ async function request(pathname, { token, method = "GET", body } = {}) {
   return { status: response.status, body: text ? JSON.parse(text) : undefined };
 }
 
+async function ageFixtureResendIntervals() {
+  // These role tests model a user returning after the resend interval. Keep
+  // the production limits enabled and the hourly send counts intact; the
+  // dedicated OTP suite verifies cooldown instead of waiting a minute here.
+  await database.query("UPDATE otp_rate_limits SET state = jsonb_set(state, '{nextAllowedAt}', '0'::jsonb) WHERE state ? 'nextAllowedAt'");
+}
+
 async function login(phoneNumber, role, fullName = "Registered role regression", endpoint = "/auth/verify-otp") {
+  await ageFixtureResendIntervals();
   const challenge = await request("/auth/request-otp", {
     method: "POST", body: { phone_number: phoneNumber, role, full_name: fullName, locale: "ru" },
   });
@@ -720,6 +728,7 @@ test("HTTP an OTP mode change cannot abandon the queue or revoke the still-valid
   await store.joinQueue(f.queueInput(driver));
   const before = await snapshot(store, driver.id);
   const queueBefore = structuredClone(await store.getQueueEntry(driver.id));
+  await ageFixtureResendIntervals();
   const challenge = await request("/auth/request-otp", {
     method: "POST", body: { phone_number: driver.phoneNumber, role: "passenger", locale: "ru" },
   });

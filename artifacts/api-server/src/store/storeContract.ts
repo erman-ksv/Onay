@@ -26,6 +26,15 @@ import type {
 export type MaybePromise<T> = T | Promise<T>;
 export type { OrderOfferChange } from "../types/domain";
 
+export type OtpLimitResult =
+  | { allowed: true }
+  | { allowed: false; retryAfterMs: number };
+
+export type OtpVerifyResult =
+  | { status: "verified"; challenge: OtpChallenge }
+  | { status: "invalid" }
+  | { status: "limited"; retryAfterMs: number };
+
 export interface RouteLayoutInput {
   expectedUpdatedAt: string;
   stops: Array<{
@@ -75,8 +84,16 @@ export interface Store {
   /** Change planning preference only while the live driver has no queue/order work. */
   setDriverRouteChoice(userId: string, input: DriverRouteChoiceInput | null, expectedSessionVersion: number): MaybePromise<DriverRouteChoice | null>;
 
+  /** Trusted internal fixture/seed operation; HTTP callers use the protected methods. */
   saveOtp(challenge: OtpChallenge): MaybePromise<void>;
+  /** Trusted internal consume operation; HTTP callers use the protected methods. */
   consumeOtp(phoneNumber: string, code: string): MaybePromise<OtpChallenge | undefined>;
+  /** Independently commit the client's shared request budget before validating an OTP body. */
+  takeOtpIpBudget(clientKey: string): MaybePromise<OtpLimitResult>;
+  /** Atomically enforce phone send/failure budgets and replace its challenge. */
+  saveOtpProtected(challenge: OtpChallenge): MaybePromise<OtpLimitResult>;
+  /** Consume once or commit a failed attempt while holding the same phone locks as resend. */
+  consumeOtpProtected(phoneNumber: string, code: string): MaybePromise<OtpVerifyResult>;
 
   getQueueEntry(driverId: string): MaybePromise<QueueEntry | undefined>;
   removeDriverFromFifo(driverId: string): MaybePromise<QueueEntry | undefined>;
