@@ -57,6 +57,40 @@ C seat locks and status transitions, Point D pooling, and Socket.io realtime
 events. It uses development OTP responses and does not require external
 services.
 
+## API errors and logs
+
+Errors use `{ "error": { "code": "...", "message": "..." }, "request_id": "..." }`.
+Every HTTP response receives a server-generated `X-Request-Id`; error JSON uses
+the same ID. Incoming request-ID headers are ignored. Existing business 4xx
+statuses, codes and messages are retained. Server-side failures use fixed
+messages and never expose SQL, provider response bodies, stack traces or causes.
+
+| Boundary | HTTP status | Code |
+| --- | --- | --- |
+| Invalid JSON | 400 | `INVALID_JSON` |
+| Invalid encoded route parameter | 400 | `INVALID_REQUEST_PATH` |
+| Excessive JSON/form body | 413 | `PAYLOAD_TOO_LARGE` |
+| Unsupported charset/content encoding | 415 | `UNSUPPORTED_MEDIA_TYPE` |
+| Unknown API endpoint | 404 | `NOT_FOUND` |
+| PostgreSQL uniqueness conflict | 409 | `RESOURCE_CONFLICT` |
+| PostgreSQL serialization/deadlock conflict | 409 | `REQUEST_CONFLICT` |
+| Recognized PostgreSQL connection failure | 503 | `SERVICE_UNAVAILABLE` |
+| Unexpected internal failure | 500 | `INTERNAL_SERVER_ERROR` |
+
+The common logger and HTTP logger serialize errors through the same allowlist:
+category, public code, status and a recognized SQLSTATE when available. Raw error
+messages, stacks, causes, SQL, parameters, bodies and arbitrary properties are
+excluded. Request logs retain a server request ID, method and registered route
+template; unknown paths use `unmatched`, and URLs/query strings are excluded.
+This policy also applies to Socket.IO, background dispatch and startup errors.
+Initialization failures flush the safe log and exit nonzero. Failures after a
+partial response delegate a sanitized error without writing a second JSON body.
+
+Gemini failures preserve their existing machine codes and 502/503/504 statuses.
+Upstream bodies are discarded; a timeout during body reading remains 504.
+These checks protect API error boundaries; broader privacy permissions and
+production monitoring remain separate checklist items.
+
 ## Authentication
 
 1. `POST /api/auth/request-otp`

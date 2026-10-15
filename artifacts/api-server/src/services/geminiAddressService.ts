@@ -139,17 +139,27 @@ JSON shape:
     });
 
     if (!result.ok) {
-      const body = await result.text();
+      // The provider body can contain the submitted address or credentials.
+      // Discard it without reflecting it to the client or logging it.
+      if (result.body) void result.body.cancel().catch(() => undefined);
       throw new AppError(
         502,
-        `Gemini address processing failed (${result.status}): ${body
-          .replace(/\s+/g, " ")
-          .slice(0, 240)}`,
+        "Gemini address processing is temporarily unavailable",
         "GEMINI_UPSTREAM_ERROR",
       );
     }
 
-    const payload = (await result.json()) as GeminiResponse;
+    let payload: GeminiResponse;
+    try {
+      payload = (await result.json()) as GeminiResponse;
+      if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+        throw new Error("Invalid provider response envelope");
+      }
+    } catch (error) {
+      // A timeout while reading the response body retains the timeout contract.
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      throw new AppError(502, "Gemini returned an invalid address result", "GEMINI_INVALID_RESPONSE");
+    }
     const text = payload.candidates?.[0]?.content?.parts
       ?.map((part) => part.text ?? "")
       .join("")
