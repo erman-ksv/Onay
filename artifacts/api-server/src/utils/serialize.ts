@@ -29,7 +29,11 @@ export function serializeOrder(order: Order, maskPassenger = false) {
     pickup_point: order.pickupPoint,
     pickup_location: order.pickupLocation,
     pickup_address: order.pickupAddress,
-    ...(order.routeContext ? { route_context: order.routeContext } : {}),
+    ...(order.routeContext ? {
+      route_context: order.routeContext,
+      pickup_stop_id: order.fare.pickupStop.id,
+      destination_stop_id: order.fare.destinationStop.id,
+    } : {}),
     route_stops: order.routeStops,
     fare: order.fare,
     destination: order.destination,

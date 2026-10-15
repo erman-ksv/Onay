@@ -4,6 +4,7 @@ import type {
   DriverApprovalStatus,
   DriverRouteChoice,
   DriverRouteDirection,
+  FareQuote,
   Locale,
   Order,
   OrderOfferChange,
@@ -54,6 +55,18 @@ export interface DriverRouteChoiceInput {
   routeId: string;
   direction: DriverRouteDirection;
   expectedUpdatedAt: string;
+}
+
+/** Passenger stop selectors are distinct from the driver's saved lane choice. */
+export interface RouteOrderSelectionInput extends DriverRouteChoiceInput {
+  pickupStopId?: string;
+  destinationStopId?: string;
+}
+
+export interface RouteOrderAvailability {
+  available: boolean;
+  eligibleDriverCount: number;
+  fare: FareQuote;
 }
 
 /** A passenger chooses a configured direction, never its fare or route geometry. */
@@ -108,9 +121,9 @@ export interface Store {
   getQueuePosition(driverId: string): MaybePromise<number | null>;
   getFirstEligibleDriver(seats: number): MaybePromise<QueueEntry | undefined>;
   getOrderAvailability(pickupPoint: PickupPoint, seats: number): MaybePromise<{ available: boolean; eligibleDriverCount: number }>;
-  getRouteOrderAvailability(selection: DriverRouteChoiceInput, seats: number): MaybePromise<{ available: boolean; eligibleDriverCount: number }>;
+  getRouteOrderAvailability(selection: RouteOrderSelectionInput, seats: number): MaybePromise<RouteOrderAvailability>;
   /** Derive live route/fare and reserve one matching lane atomically. */
-  createRouteOrderWithOffer(input: RouteOrderInput, selection: DriverRouteChoiceInput, expectedSessionVersion?: number): MaybePromise<Order | undefined>;
+  createRouteOrderWithOffer(input: RouteOrderInput, selection: RouteOrderSelectionInput, expectedSessionVersion?: number): MaybePromise<Order | undefined>;
 
   createOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number): MaybePromise<Order>;
   /** Create and reserve an offer atomically; unavailable requests persist no order. */

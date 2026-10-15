@@ -81,7 +81,9 @@ export function releaseQueueEntry(entry: QueueEntry, order: Order): QueueEntry {
     ...entry,
     status: remaining.length ? "in_transit" : "searching",
     priorityLock: remaining.length > 0,
-    inFifo: remaining.length === 0,
+    // An assigned driver may already have left the origin for this pickup.
+    // Cancellation and pickup expiry both require fresh queue enrollment.
+    inFifo: remaining.length === 0 && (!order.routeContext || order.fare.pickupStop.code === order.routeContext.stopCode),
     activeOrderIds: remaining,
     currentOrderId: remaining[0],
     seatLockExpiresAt: undefined,
@@ -92,8 +94,7 @@ export function releaseQueueEntry(entry: QueueEntry, order: Order): QueueEntry {
 export function transitionQueueEntry(entry: QueueEntry, order: Order, nextStatus: OrderStatus): QueueEntry {
   if (nextStatus === "completed" || nextStatus === "cancelled") {
     const released = orderHasReservedSeats(order) ? releaseQueueEntry(entry, order) : entry;
-    // A finished A↔B trip is at the other endpoint. Its old pickup enrollment
-    // must not produce another offer until the driver leaves and rejoins.
+    // A completed configured trip leaves the old origin enrollment behind.
     return order.routeContext && (nextStatus === "completed" || order.status === "in_transit")
       ? { ...released, inFifo: false }
       : released;

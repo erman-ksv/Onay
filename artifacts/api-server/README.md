@@ -330,14 +330,14 @@ administrators may inspect all lanes. The private position event includes
 `tezjet_driver_queue`; existing entries remain legacy.
 
 Configured lanes are excluded from legacy C/D availability, offers and direct
-claims. They receive configured endpoint orders through the separate API below.
+claims. They receive configured route orders through the separate API below.
 Manual configured queue status changes still return
 `ROUTE_DISPATCH_NOT_AVAILABLE`; use the accepted order's status endpoints to
 advance a trip. Clearing a choice restores legacy entry.
 
-### Configured endpoint orders A↔B
+### Configured route orders A↔B and intermediate stops
 
-This backend/API supports administrator-configured endpoint trips in both
+This backend/API supports trips between administrator-configured stops in both
 directions. Passenger authentication is required for every endpoint:
 
 - `GET /api/orders/routes` returns `{ "routes": [...] }`. Each active valid
@@ -345,7 +345,9 @@ directions. Passenger authentication is required for every endpoint:
   `pitaks: { aStopCode, bStopCode, radiusMeters }`, `currency`, and
   `pricePerStopKzt`. Draft, inactive or malformed routes are omitted.
 - `GET /api/orders/route/availability?route_id=...&direction=a_to_b&expected_updated_at=...&seats=2`
-  returns `available`, `eligible_driver_count`, and `offer_timeout_seconds`.
+  returns `available`, `eligible_driver_count`, `offer_timeout_seconds`, and
+  server-derived `fare`, including when no driver is available. Optional
+  `pickup_stop_id` and `destination_stop_id` select a section of the route.
   Send the catalog's exact `updatedAt`; directions are `a_to_b` and `b_to_a`.
   This is a snapshot check; creation reserves the live offer atomically.
 - `POST /api/orders/route` accepts only the following fields:
@@ -355,6 +357,8 @@ directions. Passenger authentication is required for every endpoint:
   "route_id": "configured-route-id",
   "direction": "a_to_b",
   "expected_updated_at": "exact-catalog-updatedAt",
+  "pickup_stop_id": "catalog-pickup-stop-id",
+  "destination_stop_id": "catalog-destination-stop-id",
   "pickup_location": { "lat": 41.3111, "lng": 69.2797, "timestamp": 1791979200000 },
   "seats": 2
 }
@@ -366,10 +370,24 @@ The optional boolean `isMocked` is checked by the existing GPS guard. Unsupporte
 fields, including caller-supplied fare, destination, route context, geometry,
 or alternate `location`/`coordinates`, are rejected before GPS is persisted.
 
-The server derives pickup A and destination B for `a_to_b`, and the reverse for
-`b_to_a`. It checks pickup against the configured origin's radius, calculates
-the endpoint fare from server stop positions and pricing, and selects a waiting
-driver from the same route revision, direction and origin pitak. Legacy drivers,
+Stop IDs come from this route's current catalog; arbitrary stop codes, names,
+prices or geometry cannot replace them. Each missing selector independently
+defaults to the corresponding endpoint in the selected direction, so existing
+A↔B requests remain valid. Pickup must precede destination in that direction.
+Both selected stops require configured coordinates; an unselected intermediate
+stop may still lack coordinates. Unknown or foreign IDs return
+`404 ROUTE_STOP_NOT_FOUND`; same/reversed stops return
+`422 INVALID_ROUTE_SEGMENT`; missing selected-stop coordinates return
+`422 ROUTE_STOP_NOT_CONFIGURED`. Invalid selector types, empty strings and
+duplicate query selectors return `400 VALIDATION_ERROR`.
+
+The server checks passenger GPS against the selected pickup stop using the
+route's configured radius. It calculates fare from the selected stops' position
+difference and the administrator's price per stop; the existing price is per
+order and is not multiplied by passenger count. Stops and fare contain the
+inclusive section in travel order. Driver selection remains in the origin pitak
+A/B queue, even for pickup at C/D. The waiting driver must be at that origin,
+in the same route revision and direction. Legacy drivers,
 other routes, opposite directions, stale configurations and active-trip drivers
 are excluded. The route definition is revalidated under a PostgreSQL lock when
 creating and reserving the order. Without an eligible driver, creation returns
@@ -378,19 +396,28 @@ HTTP 409 `ROUTE_CHANGED`; reload the catalog before retrying.
 
 Successful creation returns HTTP 201 with `order` and its reserved `offer`.
 Configured orders expose `pickup_point: "A"|"B"` and server-derived
-`route_context`; legacy orders keep their existing representation. Drivers use
+`route_context`, which identify the origin queue, plus actual
+`pickup_stop_id`, `destination_stop_id`, selected `route_stops`, and
+`fare.pickupStop` / `fare.destinationStop`. Legacy orders keep their existing
+representation. Drivers use
 the existing accept/reject endpoints, and passengers use the existing cancel
 endpoint. The existing status wire values `en_route_to_c` and `arrived_at_c`
-also mean approaching/arriving at the configured origin for A/B trips, followed
+also mean approaching/arriving at the selected pickup stop, followed
 by `in_transit` and `completed`. Acceptance keeps the reserved seats and starts
 the same seven-minute pickup seat lock as a legacy C trip. Rejection or timeout
 releases the pending reservation and dispatches the next eligible driver.
+After cancellation or seven-minute pickup expiry of an assigned intermediate
+pickup, the driver must leave and rejoin the origin queue before receiving new
+offers. Pending-offer rejection or the 60-second offer timeout keeps the original
+FIFO enrollment. The existing seven-minute pickup policy is unchanged; it does
+not calculate an ETA or extend the deadline for distant stops.
 
 Historical order fare and route snapshots remain unchanged when an
 administrator edits the catalog. This implementation covers backend/API only;
-mobile screens await the supplied designs. Intermediate/external pickup points,
-approaching-driver Smart Pickup and inferred GPS travel direction are separate
-work and are not enabled by this contract.
+mobile screens await the supplied designs. External points, approaching-driver
+Smart Pickup, in-transit pooling and segment-based seat reuse are separate work
+and are not enabled by this contract. Seats are reserved for the whole assigned
+order; disjoint route sections do not share a driver's pending offer.
 
 For an existing PostgreSQL database, run
 `pnpm --filter @workspace/db run migrate` before starting this API version.

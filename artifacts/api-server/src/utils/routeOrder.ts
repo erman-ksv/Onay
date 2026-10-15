@@ -1,9 +1,22 @@
 import type { Coordinates, Order, RouteDefinition } from "../types/domain";
-import type { DriverRouteChoiceInput } from "../store/storeContract";
+import type { RouteOrderSelectionInput } from "../store/storeContract";
 import { assertDriverRouteChoiceRoute, isDriverRouteConfigured, validateDriverRouteChoiceInput } from "./driverRoute";
 import { resolveRouteQueue } from "./routeQueue";
 import { isValidCoordinates, isWithinRadius } from "./geo";
 import { AppError } from "./errors";
+import { optionalString } from "./validation";
+
+/** Passenger stop selectors must survive every HTTP/store normalization step. */
+export function validateRouteOrderSelectionInput(selection: RouteOrderSelectionInput): RouteOrderSelectionInput {
+  const choice = validateDriverRouteChoiceInput(selection);
+  const pickupStopId = optionalString(selection.pickupStopId, "pickup_stop_id", 80);
+  const destinationStopId = optionalString(selection.destinationStopId, "destination_stop_id", 80);
+  return {
+    ...choice,
+    ...(pickupStopId === undefined ? {} : { pickupStopId }),
+    ...(destinationStopId === undefined ? {} : { destinationStopId }),
+  };
+}
 
 function validRouteOrderPricing(route: RouteDefinition): boolean {
   if (route.currency !== "KZT" || !Number.isSafeInteger(route.pricePerStopKzt) || route.pricePerStopKzt < 0) return false;
@@ -16,10 +29,10 @@ function validRouteOrderPricing(route: RouteDefinition): boolean {
 /** Call under the live route lock when persisting a configured order. */
 export function buildRouteOrder(
   route: RouteDefinition | undefined,
-  selection: DriverRouteChoiceInput,
+  selection: RouteOrderSelectionInput,
   pickupLocation?: Coordinates,
 ): Pick<Order, "pickupPoint" | "routeContext" | "routeStops" | "fare" | "destination"> {
-  const input = validateDriverRouteChoiceInput(selection);
+  const input = validateRouteOrderSelectionInput(selection);
   assertDriverRouteChoiceRoute(route, input.expectedUpdatedAt);
   if (route.id !== input.routeId) throw new AppError(409, "Route changed; reload the catalog", "ROUTE_CHANGED");
   if (!validRouteOrderPricing(route)) {
@@ -28,15 +41,29 @@ export function buildRouteOrder(
   const routeContext = resolveRouteQueue({
     routeId: input.routeId, direction: input.direction, routeUpdatedAt: input.expectedUpdatedAt,
   }, route, input)!;
-  if (pickupLocation && (!isValidCoordinates(pickupLocation) || pickupLocation.isMocked === true ||
-      !isWithinRadius(pickupLocation, routeContext.center, routeContext.radiusMeters))) {
-    throw new AppError(422, "Passenger must be at the selected pickup pitak", "OUTSIDE_PICKUP_GEOFENCE");
+  const orderedStops = input.direction === "a_to_b" ? route.stops : [...route.stops].reverse();
+  const pickupIndex = input.pickupStopId === undefined ? 0 : orderedStops.findIndex(stop => stop.id === input.pickupStopId);
+  const destinationIndex = input.destinationStopId === undefined ? orderedStops.length - 1 : orderedStops.findIndex(stop => stop.id === input.destinationStopId);
+  if (pickupIndex < 0 || destinationIndex < 0) {
+    throw new AppError(404, "Selected stop was not found in this route", "ROUTE_STOP_NOT_FOUND");
   }
-  const stops = structuredClone(input.direction === "a_to_b" ? route.stops : [...route.stops].reverse());
+  if (pickupIndex >= destinationIndex) {
+    throw new AppError(422, "Pickup must precede destination in the selected direction", "INVALID_ROUTE_SEGMENT");
+  }
+  const stops = structuredClone(orderedStops.slice(pickupIndex, destinationIndex + 1));
   const pickupStop = stops[0]!;
   const destinationStop = stops[stops.length - 1]!;
+  if (!pickupStop.location || !isValidCoordinates(pickupStop.location) ||
+      !destinationStop.location || !isValidCoordinates(destinationStop.location)) {
+    throw new AppError(422, "Selected stops require administrator-configured coordinates", "ROUTE_STOP_NOT_CONFIGURED");
+  }
+  if (pickupLocation && (!isValidCoordinates(pickupLocation) || pickupLocation.isMocked === true ||
+      !isWithinRadius(pickupLocation, pickupStop.location, routeContext.radiusMeters))) {
+    throw new AppError(422, "Passenger must be at the selected pickup stop", "OUTSIDE_PICKUP_GEOFENCE");
+  }
   const distanceStops = Math.max(1, Math.ceil(Math.abs(destinationStop.position - pickupStop.position)));
   return {
+    // Dispatch stays in the origin pitak's lane; the fare owns the actual stops.
     pickupPoint: routeContext.pitak,
     routeContext,
     routeStops: stops,

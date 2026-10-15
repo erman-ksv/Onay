@@ -112,6 +112,9 @@ function assertError(result, status, code) {
   assert.equal(result.status, status, JSON.stringify(result.body));
   if (code) assert.equal(result.body?.error?.code, code, JSON.stringify(result.body));
 }
+function availabilityState({ available, eligibleDriverCount }) {
+  return { available, eligibleDriverCount };
+}
 async function request(pathname, { token, method = "GET", body } = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
     method,
@@ -140,11 +143,11 @@ async function fixture(t, adapter = store) {
     const token = production.createAccessToken({ sub: user.id, role: user.role, locale: user.locale, sessionVersion: user.sessionVersion, sessionId: randomUUID() });
     return { user: structuredClone(user), token };
   };
-  const configured = async (patch = {}) => {
+  const configured = async (patch = {}, stops = draftStops()) => {
     const id = `route-order-${randomUUID()}`;
     routes.push(id);
     const empty = await adapter.createRoute({ id, name: "Админский маршрут A↔B", pricePerStopKzt: 735, active: true, ...patch });
-    return adapter.updateRouteLayout(empty.id, { expectedUpdatedAt: empty.updatedAt, stops: draftStops(), pitaks });
+    return adapter.updateRouteLayout(empty.id, { expectedUpdatedAt: empty.updatedAt, stops, pitaks });
   };
   const enqueue = async (route, direction = "a_to_b", seats = 4, joinedAt = 1) => {
     const driver = await createUser();
@@ -293,22 +296,22 @@ test("both adapters keep opposite directions, other routes, legacy queues and in
     await f.enqueue(other, "a_to_b", 8, 0);
     await f.legacyDriver(8);
     const small = await f.enqueue(route, "a_to_b", 1, 0);
-    assert.deepEqual(await adapter.getRouteOrderAvailability(choiceInput(route), 2), { available: false, eligibleDriverCount: 0 });
+    assert.deepEqual(availabilityState(await adapter.getRouteOrderAvailability(choiceInput(route), 2)), { available: false, eligibleDriverCount: 0 });
     assert.equal(await createStored(f, passenger, route), undefined);
     assert.deepEqual(await adapter.listOrdersForUser(passenger.user.id), [], "Unavailable requests must not persist searching orders.");
     await assertIdle(adapter, small, 1);
     const correct = await f.enqueue(route, "a_to_b", 8, 100);
-    assert.deepEqual(await adapter.getRouteOrderAvailability(choiceInput(route), 8), { available: true, eligibleDriverCount: 1 });
+    assert.deepEqual(availabilityState(await adapter.getRouteOrderAvailability(choiceInput(route), 8)), { available: true, eligibleDriverCount: 1 });
     const order = await createStored(f, passenger, route, "a_to_b", 8);
     assert.equal(order.offeredDriverId, correct.user.id);
     await assertPending(adapter, correct, order, 8);
-    assert.deepEqual(await adapter.getRouteOrderAvailability(choiceInput(route), 1), { available: true, eligibleDriverCount: 1 },
+    assert.deepEqual(availabilityState(await adapter.getRouteOrderAvailability(choiceInput(route), 1)), { available: true, eligibleDriverCount: 1 },
       "The separate one-seat driver remains eligible after another driver reserves an eight-seat offer.");
     const smallOrder = await createStored(f, passenger, route, "a_to_b", 1);
     assert.equal(smallOrder.offeredDriverId, small.user.id);
     await assertPending(adapter, small, smallOrder, 1);
     await assertPending(adapter, correct, order, 8);
-    assert.deepEqual(await adapter.getRouteOrderAvailability(choiceInput(route), 1), { available: false, eligibleDriverCount: 0 },
+    assert.deepEqual(availabilityState(await adapter.getRouteOrderAvailability(choiceInput(route), 1)), { available: false, eligibleDriverCount: 0 },
       "Neither driver may own two simultaneous pending offers.");
   }
 });
@@ -425,7 +428,7 @@ test("both adapters recheck live admin versions and release a stale pending offe
     const released = await adapter.dispatchOrderOffer(offered.id);
     assert.equal(released.previousDriverId, driver.user.id); assert.equal(released.order.offeredDriverId, undefined);
     assert.equal(released.order.status, "searching"); await assertIdle(adapter, driver);
-    assert.deepEqual(await adapter.getRouteOrderAvailability(choiceInput(changed), 2), { available: false, eligibleDriverCount: 0 }, "An old queue snapshot cannot receive a current-version order.");
+    assert.deepEqual(availabilityState(await adapter.getRouteOrderAvailability(choiceInput(changed), 2)), { available: false, eligibleDriverCount: 0 }, "An old queue snapshot cannot receive a current-version order.");
     await adapter.leaveQueue(driver.user.id);
     const fresh = await f.enqueue(changed);
     const acceptedOffer = await createStored(f, passenger, changed);
@@ -583,7 +586,7 @@ test("real PostgreSQL overlapping configured creations reserve one offer slot an
   const orders = await otherStore.listOrdersForUser(passenger.user.id);
   assert.deepEqual(orders.map(order => order.id), [winners[0].id], "The losing transaction must not insert a stranded waiting order.");
   await assertPending(otherStore, driver, winners[0]);
-  assert.deepEqual(await otherStore.getRouteOrderAvailability(choiceInput(route), 1), { available: false, eligibleDriverCount: 0 });
+  assert.deepEqual(availabilityState(await otherStore.getRouteOrderAvailability(choiceInput(route), 1)), { available: false, eligibleDriverCount: 0 });
 });
 
 test("real PostgreSQL admin update ordered before configured HTTP creation invalidates its cached route version without a seat debit", { timeout: 20_000 }, async t => {
@@ -728,5 +731,370 @@ test("HTTP pending configured offers keep the pickup geofence, and both adapters
     const free = await createStored(zero, rider, freeRoute);
     assert.equal(free.fare.pricePerStopKzt, 0); assert.equal(free.fare.totalKzt, 0);
     await assertPending(adapter, available, free);
+  }
+});
+
+function intermediateStops() {
+  return [
+    { code: "A", name: "Админский питак A", location: { lat: 42.9, lng: 71.3 } },
+    { code: "C", name: "Админская остановка C", location: { lat: 42.91, lng: 71.34 } },
+    { code: "D", name: "Админская остановка D", location: { lat: 42.925, lng: 71.38 } },
+    { code: "B", name: "Админский питак B", location: { lat: 42.94, lng: 71.43 } },
+  ];
+}
+
+function stop(route, code) {
+  const result = route.stops.find(value => value.code === code);
+  assert.ok(result, `Fixture stop ${code} must exist`);
+  return result;
+}
+
+function atStop(route, code) {
+  return { ...stop(route, code).location, timestamp: Date.now() };
+}
+
+function segmentChoice(route, direction, pickup, destination) {
+  return {
+    ...choiceInput(route, direction),
+    ...(pickup === undefined ? {} : { pickupStopId: stop(route, pickup).id }),
+    ...(destination === undefined ? {} : { destinationStopId: stop(route, destination).id }),
+  };
+}
+
+function segmentFields(route, pickup, destination) {
+  return {
+    ...(pickup === undefined ? {} : { pickup_stop_id: stop(route, pickup).id }),
+    ...(destination === undefined ? {} : { destination_stop_id: stop(route, destination).id }),
+  };
+}
+
+function segmentAvailability(passenger, route, direction, pickup, destination, extra = {}) {
+  return availabilityHttp(passenger, route, direction, 2, { ...segmentFields(route, pickup, destination), ...extra });
+}
+
+function segmentCreate(passenger, route, direction, pickup, destination, extra = {}) {
+  const pickupCode = pickup ?? (direction === "a_to_b" ? "A" : "B");
+  return createHttp(passenger, route, direction, 2, {
+    ...segmentFields(route, pickup, destination), pickup_location: atStop(route, pickupCode), ...extra,
+  });
+}
+
+function segmentStored(f, passenger, route, direction, pickup, destination, adapter = f.adapter) {
+  return adapter.createRouteOrderWithOffer({
+    passengerId: passenger.user.id, passengerPhone: passenger.user.phoneNumber,
+    pickupLocation: atStop(route, pickup ?? (direction === "a_to_b" ? "A" : "B")), seats: 2,
+  }, segmentChoice(route, direction, pickup, destination), passenger.user.sessionVersion);
+}
+
+function assertSegment(fare, route, direction, pickupCode, destinationCode) {
+  const pickup = stop(route, pickupCode), destination = stop(route, destinationCode);
+  const ordered = direction === "a_to_b" ? route.stops : [...route.stops].reverse();
+  const from = ordered.findIndex(value => value.id === pickup.id), to = ordered.findIndex(value => value.id === destination.id);
+  assert.ok(from < to);
+  assert.deepEqual(fare.pickupStop, pickup);
+  assert.deepEqual(fare.destinationStop, destination);
+  assert.deepEqual(fare.stops, ordered.slice(from, to + 1));
+  assert.equal(fare.pickupPosition, pickup.position);
+  assert.equal(fare.destinationPosition, destination.position);
+  assert.equal(fare.distanceStops, Math.abs(destination.position - pickup.position));
+  assert.equal(fare.pricePerStopKzt, route.pricePerStopKzt);
+  assert.equal(fare.totalKzt, fare.distanceStops * route.pricePerStopKzt);
+  assert.equal(fare.routeId, route.id);
+  assert.equal(fare.currency, "KZT");
+}
+
+test("HTTP configured subsegments in both directions derive their stops and fare while reserving the origin lane", async t => {
+  for (const [direction, pickup, destination] of [
+    ["a_to_b", "A", "C"], ["a_to_b", "D", "B"], ["a_to_b", "C", "D"],
+    ["b_to_a", "C", "A"], ["b_to_a", "B", "D"], ["b_to_a", "D", "C"],
+  ]) {
+    await t.test(`${pickup}→${destination}`, async child => {
+      const f = await fixture(child), route = await f.configured({}, intermediateStops());
+      const passenger = await f.createUser("passenger"), driver = await f.enqueue(route, direction);
+      const availability = await segmentAvailability(passenger, route, direction, pickup, destination);
+      assert.equal(availability.status, 200, JSON.stringify(availability.body));
+      assert.equal(availability.body.available, true);
+      assert.equal(availability.body.eligible_driver_count, 1);
+      assertSegment(availability.body.fare, route, direction, pickup, destination);
+      const result = await segmentCreate(passenger, route, direction, pickup, destination);
+      assert.equal(result.status, 201, JSON.stringify(result.body));
+      const order = result.body.order;
+      assertSegment(order.fare, route, direction, pickup, destination);
+      assert.deepEqual(order.route_stops, order.fare.stops);
+      assert.equal(order.destination, stop(route, destination).name);
+      assert.equal(order.pickup_stop_id, stop(route, pickup).id);
+      assert.equal(order.destination_stop_id, stop(route, destination).id);
+      assert.equal(order.pickup_point, direction === "a_to_b" ? "A" : "B");
+      assert.equal(order.route_context.pitak, order.pickup_point);
+      assert.deepEqual(order.route_context.center, { ...at(route, direction), timestamp: 0 });
+      assert.equal(order.offered_driver_id, driver.user.id);
+      const durable = await otherStore.getOrder(order.id);
+      assert.deepEqual(durable.fare, order.fare);
+      await assertPending(otherStore, driver, durable);
+      assert.deepEqual((await request(`/orders/${order.id}`, { token: passenger.token })).body.order, order);
+    });
+  }
+});
+
+test("HTTP omitted stop selectors default independently and unavailable subsegments still return the server fare", async t => {
+  for (const [direction, pickup, destination, expectedPickup, expectedDestination] of [
+    ["a_to_b", "C", undefined, "C", "B"], ["a_to_b", undefined, "D", "A", "D"],
+    ["b_to_a", "D", undefined, "D", "A"], ["b_to_a", undefined, "C", "B", "C"],
+  ]) {
+    const f = await fixture(t), route = await f.configured({}, intermediateStops()), passenger = await f.createUser("passenger");
+    const unavailable = await segmentAvailability(passenger, route, direction, pickup, destination);
+    assert.equal(unavailable.status, 200, JSON.stringify(unavailable.body));
+    assert.equal(unavailable.body.available, false);
+    assert.equal(unavailable.body.eligible_driver_count, 0);
+    assertSegment(unavailable.body.fare, route, direction, expectedPickup, expectedDestination);
+    assertError(await segmentCreate(passenger, route, direction, pickup, destination), 409, "NO_DRIVERS");
+    assert.deepEqual(await otherStore.listOrdersForUser(passenger.user.id), []);
+    const driver = await f.enqueue(route, direction);
+    const created = await segmentCreate(passenger, route, direction, pickup, destination);
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    assertSegment(created.body.order.fare, route, direction, expectedPickup, expectedDestination);
+    await assertPending(otherStore, driver, await store.getOrder(created.body.order.id));
+  }
+});
+
+test("HTTP availability and creation reject unknown, foreign, reversed, same, and malformed stop selectors without reservations", async t => {
+  const f = await fixture(t), route = await f.configured({}, intermediateStops()), otherRoute = await f.configured({}, intermediateStops());
+  const passenger = await f.createUser("passenger"), driver = await f.enqueue(route);
+  const valid = segmentFields(route, "C", "D");
+  const cases = [
+    [{ pickup_stop_id: `unknown-${randomUUID()}` }, 404, "ROUTE_STOP_NOT_FOUND"],
+    [{ destination_stop_id: stop(otherRoute, "D").id }, 404, "ROUTE_STOP_NOT_FOUND"],
+    [{ pickup_stop_id: stop(route, "D").id, destination_stop_id: stop(route, "C").id }, 422, "INVALID_ROUTE_SEGMENT"],
+    [{ destination_stop_id: stop(route, "C").id }, 422, "INVALID_ROUTE_SEGMENT"],
+    [{ pickup_stop_id: "" }, 400, "VALIDATION_ERROR"],
+    [{ destination_stop_id: "   " }, 400, "VALIDATION_ERROR"],
+  ];
+  for (const [extra, status, code] of cases) {
+    const fields = { ...valid, ...extra };
+    assertError(await availabilityHttp(passenger, route, "a_to_b", 2, fields), status, code);
+    assertError(await createHttp(passenger, route, "a_to_b", 2, { ...fields, pickup_location: atStop(route, "C") }), status, code);
+  }
+  for (const value of [null, 17, [], {}]) {
+    assertError(await segmentCreate(passenger, route, "a_to_b", "C", "D", { pickup_stop_id: value }), 400, "VALIDATION_ERROR");
+  }
+  const query = new URLSearchParams({ ...selection(route), ...valid, seats: "2" });
+  query.append("pickup_stop_id", stop(route, "A").id);
+  assertError(await request(`/orders/route/availability?${query}`, { token: passenger.token }), 400, "VALIDATION_ERROR");
+  assertError(await segmentAvailability(passenger, route, "b_to_a", "C", "D"), 422, "INVALID_ROUTE_SEGMENT");
+  assertError(await segmentCreate(passenger, route, "b_to_a", "C", "D"), 422, "INVALID_ROUTE_SEGMENT");
+  assert.deepEqual(await otherStore.listOrdersForUser(passenger.user.id), []);
+  await assertIdle(otherStore, driver);
+});
+
+test("selected pickup and destination require configured coordinates while a pass-through stop may omit them", async t => {
+  const f = await fixture(t), stops = intermediateStops();
+  delete stops[1].location;
+  const route = await f.configured({}, stops), passenger = await f.createUser("passenger"), driver = await f.enqueue(route);
+  for (const [pickup, destination] of [["C", "D"], ["A", "C"]]) {
+    assertError(await segmentAvailability(passenger, route, "a_to_b", pickup, destination), 422, "ROUTE_STOP_NOT_CONFIGURED");
+    assertError(await segmentCreate(passenger, route, "a_to_b", pickup, destination, { pickup_location: atStop(route, "A") }), 422, "ROUTE_STOP_NOT_CONFIGURED");
+    await assertIdle(otherStore, driver);
+  }
+  const through = await segmentCreate(passenger, route, "a_to_b", "A", "D");
+  assert.equal(through.status, 201, JSON.stringify(through.body));
+  assert.deepEqual(through.body.order.route_stops.map(value => value.code), ["A", "C", "D"]);
+  assertSegment(through.body.order.fare, route, "a_to_b", "A", "D");
+});
+
+test("both adapters share strict origin FIFO across different subsegments and exclude opposite, foreign, and legacy lanes", async t => {
+  for (const adapter of [store, new production.MemoryStore()]) {
+    await adapter.initialize();
+    const f = await fixture(t, adapter), route = await f.configured({}, intermediateStops()), otherRoute = await f.configured({}, intermediateStops());
+    const passenger = await f.createUser("passenger");
+    const first = await f.enqueue(route, "a_to_b", 4, 1), second = await f.enqueue(route, "a_to_b", 4, 2);
+    await adapter.updateQueueEntry(second.user.id, { priorityLock: true });
+    const opposite = await f.enqueue(route, "b_to_a", 4, 0), foreign = await f.enqueue(otherRoute, "a_to_b", 4, 0), legacy = await f.legacyDriver();
+    const order = await segmentStored(f, passenger, route, "a_to_b", "C", "D");
+    assert.equal(order.offeredDriverId, first.user.id);
+    await assertPending(adapter, first, order);
+    const nextSegment = await segmentStored(f, passenger, route, "a_to_b", "D", "B");
+    assert.equal(nextSegment.offeredDriverId, second.user.id, "Disjoint segments still obey the one-offer-per-driver reservation.");
+    await assertPending(adapter, second, nextSegment);
+    const unavailable = await adapter.getRouteOrderAvailability(segmentChoice(route, "a_to_b", "A", "C"), 2);
+    assert.equal(unavailable.available, false);
+    assert.equal(unavailable.eligibleDriverCount, 0);
+    await assertIdle(adapter, opposite); await assertIdle(adapter, foreign); await assertIdle(adapter, legacy);
+  }
+});
+
+test("HTTP passenger pickup GPS uses the selected stop while pending driver GPS remains at the origin pitak", async t => {
+  const f = await fixture(t), route = await f.configured({}, intermediateStops());
+  const passenger = await f.createUser("passenger"), driver = await f.enqueue(route);
+  for (const pickupLocation of [atStop(route, "A"), atStop(route, "D"), { ...atStop(route, "C"), isMocked: true }]) {
+    const rejectedPassenger = await f.createUser("passenger");
+    assertError(await segmentCreate(rejectedPassenger, route, "a_to_b", "C", "D", { pickup_location: pickupLocation }), 422);
+    assert.deepEqual(await otherStore.listOrdersForUser(rejectedPassenger.user.id), []);
+    await assertIdle(otherStore, driver);
+  }
+  const created = await segmentCreate(passenger, route, "a_to_b", "C", "D");
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  assertError(await request("/queue/location", { token: driver.token, method: "PATCH", body: { location: atStop(route, "C") } }), 422, "OUTSIDE_QUEUE_GEOFENCE");
+  await assertPending(otherStore, driver, await store.getOrder(created.body.order.id));
+});
+
+test("configured intermediate D keeps the normal pickup lock and cancellation requires fresh origin enrollment", async t => {
+  const f = await fixture(t), route = await f.configured({}, intermediateStops()), passenger = await f.createUser("passenger"), driver = await f.enqueue(route);
+  const created = await segmentCreate(passenger, route, "a_to_b", "D", "B");
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const id = created.body.order.id, accepted = await request(`/orders/${id}/accept`, { token: driver.token, method: "POST" });
+  assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+  assert.equal(accepted.body.order.status, "en_route_to_c", "Configured D is not the legacy in-transit Point D pooling lane.");
+  assert.equal(accepted.body.order.pickup_point, "A");
+  assert.equal(accepted.body.order.fare.pickupStop.code, "D");
+  assert.equal(accepted.body.seat_lock_minutes, 7);
+  assert.equal(accepted.body.order.seat_lock_expires_at - Date.parse(accepted.body.order.updated_at), 420_000);
+  assert.equal((await otherStore.getQueueEntry(driver.user.id)).availableSeats, 2, "Acceptance consumes the existing reservation without a second debit.");
+  const cancelled = await request(`/orders/${id}/cancel`, { token: passenger.token, method: "POST" });
+  assert.equal(cancelled.status, 200, JSON.stringify(cancelled.body));
+  await assertIdle(otherStore, driver, 4, false);
+  await assertFreshEnrollmentRequired(store, driver);
+  assert.equal((await segmentAvailability(passenger, route, "a_to_b", "A", "C")).body.available, false);
+  assertError(await request(`/orders/${id}/cancel`, { token: passenger.token, method: "POST" }), 409);
+  await assertIdle(otherStore, driver, 4, false);
+});
+
+test("both adapters advance subsegment rejection and timeout within the lane and release accepted seats exactly once", async t => {
+  for (const adapter of [store, new production.MemoryStore()]) {
+    await adapter.initialize();
+    for (const action of ["reject", "timeout"]) {
+      const f = await fixture(t, adapter), route = await f.configured({}, intermediateStops()), passenger = await f.createUser("passenger");
+      const first = await f.enqueue(route, "a_to_b", 4, 1), second = await f.enqueue(route, "a_to_b", 4, 2);
+      const order = await segmentStored(f, passenger, route, "a_to_b", "C", "D");
+      const moved = action === "reject"
+        ? await adapter.rejectOrderOffer(order.id, first.user.id)
+        : await adapter.dispatchOrderOffer(order.id, order.offerExpiresAt);
+      assert.equal(moved.order.offeredDriverId, second.user.id);
+      assertSegment(moved.order.fare, route, "a_to_b", "C", "D");
+      await assertIdle(adapter, first); await assertPending(adapter, second, moved.order);
+      assert.equal(await adapter.acceptOrderOffer(order.id, first.user.id), undefined);
+      const accepted = await adapter.acceptOrderOffer(order.id, second.user.id);
+      assert.equal(accepted.status, "en_route_to_c");
+      assert.equal((await adapter.getQueueEntry(second.user.id)).availableSeats, 2);
+      for (const status of ["arrived_at_c", "in_transit", "completed"]) assert.equal((await adapter.transitionOrder(order.id, second.user.id, status)).status, status);
+      await assertIdle(adapter, second, 4, false);
+      assert.equal(await adapter.transitionOrder(order.id, second.user.id, "completed"), undefined);
+      await assertIdle(adapter, second, 4, false);
+    }
+  }
+});
+
+test("both adapters invalidate pending edited stop selections but accepted subsegments retain their immutable fare and stops", async t => {
+  for (const adapter of [store, new production.MemoryStore()]) {
+    await adapter.initialize();
+    const f = await fixture(t, adapter), route = await f.configured({}, intermediateStops()), passenger = await f.createUser("passenger"), driver = await f.enqueue(route);
+    const offered = await segmentStored(f, passenger, route, "a_to_b", "C", "D");
+    const editedStops = editStops(route).map(value => value.code === "C" ? { ...value, name: "Новая остановка C", location: { lat: 42.912, lng: 71.342 } } : value);
+    const changed = await adapter.updateRouteLayout(route.id, { expectedUpdatedAt: route.updatedAt, stops: editedStops, pitaks });
+    await assert.rejects(async () => adapter.getRouteOrderAvailability(segmentChoice(route, "a_to_b", "C", "D"), 2), error => error.code === "ROUTE_CHANGED");
+    assert.equal(await adapter.acceptOrderOffer(offered.id, driver.user.id), undefined);
+    const released = await adapter.dispatchOrderOffer(offered.id);
+    assert.equal(released.order.offeredDriverId, undefined); await assertIdle(adapter, driver);
+    await adapter.leaveQueue(driver.user.id);
+    const fresh = await f.enqueue(changed), newOffer = await segmentStored(f, passenger, changed, "a_to_b", "C", "D");
+    const accepted = await adapter.acceptOrderOffer(newOffer.id, fresh.user.id), frozen = structuredClone(accepted);
+    const deletedPickup = editStops(changed).filter(value => value.code !== "C");
+    await adapter.updateRouteLayout(route.id, { expectedUpdatedAt: changed.updatedAt, stops: deletedPickup, pitaks });
+    for (const status of ["arrived_at_c", "in_transit", "completed"]) {
+      const progressed = await adapter.transitionOrder(accepted.id, fresh.user.id, status);
+      assert.equal(progressed.status, status);
+      assert.deepEqual(progressed.fare, frozen.fare);
+      assert.deepEqual(progressed.routeStops, frozen.routeStops);
+      assert.deepEqual(progressed.routeContext, frozen.routeContext);
+    }
+    await assertIdle(adapter, fresh, 4, false);
+  }
+});
+
+test("both adapters expire an intermediate pickup lock once and require fresh origin enrollment before another offer", async t => {
+  for (const adapter of [store, new production.MemoryStore()]) {
+    await adapter.initialize();
+    const f = await fixture(t, adapter), route = await f.configured({}, intermediateStops()), passenger = await f.createUser("passenger"), driver = await f.enqueue(route);
+    const offered = await segmentStored(f, passenger, route, "a_to_b", "D", "B");
+    const accepted = await adapter.acceptOrderOffer(offered.id, driver.user.id, Date.now() - 420_001);
+    assert.equal(accepted.status, "en_route_to_c");
+    assert.ok(accepted.seatLockExpiresAt < Date.now());
+    await adapter.clearExpiredSeatLocks();
+    const reopened = await adapter.getOrder(offered.id);
+    assert.equal(reopened.status, "searching");
+    assert.equal(reopened.driverId, undefined);
+    assert.equal(reopened.offeredDriverId, undefined);
+    assert.equal(reopened.seatLockExpiresAt, undefined);
+    assertSegment(reopened.fare, route, "a_to_b", "D", "B");
+    await assertIdle(adapter, driver, 4, false);
+    await assertFreshEnrollmentRequired(adapter, driver);
+    await adapter.clearExpiredSeatLocks();
+    await assertIdle(adapter, driver, 4, false);
+    const unavailable = await adapter.getRouteOrderAvailability(segmentChoice(route, "a_to_b", "A", "C"), 2);
+    assert.equal(unavailable.available, false);
+  }
+});
+
+test("real PostgreSQL concurrent disjoint subsegments share one driver offer slot without overselling or stranded orders", { timeout: 15_000 }, async t => {
+  const f = await fixture(t), route = await f.configured({}, intermediateStops()), passenger = await f.createUser("passenger"), driver = await f.enqueue(route);
+  const results = await overlapping("tezjet_driver_queue", "driver_id", driver.user.id, [
+    () => segmentStored(f, passenger, route, "a_to_b", "A", "C", otherStore),
+    () => segmentStored(f, passenger, route, "a_to_b", "D", "B"),
+  ]);
+  for (const result of results) if (result.error) throw result.error;
+  const winners = results.map(result => result.value).filter(Boolean);
+  assert.equal(winners.length, 1);
+  assert.deepEqual((await otherStore.listOrdersForUser(passenger.user.id)).map(value => value.id), [winners[0].id]);
+  await assertPending(otherStore, driver, winners[0]);
+});
+
+test("real PostgreSQL stop removal ordered before HTTP subsegment creation rejects the stale selection without reserving seats", { timeout: 20_000 }, async t => {
+  const f = await fixture(t), route = await f.configured({}, intermediateStops()), passenger = await f.createUser("passenger"), driver = await f.enqueue(route), admin = await f.createUser("admin");
+  const results = await overlapping("tezjet_routes", "id", route.id, [
+    () => request(`/admin/routes/${route.id}/layout`, { token: admin.token, method: "PUT", body: {
+      expected_updated_at: route.updatedAt, stops: editStops(route).filter(value => value.code !== "C"),
+      pitaks: { a_stop_code: pitaks.aStopCode, b_stop_code: pitaks.bStopCode, radius_meters: pitaks.radiusMeters },
+    } }),
+    () => segmentCreate(passenger, route, "a_to_b", "C", "D"),
+  ]);
+  for (const result of results) if (result.error) throw result.error;
+  assert.equal(results[0].value.status, 200, JSON.stringify(results[0].value.body));
+  assertError(results[1].value, 409, "ROUTE_CHANGED");
+  assert.deepEqual(await otherStore.listOrdersForUser(passenger.user.id), []);
+  await assertIdle(otherStore, driver);
+});
+
+test("real HTTP intermediate creation and acceptance recheck revoked sessions after observed PostgreSQL locks", { timeout: 20_000 }, async t => {
+  const f = await fixture(t), route = await f.configured({}, intermediateStops()), passenger = await f.createUser("passenger"), driver = await f.enqueue(route);
+  const blocker = await adminPool.connect(); let pending;
+  try {
+    await blocker.query("BEGIN");
+    await blocker.query(`SELECT id FROM "${schema}".tezjet_users WHERE id = $1 FOR UPDATE`, [passenger.user.id]);
+    pending = segmentCreate(passenger, route, "a_to_b", "C", "D");
+    await waitForBlockedTransactions(1);
+    await blocker.query(`UPDATE "${schema}".tezjet_users SET session_version = session_version + 1 WHERE id = $1`, [passenger.user.id]);
+    await blocker.query("COMMIT");
+    assertError(await pending, 401, "UNAUTHORIZED");
+    assert.deepEqual(await otherStore.listOrdersForUser(passenger.user.id), []);
+    await assertIdle(otherStore, driver);
+    const livePassenger = await otherStore.getUser(passenger.user.id);
+    const created = await segmentCreate({ ...passenger, user: livePassenger, token: freshToken(livePassenger) }, route, "a_to_b", "C", "D");
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const id = created.body.order.id, canonical = await otherStore.getOrder(id), queue = await otherStore.getQueueEntry(driver.user.id);
+    await blocker.query("BEGIN");
+    await blocker.query(`SELECT id FROM "${schema}".tezjet_orders WHERE id = $1 FOR UPDATE`, [id]);
+    pending = request(`/orders/${id}/accept`, { token: driver.token, method: "POST" });
+    await waitForBlockedTransactions(1);
+    const liveDriver = await otherStore.invalidateSessions(driver.user.id);
+    await blocker.query("COMMIT");
+    assertError(await pending, 401, "UNAUTHORIZED");
+    assert.deepEqual(await otherStore.getOrder(id), canonical);
+    assert.deepEqual(await otherStore.getQueueEntry(driver.user.id), queue);
+    const accepted = await request(`/orders/${id}/accept`, { token: freshToken(liveDriver), method: "POST" });
+    assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+    assertSegment(accepted.body.order.fare, route, "a_to_b", "C", "D");
+    assert.equal((await otherStore.getQueueEntry(driver.user.id)).availableSeats, 2);
+  } finally {
+    await blocker.query("ROLLBACK"); blocker.release();
+    if (pending) await pending;
   }
 });

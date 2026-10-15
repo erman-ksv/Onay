@@ -12,9 +12,10 @@ import { calculateRouteFare, parseRouteStopCodes } from "../utils/fare";
 import { boundedInteger, optionalString, pickEnum, requiredString } from "../utils/validation";
 import { normalizeNaturalLanguageAddress } from "../services/geminiAddressService";
 import { processOrderDispatch, publishOrderOfferChanges } from "../services/orderDispatchService";
-import type { DriverRouteChoiceInput } from "../store/storeContract";
+import type { RouteOrderSelectionInput } from "../store/storeContract";
 import { driverRouteOption, readDriverRouteChoiceInput } from "../utils/driverRoute";
 import { isValidCoordinates } from "../utils/geo";
+import { validateRouteOrderSelectionInput } from "../utils/routeOrder";
 
 function getSocket(request: Request): Server | undefined {
   return request.app.locals.io as Server | undefined;
@@ -67,11 +68,15 @@ function routeOrderRecord(value: unknown, allowedFields: readonly string[]): Rec
   return fields;
 }
 
-function readRouteOrderSelection(fields: Record<string, unknown>): DriverRouteChoiceInput {
-  return readDriverRouteChoiceInput({
-    route_id: fields.route_id,
-    direction: fields.direction,
-    expected_updated_at: fields.expected_updated_at,
+function readRouteOrderSelection(fields: Record<string, unknown>): RouteOrderSelectionInput {
+  return validateRouteOrderSelectionInput({
+    ...readDriverRouteChoiceInput({
+      route_id: fields.route_id,
+      direction: fields.direction,
+      expected_updated_at: fields.expected_updated_at,
+    }),
+    pickupStopId: fields.pickup_stop_id as string | undefined,
+    destinationStopId: fields.destination_stop_id as string | undefined,
   });
 }
 
@@ -99,7 +104,7 @@ function readRouteOrderLocation(value: unknown): Coordinates {
 
 function readRouteOrderBody(request: Request) {
   const fields = routeOrderRecord(request.body,
-    ["route_id", "direction", "expected_updated_at", "pickup_location", "seats"]);
+    ["route_id", "direction", "expected_updated_at", "pickup_stop_id", "destination_stop_id", "pickup_location", "seats"]);
   if (fields.seats !== undefined && typeof fields.seats !== "number") {
     throw new AppError(400, "seats must be a number", "VALIDATION_ERROR");
   }
@@ -129,7 +134,7 @@ export async function listOrderRoutes(request: Request, response: Response): Pro
 export async function getRouteOrderAvailability(request: Request, response: Response): Promise<void> {
   assertPassenger(request);
   const fields = routeOrderRecord(request.query,
-    ["route_id", "direction", "expected_updated_at", "seats"]);
+    ["route_id", "direction", "expected_updated_at", "pickup_stop_id", "destination_stop_id", "seats"]);
   const selection = readRouteOrderSelection(fields);
   if (fields.seats !== undefined && (typeof fields.seats !== "string" || !/^\d+$/.test(fields.seats))) {
     throw new AppError(400, "seats must be a single integer", "VALIDATION_ERROR");
@@ -140,6 +145,7 @@ export async function getRouteOrderAvailability(request: Request, response: Resp
     available: availability.available,
     eligible_driver_count: availability.eligibleDriverCount,
     offer_timeout_seconds: OFFER_TIMEOUT_MS / 1000,
+    fare: availability.fare,
   });
 }
 
