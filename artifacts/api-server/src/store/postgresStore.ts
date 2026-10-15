@@ -7,8 +7,9 @@ import type { OtpRateKind, OtpRateState } from "./otpProtection";
 import { mutateRouteStop, nextRouteUpdatedAt, replaceRouteLayout } from "../utils/routeLayout";
 import { assertDriverRouteChoiceRoute, validateDriverRouteChoiceInput } from "../utils/driverRoute";
 import { canTransitionOrder, claimQueueEntry, hasActiveOrders, joinQueueEntry, releaseQueueEntry, transitionQueueEntry } from "./orderLifecycle";
+import { assertLineOrderTransition, createLineCollectionState, lineOrderIds, prepareLineDeparture } from "./lineCollection";
 import { AppError } from "../utils/errors";
-import { assertRouteQueueTelemetry, resolveRouteQueue, routeQueueSnapshot, sameQueueLane } from "../utils/routeQueue";
+import { assertRouteQueueLocation, assertRouteQueueTelemetry, resolveRouteQueue, routeQueueSnapshot, sameQueueLane } from "../utils/routeQueue";
 import type {
   Coordinates,
   DeviceRegistration,
@@ -75,6 +76,7 @@ function asQueueEntry(row: Record<string, unknown>): QueueEntry {
     pendingOfferOrderId: (row.pendingOfferOrderId ?? undefined) as string | undefined,
     seatLockExpiresAt: (row.seatLockExpiresAt ?? undefined) as number | undefined,
     ...(row.routeContext == null ? {} : { routeContext: structuredClone(row.routeContext) as QueueEntry["routeContext"] }),
+    ...(row.collectionState == null ? {} : { collectionState: structuredClone(row.collectionState) as QueueEntry["collectionState"] }),
   };
 }
 
@@ -105,7 +107,16 @@ function queueValues(entry: QueueEntry) {
     pendingOfferOrderId: entry.pendingOfferOrderId ?? null,
     seatLockExpiresAt: entry.seatLockExpiresAt ?? null,
     routeContext: entry.routeContext as unknown as Record<string, unknown> ?? null,
+    collectionState: entry.collectionState as unknown as Record<string, unknown> ?? null,
   };
+}
+
+/** Existing queues retain their old status rules; opted-in runs collect until Go. */
+function configuredOfferPhase(table: DbModule["driverQueueTable"]) {
+  return or(
+    and(isNull(table.collectionState), eq(table.status, "searching")),
+    sql`${table.collectionState}->>'phase' = 'collecting'`,
+  );
 }
 
 function orderValues(order: Order) {
@@ -554,10 +565,17 @@ export class PostgresStore implements Store {
     return this.updateQueueEntry(driverId, { inFifo: true });
   }
 
-  async joinQueue(entry: QueueEntry, expectedSessionVersion?: number, selection?: DriverRouteChoiceInput): Promise<QueueEntry> {
+  async joinQueue(entry: QueueEntry, expectedSessionVersion?: number, selection?: DriverRouteChoiceInput, collectionMode = false): Promise<QueueEntry> {
     if (entry.routeContext) throw new AppError(400, "Queue context is server-owned", "VALIDATION_ERROR");
+    if (entry.collectionState !== undefined) throw new AppError(400, "Collection state is server-owned", "VALIDATION_ERROR");
+    if (typeof collectionMode !== "boolean" || (collectionMode && !selection)) {
+      throw new AppError(400, "Line collection requires a configured route choice", "VALIDATION_ERROR");
+    }
+    if (collectionMode && !entry.lastLocation) throw new AppError(422, "Valid location is required", "INVALID_COORDINATES");
+    if (collectionMode) boundedInteger(entry.availableSeats, "available_seats", 1, 8);
     const { db, driverQueueTable, usersTable, routesTable } = await this.database();
     const initial = joinQueueEntry(entry);
+    if (collectionMode) initial.collectionState = createLineCollectionState(entry.availableSeats);
     return db.transaction(async tx => {
       // Lock (or insert) the queue row before the user SHARE lock. A failed
       // role/session check rolls back the inserted row and seat updates.
@@ -574,6 +592,9 @@ export class PostgresStore implements Store {
           isNull(driverQueueTable.pendingOfferOrderId),
           sql`${driverQueueTable.activeOrderIds} = '[]'::jsonb`,
           selection ? sql`${driverQueueTable.routeContext}->>'routeId' = ${selection.routeId} AND ${driverQueueTable.routeContext}->>'direction' = ${selection.direction} AND ${driverQueueTable.routeContext}->>'routeUpdatedAt' = ${selection.expectedUpdatedAt}` : isNull(driverQueueTable.routeContext),
+          collectionMode
+            ? sql`${driverQueueTable.collectionState}->>'phase' = 'collecting' AND (${driverQueueTable.collectionState}->>'capacity')::integer = ${entry.availableSeats}`
+            : isNull(driverQueueTable.collectionState),
         ),
         set: {
           availableSeats: sql`CASE WHEN ${driverQueueTable.routeContext} IS NULL THEN ${entry.availableSeats} ELSE ${driverQueueTable.availableSeats} END`,
@@ -596,12 +617,22 @@ export class PostgresStore implements Store {
       const [routeRow] = choice ? await tx.select().from(routesTable).where(eq(routesTable.id, choice.routeId)).for("share").limit(1) : [];
       const routeContext = resolveRouteQueue(choice ?? undefined,
         routeRow ? asRoute(routeRow as unknown as Record<string, unknown>) : undefined, selection, entry.lastLocation);
+      if (collectionMode) {
+        if (!routeContext) throw new AppError(400, "Line collection requires a configured route", "VALIDATION_ERROR");
+        assertRouteQueueLocation(routeContext, entry.lastLocation);
+      }
       const current = asQueueEntry(row as unknown as Record<string, unknown>);
       // A new row has no context until this transaction establishes the live choice.
       if (current.routeContext && (!sameQueueLane(current.routeContext, routeContext) || current.routeContext.routeUpdatedAt !== routeContext?.routeUpdatedAt)) {
         throw new AppError(409, "Leave the previous queue before joining another", "QUEUE_BUSY");
       }
-      const [saved] = await tx.update(driverQueueTable).set({ routeContext: routeContext as unknown as Record<string, unknown> ?? null })
+      const collectionState = current.collectionState
+        ? { ...current.collectionState, locationUpdatedAt: Date.now() }
+        : undefined;
+      const [saved] = await tx.update(driverQueueTable).set({
+        routeContext: routeContext as unknown as Record<string, unknown> ?? null,
+        collectionState: collectionState as unknown as Record<string, unknown> ?? null,
+      })
         .where(eq(driverQueueTable.driverId, entry.driverId)).returning();
       return asQueueEntry(saved! as unknown as Record<string, unknown>);
     });
@@ -620,6 +651,7 @@ export class PostgresStore implements Store {
       currentOrderId?: string | null;
       pendingOfferOrderId?: string | null;
       seatLockExpiresAt?: number | null;
+      collectionState?: Record<string, unknown>;
     } = {};
     if (patch.joinedAt !== undefined) values.joinedAt = patch.joinedAt;
     if (patch.status !== undefined) values.status = patch.status;
@@ -638,11 +670,86 @@ export class PostgresStore implements Store {
       const current = asQueueEntry(currentRow as unknown as Record<string, unknown>);
       assertQueueOfferPatch(current, patch);
       if ("routeContext" in patch) throw new AppError(409, "Queue context cannot be changed", "QUEUE_BUSY");
+      if ("collectionState" in patch) throw new AppError(409, "Collection state cannot be changed", "QUEUE_BUSY");
       if (current.routeContext && patch.lastLocation) assertRouteQueueTelemetry(current, patch.lastLocation);
+      if (current.collectionState && patch.lastLocation) {
+        values.collectionState = { ...current.collectionState, locationUpdatedAt: Date.now() };
+      }
       const [row] = await tx.update(driverQueueTable).set(values)
         .where(eq(driverQueueTable.driverId, driverId)).returning();
       return row ? asQueueEntry(row as unknown as Record<string, unknown>) : undefined;
     });
+  }
+
+  async departQueue(
+    driverId: string,
+    expectedEnrollmentId: string,
+    expectedSessionVersion?: number,
+  ): Promise<{ entry: QueueEntry; orders: Order[]; changed: boolean }> {
+    const { db, ordersTable, driverQueueTable, usersTable } = await this.database();
+    const retryManifest = new Error("Retry changed line manifest");
+    const manifest = (entry: QueueEntry) => JSON.stringify({
+      enrollmentId: entry.collectionState?.enrollmentId,
+      orders: lineOrderIds(entry),
+      pending: entry.pendingOfferOrderId ?? null,
+    });
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      // This advisory read determines which order locks to acquire. Taking a
+      // queue lock first and then these order locks would invert accept/cancel.
+      const [snapshotRow] = await db.select().from(driverQueueTable)
+        .where(eq(driverQueueTable.driverId, driverId)).limit(1);
+      if (!snapshotRow) throw new AppError(404, "Driver is not in the queue", "NOT_IN_QUEUE");
+      const snapshot = asQueueEntry(snapshotRow as unknown as Record<string, unknown>);
+      const orderIds = [...new Set([
+        ...lineOrderIds(snapshot),
+        ...(snapshot.pendingOfferOrderId ? [snapshot.pendingOfferOrderId] : []),
+      ])].sort();
+      try {
+        return await db.transaction(async tx => {
+          const orderRows = orderIds.length
+            ? await tx.select().from(ordersTable).where(inArray(ordersTable.id, orderIds))
+              .orderBy(asc(ordersTable.id)).for("update")
+            : [];
+          const [queueRow] = await tx.select().from(driverQueueTable)
+            .where(eq(driverQueueTable.driverId, driverId)).for("update").limit(1);
+          if (!queueRow) throw new AppError(404, "Driver is not in the queue", "NOT_IN_QUEUE");
+          const entry = asQueueEntry(queueRow as unknown as Record<string, unknown>);
+          // Never lock newly discovered orders after the queue. Roll back the
+          // read-only transaction and retry with the complete sorted manifest.
+          if (manifest(entry) !== manifest(snapshot)) throw retryManifest;
+
+          const [driver] = await tx.select().from(usersTable)
+            .where(eq(usersTable.id, driverId)).for("share").limit(1);
+          if (!driver || (expectedSessionVersion !== undefined && driver.sessionVersion !== expectedSessionVersion)) {
+            throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+          }
+          if (driver.role !== "driver") throw new AppError(403, "driver mode is required", "FORBIDDEN");
+          if (REQUIRE_DRIVER_APPROVAL && driver.driverApprovalStatus !== "approved") {
+            throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");
+          }
+          const activeIds = new Set(lineOrderIds(entry));
+          const orders = orderRows
+            .map(row => asOrder(row as unknown as Record<string, unknown>))
+            .filter(order => activeIds.has(order.id));
+          const departure = prepareLineDeparture(entry, orders, expectedEnrollmentId, Date.now());
+          if (!departure.changed) return departure;
+
+          for (const order of departure.orders) {
+            const previous = orders.find(current => current.id === order.id)!;
+            if (previous.status !== order.status) {
+              await tx.update(ordersTable).set(orderValues(order)).where(eq(ordersTable.id, order.id));
+            }
+          }
+          await tx.update(driverQueueTable).set(queueValues(departure.entry))
+            .where(eq(driverQueueTable.driverId, driverId));
+          return departure;
+        });
+      } catch (error) {
+        if (error !== retryManifest) throw error;
+      }
+    }
+    throw new AppError(409, "Line passengers changed; reload the queue before departure", "QUEUE_BUSY");
   }
 
   async leaveQueue(driverId: string): Promise<void> {
@@ -663,7 +770,8 @@ export class PostgresStore implements Store {
     const { db, driverQueueTable } = await this.database();
     const rows = await db.select().from(driverQueueTable).where(and(
       eq(driverQueueTable.inFifo, true),
-      or(isNull(driverQueueTable.seatLockExpiresAt), gt(driverQueueTable.seatLockExpiresAt, Date.now())),
+      or(sql`${driverQueueTable.collectionState}->>'phase' = 'collecting'`,
+        isNull(driverQueueTable.seatLockExpiresAt), gt(driverQueueTable.seatLockExpiresAt, Date.now())),
     )).orderBy(desc(driverQueueTable.priorityLock), asc(driverQueueTable.joinedAt), asc(driverQueueTable.driverId));
     return rows.map((row) => asQueueEntry(row as unknown as Record<string, unknown>)).sort(compareOfferDrivers);
   }
@@ -720,7 +828,7 @@ export class PostgresStore implements Store {
       const rows = await tx.select({ queue: driverQueueTable }).from(driverQueueTable)
         .innerJoin(usersTable, eq(usersTable.id, driverQueueTable.driverId)).where(and(
           isNull(driverQueueTable.pendingOfferOrderId),
-          eq(driverQueueTable.inFifo, true), eq(driverQueueTable.status, "searching"),
+          eq(driverQueueTable.inFifo, true), configuredOfferPhase(driverQueueTable),
           sql`${driverQueueTable.routeContext}->>'routeId' = ${choice.routeId} AND ${driverQueueTable.routeContext}->>'direction' = ${choice.direction} AND ${driverQueueTable.routeContext}->>'routeUpdatedAt' = ${choice.expectedUpdatedAt} AND ${driverQueueTable.routeContext}->>'pitak' = ${choice.direction === "a_to_b" ? "A" : "B"}`,
           eq(usersTable.role, "driver"),
           REQUIRE_DRIVER_APPROVAL ? eq(usersTable.driverApprovalStatus, "approved") : undefined,
@@ -759,7 +867,7 @@ export class PostgresStore implements Store {
       const queueRows = await tx.select().from(driverQueueTable).where(and(
         isNull(driverQueueTable.pendingOfferOrderId),
         selection
-          ? and(eq(driverQueueTable.inFifo, true), eq(driverQueueTable.status, "searching"),
+          ? and(eq(driverQueueTable.inFifo, true), configuredOfferPhase(driverQueueTable),
             sql`${driverQueueTable.routeContext}->>'routeId' = ${selection.routeId} AND ${driverQueueTable.routeContext}->>'direction' = ${selection.direction} AND ${driverQueueTable.routeContext}->>'routeUpdatedAt' = ${selection.expectedUpdatedAt} AND ${driverQueueTable.routeContext}->>'pitak' = ${selection.direction === "a_to_b" ? "A" : "B"}`)
           : and(isNull(driverQueueTable.routeContext), legacyInput.pickupPoint === "D"
             ? eq(driverQueueTable.status, "in_transit") : eq(driverQueueTable.inFifo, true)),
@@ -908,7 +1016,7 @@ export class PostgresStore implements Store {
         and(
           isNull(driverQueueTable.pendingOfferOrderId),
           order.routeContext
-            ? and(eq(driverQueueTable.inFifo, true), eq(driverQueueTable.status, "searching"),
+            ? and(eq(driverQueueTable.inFifo, true), configuredOfferPhase(driverQueueTable),
               sql`${driverQueueTable.routeContext}->>'routeId' = ${order.routeContext.routeId} AND ${driverQueueTable.routeContext}->>'direction' = ${order.routeContext.direction} AND ${driverQueueTable.routeContext}->>'routeUpdatedAt' = ${order.routeContext.routeUpdatedAt} AND ${driverQueueTable.routeContext}->>'pitak' = ${order.routeContext.pitak}`)
             : and(isNull(driverQueueTable.routeContext), order.pickupPoint === "D"
               ? eq(driverQueueTable.status, "in_transit") : eq(driverQueueTable.inFifo, true)),
@@ -1073,11 +1181,11 @@ export class PostgresStore implements Store {
           .where(eq(driverQueueTable.driverId, queueDriverId)).for("update").limit(1);
         entry = queueRow ? asQueueEntry(queueRow as unknown as Record<string, unknown>) : undefined;
       }
-      if (expectedSessionVersion !== undefined) {
+      if (expectedSessionVersion !== undefined || nextStatus === "boarded_waiting") {
         // Acquire the actor only after the order and its queue, matching every
         // offer operation and preventing revocation from racing this transition.
         const [actor] = await tx.select().from(usersTable).where(eq(usersTable.id, actorId)).for("share").limit(1);
-        if (!actor || actor.sessionVersion !== expectedSessionVersion) {
+        if (!actor || (expectedSessionVersion !== undefined && actor.sessionVersion !== expectedSessionVersion)) {
           throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
         }
         const role = actorId === order.passengerId ? "passenger" : "driver";
@@ -1086,6 +1194,7 @@ export class PostgresStore implements Store {
           throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");
         }
       }
+      assertLineOrderTransition(entry, order, nextStatus);
       if (entry && queueDriverId) {
         const updatedEntry = order.driverId ? transitionQueueEntry(entry, order, nextStatus) : releaseQueueOffer(entry, order);
         await tx.update(driverQueueTable).set(queueValues(updatedEntry)).where(eq(driverQueueTable.driverId, queueDriverId));
@@ -1097,7 +1206,7 @@ export class PostgresStore implements Store {
           cancelledBy: actorId,
           offerExpiresAt: undefined,
         } : {}),
-        seatLockExpiresAt: nextStatus === "in_transit" || nextStatus === "completed" || nextStatus === "cancelled"
+        seatLockExpiresAt: nextStatus === "boarded_waiting" || nextStatus === "in_transit" || nextStatus === "completed" || nextStatus === "cancelled"
           ? undefined : order.seatLockExpiresAt,
         updatedAt: new Date().toISOString(),
       };
@@ -1347,34 +1456,39 @@ export class PostgresStore implements Store {
     // Find candidates without holding locks for the whole scan. Each candidate
     // is re-read and locked in a transaction before any seats are restored.
     const candidates = await db.select({ id: ordersTable.id }).from(ordersTable)
-      .where(eq(ordersTable.status, "en_route_to_c"));
+      .where(inArray(ordersTable.status, ["en_route_to_c", "arrived_at_c"]));
 
     for (const candidate of candidates) {
       await db.transaction(async (tx) => {
         const [orderRow] = await tx.select().from(ordersTable)
           .where(and(
             eq(ordersTable.id, candidate.id),
-            eq(ordersTable.status, "en_route_to_c"),
+            inArray(ordersTable.status, ["en_route_to_c", "arrived_at_c"]),
           ))
           .for("update")
           .limit(1);
         if (!orderRow) return;
 
         const order = asOrder(orderRow as unknown as Record<string, unknown>);
-        if (!order.seatLockExpiresAt || order.seatLockExpiresAt > now) return;
+        if (order.seatLockExpiresAt === undefined || order.seatLockExpiresAt > Date.now()) return;
 
+        let entry: QueueEntry | undefined;
         if (order.driverId) {
           const [queueRow] = await tx.select().from(driverQueueTable)
             .where(eq(driverQueueTable.driverId, order.driverId))
             .for("update")
             .limit(1);
 
-          if (queueRow) {
-            const entry = asQueueEntry(queueRow as unknown as Record<string, unknown>);
-            await tx.update(driverQueueTable)
-              .set(queueValues(releaseQueueEntry(entry, order)))
-              .where(eq(driverQueueTable.driverId, order.driverId));
-          }
+          entry = queueRow ? asQueueEntry(queueRow as unknown as Record<string, unknown>) : undefined;
+        }
+        // Legacy arrival semantics stay intact. A line's unboarded arrival
+        // still has a pickup deadline, even after Go for a future-stop pickup.
+        if (order.status === "arrived_at_c" && !entry?.collectionState) return;
+        if (order.seatLockExpiresAt > Date.now()) return;
+        if (entry && order.driverId) {
+          await tx.update(driverQueueTable)
+            .set(queueValues(releaseQueueEntry(entry, order)))
+            .where(eq(driverQueueTable.driverId, order.driverId));
         }
 
         const reopened: Order = {

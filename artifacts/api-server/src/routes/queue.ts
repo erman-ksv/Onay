@@ -4,6 +4,8 @@ import { antiFakeGPS } from "../middleware/antiFakeGPS";
 import {
   getQueueStatus,
   joinQueue,
+  joinLine,
+  departQueue,
   leaveQueue,
   updateQueueLocation,
   updateQueueStatus,
@@ -20,6 +22,15 @@ router.post(
   antiFakeGPS,
   joinQueue,
 );
+router.post(
+  "/queue/line",
+  authenticate,
+  requireRole("driver"),
+  requireApprovedDriver,
+  antiFakeGPS,
+  joinLine,
+);
+router.post("/queue/depart", authenticate, requireRole("driver"), requireApprovedDriver, departQueue);
 router.delete("/queue/leave", authenticate, requireRole("driver"),
   requireApprovedDriver, leaveQueue);
 router.patch(

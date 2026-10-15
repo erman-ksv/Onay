@@ -111,7 +111,9 @@ export interface Store {
   getQueueEntry(driverId: string): MaybePromise<QueueEntry | undefined>;
   removeDriverFromFifo(driverId: string): MaybePromise<QueueEntry | undefined>;
   returnDriverToFifo(driverId: string): MaybePromise<QueueEntry | undefined>;
-  joinQueue(entry: QueueEntry, expectedSessionVersion?: number, selection?: DriverRouteChoiceInput): MaybePromise<QueueEntry>;
+  joinQueue(entry: QueueEntry, expectedSessionVersion?: number, selection?: DriverRouteChoiceInput, collectionMode?: boolean): MaybePromise<QueueEntry>;
+  /** Only this action departs an opt-in line; a repeat cannot depart a new enrollment. */
+  departQueue(driverId: string, expectedEnrollmentId: string, expectedSessionVersion?: number): MaybePromise<{ entry: QueueEntry; orders: Order[]; changed: boolean }>;
   updateQueueEntry(
     driverId: string,
     patch: Partial<QueueEntry>,

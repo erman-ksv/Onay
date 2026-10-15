@@ -3,6 +3,8 @@ import { claimQueueEntry, hasActiveOrders } from "./orderLifecycle";
 import { AppError } from "../utils/errors";
 import { routeOrderIsCurrent } from "../utils/routeOrder";
 import { assertRouteQueueLocation, sameQueueLane } from "../utils/routeQueue";
+import { isValidCoordinates } from "../utils/geo";
+import { assertLineSeatCount, isCollecting } from "./lineCollection";
 
 export function compareOfferDrivers(a: QueueEntry, b: QueueEntry): number {
   return Number(!b.routeContext && b.priorityLock) - Number(!a.routeContext && a.priorityLock) ||
@@ -36,8 +38,11 @@ export function orderedOfferCandidates(
     }
     if (order.routeContext) {
       if (!sameQueueLane(entry.routeContext, order.routeContext) ||
-          entry.routeContext?.routeUpdatedAt !== order.routeContext.routeUpdatedAt ||
-          entry.status !== "searching" || entry.inFifo === false || hasActiveOrders(entry) ||
+          entry.routeContext?.routeUpdatedAt !== order.routeContext.routeUpdatedAt || entry.inFifo === false) return false;
+      if (entry.collectionState) {
+        return isCollecting(entry) && isValidCoordinates(entry.lastLocation) && entry.lastLocation.isMocked !== true;
+      }
+      if (entry.status !== "searching" || hasActiveOrders(entry) ||
           (entry.seatLockExpiresAt !== undefined && entry.seatLockExpiresAt <= now)) return false;
       try {
         assertRouteQueueLocation(order.routeContext, entry.lastLocation);
@@ -59,11 +64,13 @@ export function reserveQueueOffer(entry: QueueEntry, order: Order): QueueEntry {
   if (entry.pendingOfferOrderId || entry.availableSeats < order.seats) {
     throw new AppError(409, "Driver cannot reserve another offer", "OFFER_RESERVED");
   }
+  assertLineSeatCount(entry, entry.availableSeats - order.seats);
   return { ...entry, availableSeats: entry.availableSeats - order.seats, pendingOfferOrderId: order.id };
 }
 
 /** Ownership makes repeated rejection, expiry, or cancellation harmless. */
 export function releaseQueueOffer(entry: QueueEntry, order: Order): QueueEntry {
+  if (entry.pendingOfferOrderId === order.id) assertLineSeatCount(entry, entry.availableSeats + order.seats);
   return entry.pendingOfferOrderId === order.id
     ? { ...entry, availableSeats: entry.availableSeats + order.seats, pendingOfferOrderId: undefined }
     : entry;
@@ -94,10 +101,13 @@ export function assertOrderOfferPatch(order: Order, patch: Partial<Order>): void
 }
 
 export function assertQueueOfferPatch(entry: QueueEntry, patch: Partial<QueueEntry>): void {
+  if ("collectionState" in patch) {
+    throw new AppError(409, "Line collection state is server-owned", "QUEUE_BUSY");
+  }
   if (entry.routeContext && entry.inFifo === false && patch.inFifo === true) {
     throw new AppError(409, "Leave and rejoin the configured queue before returning to FIFO", "QUEUE_BUSY");
   }
-  if (!entry.pendingOfferOrderId && !(entry.routeContext && hasActiveOrders(entry))) return;
+  if (!entry.collectionState && !entry.pendingOfferOrderId && !(entry.routeContext && hasActiveOrders(entry))) return;
   const guarded = [
     "driverId", "joinedAt", "status", "availableSeats", "priorityLock", "inFifo",
     "activeOrderIds", "currentOrderId", "pendingOfferOrderId", "seatLockExpiresAt",

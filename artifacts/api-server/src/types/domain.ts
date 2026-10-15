@@ -5,6 +5,7 @@ export type OrderStatus =
   | "searching"
   | "en_route_to_c"
   | "arrived_at_c"
+  | "boarded_waiting"
   | "in_transit"
   | "completed"
   | "cancelled";
@@ -146,6 +147,17 @@ export interface RouteQueueContext extends DriverRouteChoice {
   radiusMeters: number;
 }
 
+/** Opt-in enrollment: collecting seats never implies that the driver departed. */
+export interface LineCollectionState {
+  version: 1;
+  enrollmentId: string;
+  phase: "collecting" | "departed";
+  capacity: number;
+  departedAt?: number;
+  /** Server receipt time of the last validated driver location. */
+  locationUpdatedAt: number;
+}
+
 export interface QueueEntry {
   driverId: string;
   joinedAt: number;
@@ -155,6 +167,8 @@ export interface QueueEntry {
   priorityLock: boolean;
   /** Immutable server-derived enrollment snapshot; absent for the legacy lane. */
   routeContext?: RouteQueueContext;
+  /** Absent on enrollments using the compatible single-order behavior. */
+  collectionState?: LineCollectionState;
   /** False means the driver is in an active-trip pool, not the FIFO set. */
   inFifo?: boolean;
   activeOrderIds?: string[];

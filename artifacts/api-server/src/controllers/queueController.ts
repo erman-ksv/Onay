@@ -5,11 +5,13 @@ import { PYATAK_ZONE, REQUIRE_DRIVER_APPROVAL } from "../utils/config";
 import { isWithinRadius } from "../utils/geo";
 import { AppError } from "../utils/errors";
 import { translate } from "../utils/i18n";
-import { emitQueueUpdate } from "../utils/realtime";
-import { boundedInteger, pickEnum } from "../utils/validation";
+import { emitOrderUpdate, emitQueueUpdate } from "../utils/realtime";
+import { boundedInteger, pickEnum, requiredString } from "../utils/validation";
 import { processOrderDispatch } from "../services/orderDispatchService";
 import { readDriverRouteChoiceInput } from "../utils/driverRoute";
 import { queueStatusView } from "../services/queueView";
+import { serializeOrder } from "../utils/serialize";
+import { logger } from "../lib/logger";
 
 function getLocation(request: Request): Coordinates {
   const raw = request.body?.location;
@@ -51,11 +53,23 @@ export async function getQueueStatus(request: Request, response: Response): Prom
 }
 
 export async function joinQueue(request: Request, response: Response): Promise<void> {
+  await joinQueueWithMode(request, response, false);
+}
+
+/** The new driver action opts into collection without changing existing clients. */
+export async function joinLine(request: Request, response: Response): Promise<void> {
+  await joinQueueWithMode(request, response, true);
+}
+
+async function joinQueueWithMode(request: Request, response: Response, collectionMode: boolean): Promise<void> {
   const driverId = assertDriver(request);
   if (Object.keys(request.body ?? {}).some(key => !["location", "available_seats", "route_choice"].includes(key))) {
     throw new AppError(400, "Unsupported queue field", "VALIDATION_ERROR");
   }
   const selection = request.body?.route_choice === undefined ? undefined : readDriverRouteChoiceInput(request.body.route_choice);
+  if (collectionMode && !selection) {
+    throw new AppError(400, "A configured route choice is required", "VALIDATION_ERROR");
+  }
   const location = getLocation(request);
   if (!selection && !isWithinRadius(location, PYATAK_ZONE.center, PYATAK_ZONE.radiusMeters)) {
     throw new AppError(
@@ -93,7 +107,7 @@ export async function joinQueue(request: Request, response: Response): Promise<v
     activeOrderIds: existing?.activeOrderIds,
     currentOrderId: existing?.currentOrderId,
     seatLockExpiresAt: existing?.seatLockExpiresAt,
-  }, request.auth?.user.sessionVersion, selection);
+  }, request.auth?.user.sessionVersion, selection, collectionMode);
   await processOrderDispatch(request.app.locals.io);
   const entry = await store.getQueueEntry(driverId);
   await emitQueueUpdate(request.app.locals.io, {
@@ -104,6 +118,33 @@ export async function joinQueue(request: Request, response: Response): Promise<v
     message: translate(request.auth?.locale ?? "ru", "queueJoined"),
     entry,
     position: await store.getQueuePosition(driverId),
+  });
+}
+
+/** A trip-level command; the store commits the queue and boarded orders together. */
+export async function departQueue(request: Request, response: Response): Promise<void> {
+  const driverId = assertDriver(request);
+  const body = request.body;
+  if (!body || typeof body !== "object" || Array.isArray(body) ||
+      Object.keys(body).some(key => key !== "expected_enrollment_id")) {
+    throw new AppError(400, "Expected only expected_enrollment_id", "VALIDATION_ERROR");
+  }
+  const enrollmentId = requiredString(body.expected_enrollment_id, "expected_enrollment_id", 64);
+  const result = await store.departQueue(driverId, enrollmentId, request.auth?.user.sessionVersion);
+  if (result.changed) {
+    try {
+      for (const order of result.orders) emitOrderUpdate(request.app.locals.io, order);
+      await emitQueueUpdate(request.app.locals.io, { type: "departed", driverId });
+    } catch (err) {
+      logger.error({ err, driverId }, "Committed departure notification failed");
+    }
+    await processOrderDispatch(request.app.locals.io);
+  }
+  response.json({
+    entry: result.entry,
+    orders: result.orders.map(order => serializeOrder(order, true)),
+    changed: result.changed,
+    position: null,
   });
 }
 

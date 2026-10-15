@@ -47,7 +47,7 @@ export function assertRouteQueueTelemetry(entry: QueueEntry, location: Coordinat
     throw new AppError(422, "Valid location is required", "INVALID_COORDINATES");
   }
   const activeTrip = Boolean(entry.currentOrderId || entry.activeOrderIds?.length);
-  if (entry.routeContext && (entry.pendingOfferOrderId || (!activeTrip && entry.inFifo !== false))) {
+  if (!entry.collectionState && entry.routeContext && (entry.pendingOfferOrderId || (!activeTrip && entry.inFifo !== false))) {
     assertRouteQueueLocation(entry.routeContext, location);
   }
 }

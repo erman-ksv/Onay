@@ -1,4 +1,5 @@
 import type { Order, OrderStatus, QueueEntry } from "../types/domain";
+import { assertLineSeatCount, isCollecting, lineOrderIds } from "./lineCollection";
 
 export function hasActiveOrders(entry: QueueEntry): boolean {
   return Boolean(entry.currentOrderId || entry.activeOrderIds?.length);
@@ -25,7 +26,8 @@ export function joinQueueEntry(input: QueueEntry, current?: QueueEntry): QueueEn
 export const statusTransitions: Record<OrderStatus, readonly OrderStatus[]> = {
   searching: ["en_route_to_c", "cancelled"],
   en_route_to_c: ["arrived_at_c", "cancelled"],
-  arrived_at_c: ["in_transit", "cancelled"],
+  arrived_at_c: ["boarded_waiting", "in_transit", "cancelled"],
+  boarded_waiting: ["in_transit", "cancelled"],
   in_transit: ["completed", "cancelled"],
   completed: [],
   cancelled: [],
@@ -49,7 +51,7 @@ export function canTransitionOrder(
 
 export function orderHasReservedSeats(order: Order): boolean {
   return Boolean(order.driverId) &&
-    (order.status === "en_route_to_c" || order.status === "arrived_at_c" || order.status === "in_transit");
+    (order.status === "en_route_to_c" || order.status === "arrived_at_c" || order.status === "boarded_waiting" || order.status === "in_transit");
 }
 
 function activeOrderIds(entry: QueueEntry): string[] {
@@ -61,6 +63,15 @@ function activeOrderIds(entry: QueueEntry): string[] {
 /** Reservation fields are derived from the current queue, never a controller snapshot. */
 export function claimQueueEntry(entry: QueueEntry, order: Order): QueueEntry {
   const remainingSeats = entry.availableSeats - order.seats;
+  if (entry.collectionState) {
+    assertLineSeatCount(entry, remainingSeats);
+    const ids = [...new Set([...lineOrderIds(entry), order.id])];
+    return {
+      ...entry, availableSeats: remainingSeats, activeOrderIds: ids, currentOrderId: ids[0],
+      status: isCollecting(entry) ? "searching" : "in_transit",
+      priorityLock: !isCollecting(entry), inFifo: isCollecting(entry), seatLockExpiresAt: undefined,
+    };
+  }
   const status = order.pickupPoint === "D" ? "in_transit" : "en_route_to_c";
   return {
     ...entry,
@@ -76,6 +87,18 @@ export function claimQueueEntry(entry: QueueEntry, order: Order): QueueEntry {
 
 /** Caller must own the order and queue locks until its order transition commits. */
 export function releaseQueueEntry(entry: QueueEntry, order: Order): QueueEntry {
+  if (entry.collectionState) {
+    const ids = lineOrderIds(entry);
+    if (!ids.includes(order.id)) return entry;
+    const remaining = ids.filter(id => id !== order.id);
+    const availableSeats = entry.availableSeats + order.seats;
+    assertLineSeatCount(entry, availableSeats);
+    return {
+      ...entry, availableSeats, activeOrderIds: remaining, currentOrderId: remaining[0],
+      status: isCollecting(entry) ? "searching" : "in_transit", inFifo: isCollecting(entry),
+      priorityLock: !isCollecting(entry) && remaining.length > 0, seatLockExpiresAt: undefined,
+    };
+  }
   const remaining = activeOrderIds(entry).filter(id => id !== order.id);
   return {
     ...entry,
@@ -92,6 +115,15 @@ export function releaseQueueEntry(entry: QueueEntry, order: Order): QueueEntry {
 }
 
 export function transitionQueueEntry(entry: QueueEntry, order: Order, nextStatus: OrderStatus): QueueEntry {
+  if (entry.collectionState) {
+    if (nextStatus === "completed" || nextStatus === "cancelled") {
+      return orderHasReservedSeats(order) ? releaseQueueEntry(entry, order) : entry;
+    }
+    return {
+      ...entry, status: isCollecting(entry) ? "searching" : "in_transit",
+      inFifo: isCollecting(entry), priorityLock: !isCollecting(entry) && hasActiveOrders(entry), seatLockExpiresAt: undefined,
+    };
+  }
   if (nextStatus === "completed" || nextStatus === "cancelled") {
     const released = orderHasReservedSeats(order) ? releaseQueueEntry(entry, order) : entry;
     // A completed configured trip leaves the old origin enrollment behind.

@@ -227,7 +227,7 @@ export async function listAdminOrders(request: Request, response: Response): Pro
   const status = request.query["status"] === undefined
     ? "all"
     : pickEnum(request.query["status"], "status", [
-        "all", "active", "searching", "en_route_to_c", "arrived_at_c",
+        "all", "active", "searching", "en_route_to_c", "arrived_at_c", "boarded_waiting",
         "in_transit", "completed", "cancelled",
       ] as const);
   const orders = await store.listOrders();
@@ -261,6 +261,7 @@ export async function getTripStatistics(_request: Request, response: Response): 
     searching: 0,
     en_route_to_c: 0,
     arrived_at_c: 0,
+    boarded_waiting: 0,
     in_transit: 0,
     completed: 0,
     cancelled: 0,

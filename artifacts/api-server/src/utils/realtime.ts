@@ -13,6 +13,8 @@ export type QueueEventType =
   | "order_assigned"
   | "order_released"
   | "order_offer"
+  | "passenger_boarded"
+  | "departed"
   | "seat_lock_expired";
 
 interface QueueChange {

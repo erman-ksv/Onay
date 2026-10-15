@@ -3,6 +3,7 @@ import { authenticate, requireRole, requireApprovedDriver } from "../middleware/
 import { antiFakeGPS } from "../middleware/antiFakeGPS";
 import {
   acceptOrder,
+  boardOrder,
   cancelOrder,
   createOrder,
   createRouteOrder,
@@ -61,6 +62,7 @@ router.patch(
   antiFakeGPS,
   updateOrderStatus,
 );
+router.post("/orders/:orderId/board", authenticate, requireRole("driver"), requireApprovedDriver, boardOrder);
 router.post("/orders/:orderId/cancel", authenticate, cancelOrder);
 router.post(
   "/orders/:orderId/offer-first-driver",
