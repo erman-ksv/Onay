@@ -74,7 +74,7 @@ export function prepareLineDeparture(
     if (order.status !== "boarded_waiting" && order.seatLockExpiresAt !== undefined && order.seatLockExpiresAt <= now) {
       throw new AppError(409, "Passenger pickup reservation expired", "PICKUP_EXPIRED");
     }
-    if (order.status !== "boarded_waiting" && order.fare.pickupStop.code === order.routeContext.stopCode) {
+    if (order.status !== "boarded_waiting" && (order.externalPickup || order.fare.pickupStop.code === order.routeContext.stopCode)) {
       throw new AppError(409, "Passengers at the origin must be boarded or cancelled before departure", "PASSENGERS_NOT_BOARDED");
     }
   }

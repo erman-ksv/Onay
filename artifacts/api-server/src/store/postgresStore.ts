@@ -1,6 +1,6 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
-import type { DriverRouteChoiceInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderSelectionInput, Store } from "./storeContract";
+import type { DriverRouteChoiceInput, ExternalPickupSelectionInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderSelectionInput, Store } from "./storeContract";
 import { normalizePhone } from "../utils/phone";
 import { emptyOtpRateState, OTP_CLEANUP_BATCH_SIZE, otpFailureState, otpPhoneBlock, otpRateExpiresAt, otpRateKey, recordOtpFailure, takeOtpIp, takeOtpSend } from "./otpProtection";
 import type { OtpRateKind, OtpRateState } from "./otpProtection";
@@ -8,6 +8,7 @@ import { mutateRouteStop, nextRouteUpdatedAt, replaceRouteLayout } from "../util
 import { assertDriverRouteChoiceRoute, validateDriverRouteChoiceInput } from "../utils/driverRoute";
 import { canTransitionOrder, claimQueueEntry, hasActiveOrders, joinQueueEntry, releaseQueueEntry, transitionQueueEntry } from "./orderLifecycle";
 import { assertLineOrderTransition, createLineCollectionState, lineOrderIds, prepareLineDeparture } from "./lineCollection";
+import { assertExternalQuoteCurrent, buildConfirmedExternalOrder, buildExternalPickupDetails, eligibleExternalCandidate, externalPickupLeaseMs, liveExternalOfferValid, normalizeExternalPickupSettings, repriceExternalOrder, validateExternalPickupSelectionInput } from "./externalPickup";
 import { AppError } from "../utils/errors";
 import { assertRouteQueueLocation, assertRouteQueueTelemetry, resolveRouteQueue, routeQueueSnapshot, sameQueueLane } from "../utils/routeQueue";
 import type {
@@ -15,6 +16,8 @@ import type {
   DeviceRegistration,
   DriverApprovalStatus,
   DriverRouteChoice,
+  ExternalPickupQuote,
+  ExternalPickupSettings,
   Locale,
   Order,
   OrderOfferChange,
@@ -840,6 +843,118 @@ export class PostgresStore implements Store {
     });
   }
 
+  async getExternalPickupCandidates(
+    selection: ExternalPickupSelectionInput,
+    seats: number,
+    excludedDriverIds: string[] = [],
+  ): Promise<{ route: RouteDefinition; candidates: QueueEntry[] }> {
+    const choice = validateExternalPickupSelectionInput(selection);
+    seats = boundedInteger(seats, "seats", 1, 8);
+    const { db, driverQueueTable, usersTable, routesTable } = await this.database();
+    return db.transaction(async tx => {
+      // Advisory selection owns no queue/user locks. Confirmation repeats the
+      // selected driver's eligibility in the mutation lock order below.
+      const [routeRow] = await tx.select().from(routesTable)
+        .where(eq(routesTable.id, choice.routeId)).for("share").limit(1);
+      const route = routeRow ? asRoute(routeRow as unknown as Record<string, unknown>) : undefined;
+      buildExternalPickupDetails(route, choice);
+      if (!route) throw new AppError(404, "Route not found", "ROUTE_NOT_FOUND");
+      const rows = await tx.select({ queue: driverQueueTable }).from(driverQueueTable)
+        .innerJoin(usersTable, eq(usersTable.id, driverQueueTable.driverId)).where(and(
+          eq(driverQueueTable.inFifo, true),
+          isNull(driverQueueTable.pendingOfferOrderId),
+          sql`${driverQueueTable.collectionState}->>'phase' = 'collecting'`,
+          sql`${driverQueueTable.routeContext}->>'routeId' = ${choice.routeId} AND ${driverQueueTable.routeContext}->>'direction' = ${choice.direction} AND ${driverQueueTable.routeContext}->>'routeUpdatedAt' = ${choice.expectedUpdatedAt}`,
+          eq(usersTable.role, "driver"),
+          REQUIRE_DRIVER_APPROVAL ? eq(usersTable.driverApprovalStatus, "approved") : undefined,
+        ));
+      const now = Date.now();
+      return {
+        route,
+        candidates: rows.map(row => asQueueEntry(row.queue as unknown as Record<string, unknown>))
+          .filter(entry => eligibleExternalCandidate(entry, route, choice, seats, excludedDriverIds, now)),
+      };
+    });
+  }
+
+  async confirmExternalPickupQuote(
+    quote: ExternalPickupQuote,
+    passengerId: string,
+    expectedSessionVersion: number,
+  ): Promise<{ order: Order; created: boolean; changed: boolean }> {
+    const { db, ordersTable, driverQueueTable, usersTable, routesTable } = await this.database();
+    if (quote.passengerId !== passengerId) throw new AppError(403, "Quote belongs to another passenger", "FORBIDDEN");
+    const orderId = quote.orderId ?? quote.quoteId;
+    return db.transaction(async tx => {
+      let created = false;
+      if (!quote.orderId) {
+        const timestamp = new Date().toISOString();
+        // The quote UUID is a permanent idempotency key. Insert before taking
+        // any queue lock so two confirmations cannot reserve different seats.
+        // No driver is set yet: touching the pending-driver unique index here
+        // would invert the ordinary order -> queue locking order.
+        const inserted = await tx.insert(ordersTable).values({
+          id: orderId, passengerId, status: "searching", createdAt: timestamp, updatedAt: timestamp,
+          driverId: null, offeredDriverId: null, offerExpiresAt: null,
+          // This uncommitted envelope is replaced by the validated full order
+          // below. Any failed validation throws and rolls the insert back.
+          payload: {},
+        }).onConflictDoNothing({ target: ordersTable.id }).returning({ id: ordersTable.id });
+        created = inserted.length > 0;
+      }
+      const [orderRow] = await tx.select().from(ordersTable)
+        .where(eq(ordersTable.id, orderId)).for("update").limit(1);
+      if (!orderRow) throw new AppError(404, "Order not found", "ORDER_NOT_FOUND");
+      if (orderRow.passengerId !== passengerId) throw new AppError(403, "Order belongs to another passenger", "FORBIDDEN");
+      const existing = created ? undefined : asOrder(orderRow as unknown as Record<string, unknown>);
+
+      if (existing && (!quote.orderId || existing.externalPickup?.quoteId === quote.quoteId)) {
+        // A successful original quote remains idempotent after an offer has
+        // ended, a route has changed, or a later price has been confirmed.
+        const [passenger] = await tx.select().from(usersTable)
+          .where(eq(usersTable.id, passengerId)).for("share").limit(1);
+        if (!passenger || passenger.sessionVersion !== expectedSessionVersion) {
+          throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+        }
+        if (passenger.role !== "passenger") throw new AppError(403, "passenger mode is required", "FORBIDDEN");
+        return { order: existing, created: false, changed: false };
+      }
+
+      // Every reservation and lifecycle operation uses order -> queue ->
+      // sorted users -> route, including a requote of an existing order.
+      const [queueRow] = await tx.select().from(driverQueueTable)
+        .where(eq(driverQueueTable.driverId, quote.driverId)).for("update").limit(1);
+      const entry = queueRow ? asQueueEntry(queueRow as unknown as Record<string, unknown>) : undefined;
+      const users = await tx.select().from(usersTable)
+        .where(inArray(usersTable.id, [...new Set([passengerId, quote.driverId])]))
+        .orderBy(asc(usersTable.id)).for("share");
+      const passenger = users.find(user => user.id === passengerId);
+      if (!passenger || passenger.sessionVersion !== expectedSessionVersion) {
+        throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+      }
+      if (passenger.role !== "passenger") throw new AppError(403, "passenger mode is required", "FORBIDDEN");
+      const driver = users.find(user => user.id === quote.driverId);
+      if (!driver || driver.role !== "driver" || (REQUIRE_DRIVER_APPROVAL && driver.driverApprovalStatus !== "approved")) {
+        throw new AppError(409, "Selected driver is no longer available", "QUOTE_CHANGED");
+      }
+      const [routeRow] = await tx.select().from(routesTable)
+        .where(eq(routesTable.id, quote.selection.routeId)).for("share").limit(1);
+      const route = routeRow ? asRoute(routeRow as unknown as Record<string, unknown>) : undefined;
+      const now = Date.now();
+      assertExternalQuoteCurrent(quote, route, entry, passengerId, expectedSessionVersion, now);
+      if (!route || !entry) throw new AppError(409, "Selected driver is no longer available", "QUOTE_CHANGED");
+      const order = buildConfirmedExternalOrder(quote, route, {
+        id: passenger.id, phoneNumber: passenger.phoneNumber,
+      }, existing, now);
+      await tx.update(driverQueueTable).set(queueValues(reserveQueueOffer(entry, order)))
+        .where(eq(driverQueueTable.driverId, entry.driverId));
+      await tx.update(ordersTable).set({
+        ...orderValues(order), ...(created ? { createdAt: order.createdAt } : {}),
+      }).where(eq(ordersTable.id, order.id));
+      return { order, created, changed: true };
+    });
+  }
+
   async createOrderWithOffer(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number): Promise<Order | undefined> {
     assertLegacyOrderInput(input);
     return this.reserveNewOrder(input, expectedSessionVersion);
@@ -1009,6 +1124,46 @@ export class PostgresStore implements Store {
       const order = asOrder(orderRow as unknown as Record<string, unknown>);
       if (order.status !== "searching" || order.driverId) return undefined;
 
+      if (order.externalPickup) {
+        // A different driver has a different pickup price. Never turn a
+        // passenger's previous consent into an automatic new-price offer.
+        if (!order.offeredDriverId && order.offerExpiresAt === undefined) return undefined;
+        const offerTime = now ?? Date.now();
+        const previousDriverId = order.offeredDriverId;
+        const [queueRow] = previousDriverId ? await tx.select().from(driverQueueTable)
+          .where(eq(driverQueueTable.driverId, previousDriverId)).for("update").limit(1) : [];
+        const entry = queueRow ? asQueueEntry(queueRow as unknown as Record<string, unknown>) : undefined;
+        const [driver] = previousDriverId ? await tx.select().from(usersTable)
+          .where(eq(usersTable.id, previousDriverId)).for("share").limit(1) : [];
+        const approved = Boolean(driver && driver.role === "driver" &&
+          (!REQUIRE_DRIVER_APPROVAL || driver.driverApprovalStatus === "approved"));
+        if (rejectingDriverId !== undefined && expectedSessionVersion !== undefined) {
+          if (!driver || driver.id !== rejectingDriverId || driver.sessionVersion !== expectedSessionVersion) {
+            throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+          }
+          if (!approved) return undefined;
+        }
+        const [routeRow] = order.routeContext ? await tx.select().from(routesTable)
+          .where(eq(routesTable.id, order.routeContext.routeId)).for("share").limit(1) : [];
+        const route = routeRow ? asRoute(routeRow as unknown as Record<string, unknown>) : undefined;
+        const liveOffer = hasLiveOrderOffer(order, offerTime);
+        if (rejectingDriverId !== undefined) {
+          if (!liveOffer || previousDriverId !== rejectingDriverId || entry?.pendingOfferOrderId !== order.id) return undefined;
+        } else if (liveOffer && approved && liveExternalOfferValid(order, entry, route, offerTime)) {
+          return undefined;
+        }
+        if (entry) {
+          const released = releaseQueueOffer(entry, order);
+          if (released !== entry) {
+            await tx.update(driverQueueTable).set(queueValues(released))
+              .where(eq(driverQueueTable.driverId, entry.driverId));
+          }
+        }
+        const updated = repriceExternalOrder(order, offerTime);
+        await tx.update(ordersTable).set(orderValues(updated)).where(eq(ordersTable.id, order.id));
+        return { order: updated, ...(previousDriverId ? { previousDriverId } : {}) };
+      }
+
       // Every offer operation locks queue rows only once, in driver-ID order.
       // A competing order can reserve a candidate while this query waits;
       // PostgreSQL rechecks the predicate on that row after the lock is won.
@@ -1109,7 +1264,20 @@ export class PostgresStore implements Store {
       if (expectedSessionVersion !== undefined && (!driver || driver.sessionVersion !== expectedSessionVersion)) {
         throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
       }
-      if (!driver || driver.role !== "driver" || (REQUIRE_DRIVER_APPROVAL && driver.driverApprovalStatus !== "approved")) return undefined;
+      if (!driver || driver.role !== "driver" || (REQUIRE_DRIVER_APPROVAL && driver.driverApprovalStatus !== "approved")) {
+        if (order.externalPickup) {
+          if (entry) {
+            const released = releaseQueueOffer(entry, order);
+            if (released !== entry) {
+              await tx.update(driverQueueTable).set(queueValues(released))
+                .where(eq(driverQueueTable.driverId, entry.driverId));
+            }
+          }
+          await tx.update(ordersTable).set(orderValues(repriceExternalOrder(order, now ?? Date.now())))
+            .where(eq(ordersTable.id, order.id));
+        }
+        return undefined;
+      }
       let liveRoute: RouteDefinition | undefined;
       if (order.routeContext) {
         const [routeRow] = await tx.select().from(routesTable)
@@ -1117,7 +1285,22 @@ export class PostgresStore implements Store {
         liveRoute = routeRow ? asRoute(routeRow as unknown as Record<string, unknown>) : undefined;
       }
       const offerTime = now ?? Date.now();
-      if (!hasLiveOrderOffer(order, offerTime) || !queueOwnsEligibleOffer(entry, order, offerTime, liveRoute)) return undefined;
+      if (order.externalPickup) {
+        if (!hasLiveOrderOffer(order, offerTime) || !liveExternalOfferValid(order, entry, liveRoute, offerTime)) {
+          if (entry) {
+            const released = releaseQueueOffer(entry, order);
+            if (released !== entry) {
+              await tx.update(driverQueueTable).set(queueValues(released))
+                .where(eq(driverQueueTable.driverId, entry.driverId));
+            }
+          }
+          await tx.update(ordersTable).set(orderValues(repriceExternalOrder(order, offerTime)))
+            .where(eq(ordersTable.id, order.id));
+          return undefined;
+        }
+      } else if (!hasLiveOrderOffer(order, offerTime) || !queueOwnsEligibleOffer(entry, order, offerTime, liveRoute)) {
+        return undefined;
+      }
 
       const updated: Order = {
         ...order,
@@ -1125,7 +1308,9 @@ export class PostgresStore implements Store {
         driverId,
         offeredDriverId: driverId,
         offerExpiresAt: undefined,
-        seatLockExpiresAt: order.pickupPoint === "D" ? undefined : offerTime + SEAT_LOCK_TTL_MS,
+        seatLockExpiresAt: order.pickupPoint === "D" ? undefined : offerTime + (order.externalPickup
+          ? externalPickupLeaseMs(order.externalPickup.roadDurationSeconds, order.externalPickup.settings)
+          : SEAT_LOCK_TTL_MS),
         updatedAt: new Date(offerTime).toISOString(),
       };
       await tx.update(driverQueueTable).set(queueValues(acceptQueueOffer(entry!, updated)))
@@ -1348,6 +1533,21 @@ export class PostgresStore implements Store {
     return this.mutateRoute(routeId, (route) => ({ route: replaceRouteLayout(route, input) }));
   }
 
+  async updateExternalPickupSettings(
+    routeId: string,
+    input: { expectedUpdatedAt: string; settings: ExternalPickupSettings },
+  ): Promise<RouteDefinition | undefined> {
+    const settings = normalizeExternalPickupSettings(input.settings);
+    return this.mutateRoute(routeId, route => {
+      if (route.updatedAt !== input.expectedUpdatedAt) {
+        throw new AppError(409, "Route changed; reload the catalog", "ROUTE_CHANGED");
+      }
+      return {
+        route: { ...route, externalPickup: settings, updatedAt: nextRouteUpdatedAt(route.updatedAt) },
+      };
+    });
+  }
+
   async createRoute(input: { id: string; name: string; pricePerStopKzt: number; active: boolean }): Promise<RouteDefinition> {
     const { db, routesTable } = await this.database();
     const now = new Date().toISOString();
@@ -1491,7 +1691,7 @@ export class PostgresStore implements Store {
             .where(eq(driverQueueTable.driverId, order.driverId));
         }
 
-        const reopened: Order = {
+        const reopened: Order = order.externalPickup ? repriceExternalOrder(order) : {
           ...order,
           status: "searching",
           driverId: undefined,

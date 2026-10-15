@@ -17,6 +17,7 @@ import {
   updateQueuePoint,
   updateRoute,
   updateRouteLayout,
+  updateExternalPickupSettings,
   updateStop,
 } from "../controllers/adminController";
 
@@ -26,6 +27,7 @@ const adminOnly = [authenticate, requireRole("admin")] as const;
 router.get("/admin/routes", ...adminOnly, listRoutes);
 router.get("/admin/routes/:routeId", ...adminOnly, getAdminRoute);
 router.put("/admin/routes/:routeId/layout", ...adminOnly, updateRouteLayout);
+router.put("/admin/routes/:routeId/external-pickup", ...adminOnly, updateExternalPickupSettings);
 router.post("/admin/routes", ...adminOnly, createRoute);
 router.patch("/admin/routes/:routeId", ...adminOnly, updateRoute);
 router.delete("/admin/routes/:routeId", ...adminOnly, deleteRoute);

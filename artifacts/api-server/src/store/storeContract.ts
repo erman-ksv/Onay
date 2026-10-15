@@ -5,6 +5,9 @@ import type {
   DriverRouteChoice,
   DriverRouteDirection,
   FareQuote,
+  ExternalPickupQuote,
+  ExternalPickupSelectionInput,
+  ExternalPickupSettings,
   Locale,
   Order,
   OrderOfferChange,
@@ -26,6 +29,7 @@ import type {
  */
 export type MaybePromise<T> = T | Promise<T>;
 export type { OrderOfferChange } from "../types/domain";
+export type { ExternalPickupQuote, ExternalPickupSelectionInput, ExternalPickupSettings } from "../types/domain";
 
 export type OtpLimitResult =
   | { allowed: true }
@@ -126,6 +130,10 @@ export interface Store {
   getRouteOrderAvailability(selection: RouteOrderSelectionInput, seats: number): MaybePromise<RouteOrderAvailability>;
   /** Derive live route/fare and reserve one matching lane atomically. */
   createRouteOrderWithOffer(input: RouteOrderInput, selection: RouteOrderSelectionInput, expectedSessionVersion?: number): MaybePromise<Order | undefined>;
+  /** Advisory snapshot only; road routing happens outside transaction locks. */
+  getExternalPickupCandidates(selection: ExternalPickupSelectionInput, seats: number, excludedDriverIds?: string[]): MaybePromise<{ route: RouteDefinition; candidates: QueueEntry[] }>;
+  /** Confirm only the signed driver/price; initial quote ID is the order's immutable primary key. */
+  confirmExternalPickupQuote(quote: ExternalPickupQuote, passengerId: string, expectedSessionVersion: number): MaybePromise<{ order: Order; created: boolean; changed: boolean }>;
 
   createOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number): MaybePromise<Order>;
   /** Create and reserve an offer atomically; unavailable requests persist no order. */
@@ -165,6 +173,7 @@ export interface Store {
 
   listRoutes(): MaybePromise<RouteDefinition[]>;
   getRoute(routeId: string): MaybePromise<RouteDefinition | undefined>;
+  updateExternalPickupSettings(routeId: string, input: { expectedUpdatedAt: string; settings: ExternalPickupSettings }): MaybePromise<RouteDefinition | undefined>;
   /** Replace only the ordered static layout, rejecting a stale route version. */
   updateRouteLayout(routeId: string, input: RouteLayoutInput): MaybePromise<RouteDefinition | undefined>;
   createRoute(input: {
