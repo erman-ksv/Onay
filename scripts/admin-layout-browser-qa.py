@@ -12,6 +12,7 @@ import math
 import os
 import re
 import sys
+import time
 import traceback
 import uuid
 from pathlib import Path
@@ -75,6 +76,7 @@ class AdminLayoutQA:
         self.conflict_observed = False
         self.token = None
         self.route_id = None
+        self.last_otp_accepted_at = None
         page.on("console", self.on_console)
         page.on("pageerror", lambda error: self.page_errors.append(redact(str(error))))
         page.on("request", self.on_request)
@@ -120,14 +122,27 @@ class AdminLayoutQA:
         self.expect(self.page.locator("#root")).not_to_be_empty()
         require(self.page.locator("vite-error-overlay, nextjs-portal, [data-nextjs-dialog-overlay]").count() == 0, "Framework error overlay is visible")
 
+    def wait_for_otp_cooldown(self):
+        if self.last_otp_accepted_at is None:
+            return
+        cooldown_seconds = int(os.environ.get("TEZJET_OTP_RESEND_SECONDS", "60"))
+        remaining = self.last_otp_accepted_at + cooldown_seconds - time.monotonic()
+        if remaining > 0:
+            print(f"Waiting {remaining:.1f}s for the actual OTP resend interval", flush=True)
+            time.sleep(remaining + 0.05)
+
     def login(self):
         self.expect(self.page.get_by_role("heading", name="Вход в панель", exact=True)).to_be_visible()
         self.page.get_by_label("Телефон администратора", exact=True).fill(self.args.admin_phone)
         self.page.get_by_label("Имя", exact=True).fill("CI administrator")
+        # Reload tests reuse this administrator and respect the same cooldown
+        # as the real API. The fixture never resets or disables OTP limits.
+        self.wait_for_otp_cooldown()
         with self.response_for("/auth/request-otp", "POST") as pending:
             self.page.get_by_role("button", name="Получить код", exact=True).click()
         response = pending.value
         require(response.status == 202, "UI OTP request must be accepted by the real server")
+        self.last_otp_accepted_at = time.monotonic()
         challenge = response.json()
         code = challenge.get("demo_code", "")
         require(bool(re.fullmatch(r"\d{6}", code)), "Existing test-only OTP must be returned; no auth bypass is permitted")
