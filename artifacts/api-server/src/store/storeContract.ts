@@ -1,5 +1,6 @@
 import type {
   DeviceRegistration,
+  Coordinates,
   DriverApprovalStatus,
   DriverRouteChoice,
   DriverRouteDirection,
@@ -46,6 +47,14 @@ export interface DriverRouteChoiceInput {
   expectedUpdatedAt: string;
 }
 
+/** A passenger chooses a configured direction, never its fare or route geometry. */
+export interface RouteOrderInput {
+  passengerId: string;
+  passengerPhone: string;
+  pickupLocation: Coordinates;
+  seats: number;
+}
+
 export interface Store {
   initialize(): MaybePromise<void>;
   createUser(input: {
@@ -82,6 +91,9 @@ export interface Store {
   getQueuePosition(driverId: string): MaybePromise<number | null>;
   getFirstEligibleDriver(seats: number): MaybePromise<QueueEntry | undefined>;
   getOrderAvailability(pickupPoint: PickupPoint, seats: number): MaybePromise<{ available: boolean; eligibleDriverCount: number }>;
+  getRouteOrderAvailability(selection: DriverRouteChoiceInput, seats: number): MaybePromise<{ available: boolean; eligibleDriverCount: number }>;
+  /** Derive live route/fare and reserve one matching lane atomically. */
+  createRouteOrderWithOffer(input: RouteOrderInput, selection: DriverRouteChoiceInput, expectedSessionVersion?: number): MaybePromise<Order | undefined>;
 
   createOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number): MaybePromise<Order>;
   /** Create and reserve an offer atomically; unavailable requests persist no order. */
@@ -91,9 +103,9 @@ export interface Store {
   /** Reserve seats and the next eligible driver's single pending offer atomically. */
   dispatchOrderOffer(orderId: string, now?: number): MaybePromise<OrderOfferChange | undefined>;
   /** Release this driver's live offer and reserve the next eligible driver atomically. */
-  rejectOrderOffer(orderId: string, driverId: string, now?: number): MaybePromise<OrderOfferChange | undefined>;
+  rejectOrderOffer(orderId: string, driverId: string, now?: number, expectedSessionVersion?: number): MaybePromise<OrderOfferChange | undefined>;
   /** Convert the live offer reservation into assigned seats without another debit. */
-  acceptOrderOffer(orderId: string, driverId: string, now?: number): MaybePromise<Order | undefined>;
+  acceptOrderOffer(orderId: string, driverId: string, now?: number, expectedSessionVersion?: number): MaybePromise<Order | undefined>;
   /** Advance expired offers first, then dispatch searching orders oldest first. */
   processOrderOffers(now?: number): MaybePromise<OrderOfferChange[]>;
   /** Validate the live actor/state and update its seat reservation atomically. */
@@ -102,6 +114,7 @@ export interface Store {
     actorId: string,
     nextStatus: OrderStatus,
     expectedStatus?: OrderStatus,
+    expectedSessionVersion?: number,
   ): MaybePromise<Order | undefined>;
   claimOrderForDriver(
     orderId: string,

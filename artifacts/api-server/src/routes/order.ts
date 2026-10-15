@@ -5,18 +5,32 @@ import {
   acceptOrder,
   cancelOrder,
   createOrder,
+  createRouteOrder,
   getOrder,
   getOrderAvailability,
+  getRouteOrderAvailability,
+  listOrderRoutes,
   listOrders,
   offerToFirstDriver,
   rejectOrder,
   updateOrderStatus,
+  validateRouteOrderRequest,
 } from "../controllers/orderController";
 
 const router: IRouter = Router();
 
 router.get("/orders", authenticate, listOrders);
 router.get("/orders/availability", authenticate, requireRole("passenger"), getOrderAvailability);
+router.get("/orders/routes", authenticate, requireRole("passenger"), listOrderRoutes);
+router.get("/orders/route/availability", authenticate, requireRole("passenger"), getRouteOrderAvailability);
+router.post(
+  "/orders/route",
+  authenticate,
+  requireRole("passenger"),
+  validateRouteOrderRequest,
+  antiFakeGPS,
+  createRouteOrder,
+);
 router.post(
   "/orders",
   authenticate,

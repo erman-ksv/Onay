@@ -61,7 +61,7 @@ function activeOrderIds(entry: QueueEntry): string[] {
 /** Reservation fields are derived from the current queue, never a controller snapshot. */
 export function claimQueueEntry(entry: QueueEntry, order: Order): QueueEntry {
   const remainingSeats = entry.availableSeats - order.seats;
-  const status = order.pickupPoint === "C" ? "en_route_to_c" : "in_transit";
+  const status = order.pickupPoint === "D" ? "in_transit" : "en_route_to_c";
   return {
     ...entry,
     status,
@@ -91,7 +91,12 @@ export function releaseQueueEntry(entry: QueueEntry, order: Order): QueueEntry {
 
 export function transitionQueueEntry(entry: QueueEntry, order: Order, nextStatus: OrderStatus): QueueEntry {
   if (nextStatus === "completed" || nextStatus === "cancelled") {
-    return orderHasReservedSeats(order) ? releaseQueueEntry(entry, order) : entry;
+    const released = orderHasReservedSeats(order) ? releaseQueueEntry(entry, order) : entry;
+    // A finished A↔B trip is at the other endpoint. Its old pickup enrollment
+    // must not produce another offer until the driver leaves and rejoins.
+    return order.routeContext && (nextStatus === "completed" || order.status === "in_transit")
+      ? { ...released, inFifo: false }
+      : released;
   }
   if (nextStatus === "in_transit") {
     return { ...entry, status: "in_transit", priorityLock: true, inFifo: false, seatLockExpiresAt: undefined };

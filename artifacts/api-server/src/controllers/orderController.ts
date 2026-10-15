@@ -1,4 +1,4 @@
-import type { Request, Response } from "express";
+import type { NextFunction, Request, Response } from "express";
 import type { Server } from "socket.io";
 import { store } from "../store";
 import { statusTransitions } from "../store/orderLifecycle";
@@ -12,6 +12,9 @@ import { calculateRouteFare, parseRouteStopCodes } from "../utils/fare";
 import { boundedInteger, optionalString, pickEnum, requiredString } from "../utils/validation";
 import { normalizeNaturalLanguageAddress } from "../services/geminiAddressService";
 import { processOrderDispatch, publishOrderOfferChanges } from "../services/orderDispatchService";
+import type { DriverRouteChoiceInput } from "../store/storeContract";
+import { driverRouteOption, readDriverRouteChoiceInput } from "../utils/driverRoute";
+import { isValidCoordinates } from "../utils/geo";
 
 function getSocket(request: Request): Server | undefined {
   return request.app.locals.io as Server | undefined;
@@ -51,6 +54,117 @@ function assertDriver(request: Request): string {
     );
   }
   return request.auth.userId;
+}
+
+function routeOrderRecord(value: unknown, allowedFields: readonly string[]): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new AppError(400, "Route order fields must be an object", "VALIDATION_ERROR");
+  }
+  const fields = value as Record<string, unknown>;
+  if (Object.keys(fields).some(key => !allowedFields.includes(key))) {
+    throw new AppError(400, "Route order contains an unsupported field", "VALIDATION_ERROR");
+  }
+  return fields;
+}
+
+function readRouteOrderSelection(fields: Record<string, unknown>): DriverRouteChoiceInput {
+  return readDriverRouteChoiceInput({
+    route_id: fields.route_id,
+    direction: fields.direction,
+    expected_updated_at: fields.expected_updated_at,
+  });
+}
+
+function readRouteOrderLocation(value: unknown): Coordinates {
+  const fields = routeOrderRecord(value, ["lat", "lng", "timestamp", "isMocked"]);
+  if (typeof fields.lat !== "number" || typeof fields.lng !== "number" ||
+      (fields.timestamp !== undefined && (typeof fields.timestamp !== "number" ||
+        !Number.isFinite(fields.timestamp) || fields.timestamp <= 0))) {
+    throw new AppError(422, "Valid numeric pickup coordinates are required", "INVALID_COORDINATES");
+  }
+  if (fields.isMocked !== undefined && typeof fields.isMocked !== "boolean") {
+    throw new AppError(400, "isMocked must be a boolean", "VALIDATION_ERROR");
+  }
+  const location: Coordinates = {
+    lat: fields.lat,
+    lng: fields.lng,
+    timestamp: fields.timestamp === undefined ? Date.now() : fields.timestamp as number,
+    isMocked: fields.isMocked === true,
+  };
+  if (!isValidCoordinates(location)) {
+    throw new AppError(422, "Invalid pickup coordinates", "INVALID_COORDINATES");
+  }
+  return location;
+}
+
+function readRouteOrderBody(request: Request) {
+  const fields = routeOrderRecord(request.body,
+    ["route_id", "direction", "expected_updated_at", "pickup_location", "seats"]);
+  if (fields.seats !== undefined && typeof fields.seats !== "number") {
+    throw new AppError(400, "seats must be a number", "VALIDATION_ERROR");
+  }
+  return {
+    selection: readRouteOrderSelection(fields),
+    pickupLocation: readRouteOrderLocation(fields.pickup_location),
+    seats: boundedInteger(fields.seats === undefined ? 1 : fields.seats, "seats", 1, 8),
+  };
+}
+
+/** Validate the new contract before GPS middleware reads or persists any location. */
+export function validateRouteOrderRequest(request: Request, _response: Response, next: NextFunction): void {
+  readRouteOrderBody(request);
+  next();
+}
+
+export async function listOrderRoutes(request: Request, response: Response): Promise<void> {
+  assertPassenger(request);
+  const routes = (await store.listRoutes()).flatMap(route => {
+    if (route.active !== true) return [];
+    const option = driverRouteOption(route);
+    return option ? [{ ...option, currency: route.currency, pricePerStopKzt: route.pricePerStopKzt }] : [];
+  });
+  response.json({ routes });
+}
+
+export async function getRouteOrderAvailability(request: Request, response: Response): Promise<void> {
+  assertPassenger(request);
+  const fields = routeOrderRecord(request.query,
+    ["route_id", "direction", "expected_updated_at", "seats"]);
+  const selection = readRouteOrderSelection(fields);
+  if (fields.seats !== undefined && (typeof fields.seats !== "string" || !/^\d+$/.test(fields.seats))) {
+    throw new AppError(400, "seats must be a single integer", "VALIDATION_ERROR");
+  }
+  const seats = boundedInteger(fields.seats === undefined ? 1 : fields.seats, "seats", 1, 8);
+  const availability = await store.getRouteOrderAvailability(selection, seats);
+  response.json({
+    available: availability.available,
+    eligible_driver_count: availability.eligibleDriverCount,
+    offer_timeout_seconds: OFFER_TIMEOUT_MS / 1000,
+  });
+}
+
+export async function createRouteOrder(request: Request, response: Response): Promise<void> {
+  const passengerId = assertPassenger(request);
+  const { selection, pickupLocation, seats } = readRouteOrderBody(request);
+  const order = await store.createRouteOrderWithOffer({
+    passengerId,
+    passengerPhone: request.auth?.user.phoneNumber ?? "",
+    pickupLocation,
+    seats,
+  }, selection, request.auth?.user.sessionVersion);
+  if (!order) {
+    throw new AppError(409, "Водителей пока нет", "NO_DRIVERS");
+  }
+  await publishOrderOfferChanges(getSocket(request), [{ order }]);
+  response.status(201).json({
+    order: serializeOrder(order),
+    offer: order.offeredDriverId ? {
+      driver_id: order.offeredDriverId,
+      queue_position: await store.getQueuePosition(order.offeredDriverId),
+      smart_pooling: false,
+      expires_at: order.offerExpiresAt,
+    } : null,
+  });
 }
 
 async function getOrderForActor(request: Request, orderId: string): Promise<Order> {
@@ -171,7 +285,7 @@ export async function acceptOrder(request: Request, response: Response): Promise
   if (order.offeredDriverId && order.offeredDriverId !== driverId) {
     throw new AppError(409, "Order is reserved for another driver", "ORDER_RESERVED");
   }
-  const updated = await store.acceptOrderOffer(order.id, driverId);
+  const updated = await store.acceptOrderOffer(order.id, driverId, undefined, request.auth?.user.sessionVersion);
   if (!updated) {
     throw new AppError(409, "Order is no longer available", "ORDER_UNAVAILABLE");
   }
@@ -184,7 +298,7 @@ export async function acceptOrder(request: Request, response: Response): Promise
   response.json({
     message: translate(request.auth?.locale ?? "ru", "seatLocked"),
     order: serializeOrder(updated, true),
-    seat_lock_minutes: order.pickupPoint === "C" ? 7 : null,
+    seat_lock_minutes: order.pickupPoint !== "D" ? 7 : null,
   });
 }
 
@@ -194,7 +308,7 @@ export async function rejectOrder(request: Request, response: Response): Promise
   if (!(await store.getOrder(orderId))) {
     throw new AppError(404, "Order not found", "ORDER_NOT_FOUND");
   }
-  const change = await store.rejectOrderOffer(orderId, driverId);
+  const change = await store.rejectOrderOffer(orderId, driverId, undefined, request.auth?.user.sessionVersion);
   if (!change) {
     throw new AppError(409, "Order offer is no longer available", "ORDER_UNAVAILABLE");
   }
@@ -222,7 +336,7 @@ export async function updateOrderStatus(request: Request, response: Response): P
     );
   }
 
-  const updated = await store.transitionOrder(order.id, driverId, nextStatus, order.status);
+  const updated = await store.transitionOrder(order.id, driverId, nextStatus, order.status, request.auth?.user.sessionVersion);
   if (!updated) {
     throw new AppError(409, "Order changed before the status update", "ORDER_UNAVAILABLE");
   }
@@ -245,7 +359,7 @@ export async function cancelOrder(request: Request, response: Response): Promise
   if (order.status === "completed" || order.status === "cancelled") {
     throw new AppError(409, "Order is already closed", "ORDER_CLOSED");
   }
-  const updated = await store.transitionOrder(order.id, request.auth?.userId ?? "", "cancelled", order.status);
+  const updated = await store.transitionOrder(order.id, request.auth?.userId ?? "", "cancelled", order.status, request.auth?.user.sessionVersion);
   if (!updated) {
     throw new AppError(409, "Order changed before cancellation", "ORDER_UNAVAILABLE");
   }

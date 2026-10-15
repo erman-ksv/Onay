@@ -1,6 +1,6 @@
 export type UserRole = "passenger" | "driver" | "admin";
 export type Locale = "kk" | "uz" | "ru";
-export type PickupPoint = "C" | "D";
+export type PickupPoint = "A" | "B" | "C" | "D";
 export type OrderStatus =
   | "searching"
   | "en_route_to_c"
@@ -174,6 +174,8 @@ export interface Order {
   /** Internal dispatch history prevents offering this order to a driver twice. */
   attemptedDriverIds?: string[];
   pickupPoint: PickupPoint;
+  /** Immutable server-derived configured endpoint trip; absent for legacy C/D. */
+  routeContext?: RouteQueueContext;
   pickupLocation: Coordinates;
   pickupAddress?: NormalizedAddress;
   routeStops: RouteStop[];
