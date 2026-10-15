@@ -302,7 +302,14 @@ test("both adapters keep opposite directions, other routes, legacy queues and in
     const order = await createStored(f, passenger, route, "a_to_b", 8);
     assert.equal(order.offeredDriverId, correct.user.id);
     await assertPending(adapter, correct, order, 8);
-    assert.equal((await adapter.getRouteOrderAvailability(choiceInput(route), 1)).available, false, "One driver owns only one pending offer regardless of remaining seats.");
+    assert.deepEqual(await adapter.getRouteOrderAvailability(choiceInput(route), 1), { available: true, eligibleDriverCount: 1 },
+      "The separate one-seat driver remains eligible after another driver reserves an eight-seat offer.");
+    const smallOrder = await createStored(f, passenger, route, "a_to_b", 1);
+    assert.equal(smallOrder.offeredDriverId, small.user.id);
+    await assertPending(adapter, small, smallOrder, 1);
+    await assertPending(adapter, correct, order, 8);
+    assert.deepEqual(await adapter.getRouteOrderAvailability(choiceInput(route), 1), { available: false, eligibleDriverCount: 0 },
+      "Neither driver may own two simultaneous pending offers.");
   }
 });
 
