@@ -293,6 +293,49 @@ async function assertNoPassengerOrders(passenger) {
   assert.deepEqual(await store.listOrdersForUser(passenger.user.id), []);
 }
 
+function originFor(route, direction = "a_to_b") { return at(route, direction === "a_to_b" ? "A" : "B"); }
+function collectionPickup(route, direction = "a_to_b", fraction = 1) {
+  const origin = originFor(route, direction), sign = direction === "a_to_b" ? 1 : -1;
+  return { lat: origin.lat + sign * 0.005 * fraction, lng: origin.lng + sign * 0.01 * fraction };
+}
+function distanceMeters(left, right) {
+  const radians = degrees => degrees * Math.PI / 180;
+  const lat = radians(right.lat - left.lat), lng = radians(right.lng - left.lng);
+  const haversine = Math.sin(lat / 2) ** 2 + Math.cos(radians(left.lat)) * Math.cos(radians(right.lat)) * Math.sin(lng / 2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+}
+async function lineAvailability(passenger, route, seats = 1, direction = "a_to_b") {
+  const result = await request(`/orders/route/availability?${new URLSearchParams({ ...selection(route, direction), seats: String(seats) })}`, { token: passenger.token });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  return result.body;
+}
+function requestLineOrder(passenger, route, seats = 1, direction = "a_to_b") {
+  return request("/orders/route", { token: passenger.token, method: "POST", body: {
+    ...selection(route, direction), pickup_location: originFor(route, direction), seats,
+  } });
+}
+async function boardedExternalPassenger(driver, passenger, route, seats = 2, direction = "a_to_b") {
+  const target = collectionPickup(route, direction);
+  const { order } = await externalOrder(passenger, route, { seats, direction, pickup_location: target });
+  assert.equal(order.offered_driver_id, driver.user.id);
+  await accept(driver, order); await move(driver, target); await arrive(driver, order); await board(driver, order);
+  return await otherStore.getOrder(order.id);
+}
+async function approachCurrentPitak(driver, route, direction = "a_to_b") {
+  const origin = originFor(route, direction);
+  let previousDistance = distanceMeters((await otherStore.getQueueEntry(driver.user.id)).lastLocation, origin);
+  for (const fraction of [0.75, 0.5]) {
+    const location = collectionPickup(route, direction, fraction), distance = distanceMeters(location, origin);
+    assert.ok(distance < previousDistance, "The fixture must physically approach its enrolled origin pitak.");
+    assert.ok(distance > pitaks.radiusMeters, "The additional offer must be received before returning inside the origin geofence.");
+    const entry = await move(driver, location);
+    assert.equal(entry.collectionState.enrollmentId, driver.enrollment.enrollmentId);
+    assert.equal(entry.collectionState.phase, "collecting");
+    assert.equal(entry.inFifo, true); assert.equal(entry.joinedAt, driver.joined.joinedAt);
+    previousDistance = distance;
+  }
+}
+
 // These are application regressions: real HTTP, real signed quotes, and the same
 // migrated PostgreSQL row locks used in production. Geometry is supplied by a
 // genuine HTTP routing fixture, never by replacing the production implementation.
@@ -571,6 +614,191 @@ test("multiple external passengers fill the same collecting car without losing F
   assert.equal((await otherStore.getOrder(second.id)).status, "boarded_waiting");
 });
 
+test("returning collecting driver receives and accepts another ordinary line order outside the origin in either direction", async t => {
+  for (const direction of ["a_to_b", "b_to_a"]) await t.test(direction, async child => {
+    const f = await fixture(child), { route } = await configure(f, await f.configured());
+    const driver = await enroll(f, route, 4, direction), externalPassenger = await f.createUser("passenger");
+    const external = await boardedExternalPassenger(driver, externalPassenger, route, 2, direction);
+    await approachCurrentPitak(driver, route, direction);
+    const later = await enroll(f, route, 4, direction), passenger = await f.createUser("passenger");
+    assert.ok(driver.joined.joinedAt < later.joined.joinedAt);
+    assert.equal(await otherStore.getQueuePosition(driver.user.id), 1);
+    assert.equal(await otherStore.getQueuePosition(later.user.id), 2);
+    const availability = await lineAvailability(passenger, route, 2, direction);
+    assert.equal(availability.available, true); assert.equal(availability.eligible_driver_count, 2);
+    const created = await requestLineOrder(passenger, route, 2, direction);
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const order = created.body.order;
+    assert.equal(order.offered_driver_id, driver.user.id, "Origin proximity cannot let the later driver bypass the returning driver.");
+    assert.equal(order.route_context.direction, direction);
+    assert.equal(order.external_pickup, undefined, "An ordinary line order has no second external-pickup surcharge.");
+    assert.equal(order.fare.totalKzt, 1500); assert.equal(order.fare.totalKzt, availability.fare.totalKzt);
+    let entry = await capacityInvariant(otherStore, driver, 4);
+    assert.equal(entry.availableSeats, 0); assert.equal(entry.pendingOfferOrderId, order.id);
+    assert.deepEqual(entry.activeOrderIds, [external.id]);
+    assertError(await depart(driver), 409, "QUEUE_BUSY");
+    await accept(driver, order);
+    assertError(await depart(driver), 409, "PASSENGERS_NOT_BOARDED");
+    entry = await capacityInvariant(otherStore, driver, 4);
+    assert.equal(entry.availableSeats, 0, "Accepting the new order cannot debit the reserved seats twice.");
+    assert.equal(entry.pendingOfferOrderId, undefined);
+    assert.deepEqual([...entry.activeOrderIds].sort(), [external.id, order.id].sort());
+    assert.equal(entry.collectionState.enrollmentId, driver.enrollment.enrollmentId);
+    assert.equal(entry.collectionState.phase, "collecting"); assert.equal(entry.inFifo, true);
+    assert.equal(entry.joinedAt, driver.joined.joinedAt); assert.equal(await otherStore.getQueuePosition(driver.user.id), 1);
+    assert.deepEqual(await otherStore.getOrder(external.id), external, "The seated external passenger's fare and lifecycle must remain unchanged.");
+    const durable = new production.PostgresStore(); await durable.initialize();
+    assert.deepEqual(await durable.getQueueEntry(driver.user.id), entry, "A separate durable adapter must recover the same collecting enrollment and manifest.");
+    assert.deepEqual(await durable.getOrder(order.id), await store.getOrder(order.id));
+  });
+});
+
+test("returning collector cannot bypass an earlier same-direction driver waiting at the pitak", async t => {
+  const f = await fixture(t), { route } = await configure(f, await f.configured());
+  const earlier = await enroll(f, route), origin = originFor(route);
+  const earlierLocation = { lat: origin.lat + 0.0005, lng: origin.lng };
+  await move(earlier, earlierLocation); roadFor(earlierLocation, 6000, 1200); roadFor(origin, 1000, 200);
+  const returning = await enroll(f, route), externalPassenger = await f.createUser("passenger");
+  assert.ok(earlier.joined.joinedAt < returning.joined.joinedAt);
+  await boardedExternalPassenger(returning, externalPassenger, route);
+  await approachCurrentPitak(returning, route);
+  const passenger = await f.createUser("passenger"), created = await requestLineOrder(passenger, route, 2);
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  assert.equal(created.body.order.offered_driver_id, earlier.user.id);
+  assert.equal(await otherStore.getQueuePosition(earlier.user.id), 1);
+  assert.equal(await otherStore.getQueuePosition(returning.user.id), 2);
+  assert.equal((await capacityInvariant(otherStore, returning, 4)).availableSeats, 2);
+  await capacityInvariant(otherStore, earlier, 4);
+});
+
+test("returning collector respects insufficient seats, one pending offer, and a completely full manifest", async t => {
+  const { f, route, driver, passenger: externalPassenger } = await setup(t);
+  const external = await boardedExternalPassenger(driver, externalPassenger, route);
+  await approachCurrentPitak(driver, route);
+  const passenger = await f.createUser("passenger"), nextPassenger = await f.createUser("passenger");
+  assert.equal((await lineAvailability(passenger, route, 3)).available, false);
+  assertError(await requestLineOrder(passenger, route, 3), 409, "NO_DRIVERS");
+  await assertNoPassengerOrders(passenger);
+  const created = await requestLineOrder(passenger, route, 1);
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  let entry = await capacityInvariant(otherStore, driver, 4);
+  assert.equal(entry.availableSeats, 1);
+  assert.equal((await lineAvailability(nextPassenger, route)).available, false, "A free seat cannot allow a second simultaneous pending offer.");
+  assertError(await requestLineOrder(nextPassenger, route), 409, "NO_DRIVERS");
+  await assertNoPassengerOrders(nextPassenger);
+  await accept(driver, created.body.order);
+  const lastSeat = await requestLineOrder(nextPassenger, route);
+  assert.equal(lastSeat.status, 201, JSON.stringify(lastSeat.body));
+  await accept(driver, lastSeat.body.order);
+  entry = await capacityInvariant(otherStore, driver, 4); assert.equal(entry.availableSeats, 0);
+  assert.equal(entry.collectionState.phase, "collecting"); assert.equal(entry.inFifo, true);
+  assert.equal((await lineAvailability(passenger, route)).available, false);
+  assertError(await requestLineOrder(passenger, route), 409, "NO_DRIVERS");
+  assert.deepEqual(await otherStore.getOrder(external.id), external);
+});
+
+test("refusal or timeout of a returning collector's ordinary offer advances only its lane and preserves seated external passengers", async t => {
+  for (const action of ["reject", "timeout"]) await t.test(action, async child => {
+    const { f, route, driver, passenger: externalPassenger } = await setup(child);
+    const external = await boardedExternalPassenger(driver, externalPassenger, route);
+    await approachCurrentPitak(driver, route);
+    const next = await enroll(f, route), opposite = await enroll(f, route, 4, "b_to_a");
+    const passenger = await f.createUser("passenger"), created = await requestLineOrder(passenger, route);
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    assert.equal(created.body.order.offered_driver_id, driver.user.id);
+    if (action === "reject") {
+      const rejected = await request(`/orders/${created.body.order.id}/reject`, { token: driver.token, method: "POST" });
+      assert.equal(rejected.status, 200, JSON.stringify(rejected.body));
+    } else {
+      const offered = await otherStore.getOrder(created.body.order.id);
+      await store.processOrderOffers(offered.offerExpiresAt + 1);
+    }
+    const advanced = await otherStore.getOrder(created.body.order.id);
+    assert.equal(advanced.offeredDriverId, next.user.id); assert.equal(advanced.status, "searching");
+    assert.deepEqual(advanced.attemptedDriverIds, [driver.user.id, next.user.id]);
+    const entry = await capacityInvariant(otherStore, driver, 4);
+    assert.equal(entry.availableSeats, 2); assert.equal(entry.pendingOfferOrderId, undefined);
+    assert.deepEqual(entry.activeOrderIds, [external.id]); assert.equal(entry.inFifo, true);
+    assert.equal(entry.collectionState.phase, "collecting"); assert.equal(entry.collectionState.enrollmentId, driver.enrollment.enrollmentId);
+    assert.equal(entry.joinedAt, driver.joined.joinedAt); assert.equal(await otherStore.getQueuePosition(driver.user.id), 1);
+    assert.deepEqual(await otherStore.getOrder(external.id), external);
+    assert.equal((await capacityInvariant(otherStore, next, 4)).availableSeats, 3);
+    assert.equal((await capacityInvariant(otherStore, opposite, 4)).availableSeats, 4);
+  });
+});
+
+test("a reverse returning collector and departed enrollments cannot receive an order from the opposite pitak", async t => {
+  const f = await fixture(t), { route } = await configure(f, await f.configured());
+  const departed = await enroll(f, route); assert.equal((await depart(departed)).status, 200);
+  const reverse = await enroll(f, route, 4, "b_to_a"), externalPassenger = await f.createUser("passenger");
+  const external = await boardedExternalPassenger(reverse, externalPassenger, route, 2, "b_to_a");
+  await approachCurrentPitak(reverse, route, "b_to_a");
+  const passenger = await f.createUser("passenger");
+  assert.equal((await lineAvailability(passenger, route)).available, false);
+  assertError(await requestLineOrder(passenger, route), 409, "NO_DRIVERS");
+  await assertNoPassengerOrders(passenger);
+  // A different passenger is physically at B; reusing the passenger at A
+  // would correctly trigger the production GPS speed guard on creation.
+  const reversePassenger = await f.createUser("passenger");
+  assert.equal((await lineAvailability(reversePassenger, route, 1, "b_to_a")).available, true);
+  assert.equal((await depart(reverse)).status, 200);
+  assert.equal((await lineAvailability(reversePassenger, route, 1, "b_to_a")).available, false);
+  assertError(await requestLineOrder(reversePassenger, route, 1, "b_to_a"), 409, "NO_DRIVERS");
+  await assertNoPassengerOrders(reversePassenger);
+  const entry = await capacityInvariant(otherStore, reverse, 4);
+  assert.equal(entry.availableSeats, 2); assert.equal(entry.inFifo, false); assert.equal(entry.collectionState.phase, "departed");
+  const travelling = await otherStore.getOrder(external.id);
+  assert.equal(travelling.status, "in_transit"); assert.deepEqual(travelling.fare, external.fare);
+});
+
+test("real PostgreSQL simultaneous ordinary orders cannot oversell the returning collector's remaining seats", { timeout: 15_000 }, async t => {
+  const { f, route, driver, passenger: externalPassenger } = await setup(t);
+  const external = await boardedExternalPassenger(driver, externalPassenger, route);
+  await approachCurrentPitak(driver, route);
+  const passengers = [await f.createUser("passenger"), await f.createUser("passenger")];
+  const results = await overlapping("tezjet_driver_queue", "driver_id", driver.user.id,
+    passengers.map(passenger => () => requestLineOrder(passenger, route, 2)));
+  assert.ok(results.every(result => !result.error), JSON.stringify(results));
+  const values = results.map(result => result.value);
+  assert.deepEqual(values.map(result => result.status).sort(), [201, 409], JSON.stringify(values));
+  let entry = await capacityInvariant(otherStore, driver, 4);
+  assert.equal(entry.availableSeats, 0); assert.deepEqual(entry.activeOrderIds, [external.id]);
+  const winner = values.find(result => result.status === 201).body.order;
+  assert.equal(entry.pendingOfferOrderId, winner.id); assert.equal(winner.offered_driver_id, driver.user.id);
+  assert.equal((await Promise.all(passengers.map(passenger => store.listOrdersForUser(passenger.user.id)))).flat().length, 1);
+  await accept(driver, winner);
+  entry = await capacityInvariant(otherStore, driver, 4); assert.equal(entry.availableSeats, 0);
+  assert.deepEqual(await otherStore.getOrder(external.id), external);
+});
+
+test("real PostgreSQL a new ordinary offer racing departure cannot alter a departed returning enrollment", { timeout: 20_000 }, async t => {
+  for (const first of ["offer", "depart"]) await t.test(first, async child => {
+    const { f, route, driver, passenger: externalPassenger } = await setup(child);
+    const external = await boardedExternalPassenger(driver, externalPassenger, route);
+    await approachCurrentPitak(driver, route);
+    const passenger = await f.createUser("passenger");
+    const offer = () => requestLineOrder(passenger, route), departure = () => depart(driver);
+    const results = await overlapping("tezjet_driver_queue", "driver_id", driver.user.id,
+      first === "offer" ? [offer, departure] : [departure, offer]);
+    assert.ok(results.every(result => !result.error), JSON.stringify(results));
+    const [offered, departed] = (first === "offer" ? results : [...results].reverse()).map(result => result.value);
+    const entry = await capacityInvariant(otherStore, driver, 4), seated = await otherStore.getOrder(external.id);
+    assert.equal(entry.collectionState.enrollmentId, driver.enrollment.enrollmentId);
+    assert.equal(entry.joinedAt, driver.joined.joinedAt); assert.deepEqual(seated.fare, external.fare);
+    if (entry.collectionState.phase === "departed") {
+      assert.equal(departed.status, 200, JSON.stringify(departed)); assertError(offered, 409, "NO_DRIVERS");
+      assert.equal(entry.availableSeats, 2); assert.equal(entry.inFifo, false);
+      assert.equal(entry.pendingOfferOrderId, undefined); assert.equal(seated.status, "in_transit");
+      await assertNoPassengerOrders(passenger);
+    } else {
+      assert.equal(offered.status, 201, JSON.stringify(offered)); assertError(departed, 409, "QUEUE_BUSY");
+      assert.equal(entry.availableSeats, 1); assert.equal(entry.inFifo, true);
+      assert.equal(entry.pendingOfferOrderId, offered.body.order.id); assert.equal(seated.status, "boarded_waiting");
+      assert.deepEqual(entry.activeOrderIds, [external.id]); assert.deepEqual(seated, external);
+    }
+  });
+});
+
 test("real PostgreSQL simultaneous confirmation of the same quote creates only one order and reservation", { timeout: 15_000 }, async t => {
   const { route, driver, passenger } = await setup(t), quoted = await quote(passenger, route, { seats: 3 });
   const results = await overlapping("tezjet_driver_queue", "driver_id", driver.user.id, [() => confirm(passenger, quoted), () => confirm(passenger, quoted)]);
@@ -671,14 +899,15 @@ test("production routing fails the entire selection for malformed data and never
 async function signedStoreQuote(adapter, driver, passenger, route, options = {}) {
   const live = await adapter.getQueueEntry(driver.user.id), now = Date.now();
   const settings = route.externalPickup, distance = options.distance ?? 2500, duration = options.duration ?? 500;
+  const direction = options.direction ?? "a_to_b", pickupLocation = options.pickupLocation ?? externalTarget;
   // Build a server command with the actual fingerprint and signing helpers;
   // adapter parity below does not bypass quote validation or reservation logic.
-  const selected = await adapter.getExternalPickupCandidates({ routeId: route.id, direction: "a_to_b", expectedUpdatedAt: route.updatedAt }, options.seats ?? 1);
+  const selected = await adapter.getExternalPickupCandidates({ routeId: route.id, direction, expectedUpdatedAt: route.updatedAt }, options.seats ?? 1);
   assert.equal(selected.candidates[0].driverId, driver.user.id);
   const quoted = {
     version: 1, quoteId: randomUUID(), passengerId: passenger.user.id, sessionVersion: passenger.user.sessionVersion,
-    selection: { routeId: route.id, direction: "a_to_b", expectedUpdatedAt: route.updatedAt },
-    pickupLocation: { ...externalTarget, timestamp: now }, seats: options.seats ?? 1,
+    selection: { routeId: route.id, direction, expectedUpdatedAt: route.updatedAt },
+    pickupLocation: { ...pickupLocation, timestamp: now }, seats: options.seats ?? 1,
     driverId: driver.user.id, driverEnrollmentId: live.collectionState.enrollmentId,
     driverLocationFingerprint: production.externalPickupLocationFingerprint(live),
     roadDistanceMeters: distance, roadDurationSeconds: duration, baseFareKzt: 1500,
@@ -688,6 +917,63 @@ async function signedStoreQuote(adapter, driver, passenger, route, options = {})
   };
   return production.verifyExternalPickupQuoteToken(production.createExternalPickupQuoteToken(quoted));
 }
+
+test("durable and memory adapters preserve the returning collector's manifest and seats for both directions", async t => {
+  for (const adapter of [store, new production.MemoryStore()]) {
+    for (const direction of ["a_to_b", "b_to_a"]) await t.test(`${adapter.constructor.name}:${direction}`, async child => {
+      const f = await fixture(child, adapter), initial = await f.configured();
+      const settings = {
+        enabled: true, serviceRadiusMeters: policy.service_radius_meters, pricePerKmKzt: policy.price_per_km_kzt,
+        gpsMaxAgeSeconds: policy.gps_max_age_seconds, quoteTtlSeconds: policy.quote_ttl_seconds,
+        pickupGraceSeconds: policy.pickup_grace_seconds, maxPickupSeconds: policy.max_pickup_seconds, fareRounding: policy.fare_rounding,
+      };
+      const route = await adapter.updateExternalPickupSettings(initial.id, { expectedUpdatedAt: initial.updatedAt, settings });
+      const driver = await f.planned(route, direction), externalPassenger = await f.createUser("passenger");
+      const joined = await f.storedJoin(driver, route, 4, direction), target = collectionPickup(route, direction);
+      const quoted = await signedStoreQuote(adapter, driver, externalPassenger, route, { seats: 2, direction, pickupLocation: target });
+      const confirmed = await adapter.confirmExternalPickupQuote(quoted, externalPassenger.user.id, externalPassenger.user.sessionVersion);
+      assert.equal(confirmed.order.offeredDriverId, driver.user.id);
+      assert.ok(await adapter.acceptOrderOffer(confirmed.order.id, driver.user.id));
+      assert.ok(await adapter.updateQueueEntry(driver.user.id, { lastLocation: { ...target, timestamp: joined.lastLocation.timestamp + 600_000 } }));
+      assert.ok(await adapter.transitionOrder(confirmed.order.id, driver.user.id, "arrived_at_c"));
+      assert.ok(await adapter.transitionOrder(confirmed.order.id, driver.user.id, "boarded_waiting"));
+      const seated = structuredClone(await adapter.getOrder(confirmed.order.id));
+      let previousDistance = distanceMeters(target, originFor(route, direction));
+      for (const [index, fraction] of [0.75, 0.5].entries()) {
+        const location = collectionPickup(route, direction, fraction), distance = distanceMeters(location, originFor(route, direction));
+        assert.ok(distance < previousDistance && distance > pitaks.radiusMeters);
+        assert.ok(await adapter.updateQueueEntry(driver.user.id, { lastLocation: { ...location, timestamp: joined.lastLocation.timestamp + (index + 2) * 600_000 } }));
+        previousDistance = distance;
+      }
+      const observer = adapter instanceof production.PostgresStore ? new production.PostgresStore() : adapter;
+      await observer.initialize();
+      assert.deepEqual(await observer.getQueueEntry(driver.user.id), await adapter.getQueueEntry(driver.user.id));
+      const passenger = await f.createUser("passenger"), selected = choice(route, direction);
+      const availability = await observer.getRouteOrderAvailability(selected, 2);
+      assert.equal(availability.available, true); assert.equal(availability.eligibleDriverCount, 1);
+      const order = await adapter.createRouteOrderWithOffer({
+        passengerId: passenger.user.id, passengerPhone: passenger.user.phoneNumber,
+        pickupLocation: originFor(route, direction), seats: 2,
+      }, selected, passenger.user.sessionVersion);
+      assert.equal(order.offeredDriverId, driver.user.id); assert.equal(order.externalPickup, undefined);
+      assert.equal((await capacityInvariant(observer, driver, 4)).availableSeats, 0);
+      assert.ok(await adapter.acceptOrderOffer(order.id, driver.user.id));
+      let entry = await capacityInvariant(observer, driver, 4);
+      assert.equal(entry.availableSeats, 0); assert.equal(entry.joinedAt, joined.joinedAt);
+      assert.equal(entry.collectionState.enrollmentId, joined.collectionState.enrollmentId);
+      assert.equal(entry.collectionState.phase, "collecting"); assert.equal(entry.inFifo, true);
+      assert.deepEqual([...entry.activeOrderIds].sort(), [seated.id, order.id].sort());
+      assert.deepEqual(await observer.getOrder(seated.id), seated);
+      assert.ok(await adapter.transitionOrder(order.id, passenger.user.id, "cancelled"));
+      assert.equal((await capacityInvariant(observer, driver, 4)).availableSeats, 2);
+      assert.deepEqual(await observer.getOrder(seated.id), seated);
+      await adapter.departQueue(driver.user.id, joined.collectionState.enrollmentId, driver.user.sessionVersion);
+      assert.equal((await observer.getRouteOrderAvailability(selected, 1)).available, false);
+      assert.ok(await adapter.transitionOrder(seated.id, driver.user.id, "completed"));
+      entry = await capacityInvariant(observer, driver, 4); assert.equal(entry.availableSeats, 4); assert.equal(entry.inFifo, false);
+    });
+  }
+});
 
 test("both durable and memory adapters retain external price/target snapshots and enforce seat conservation through collection", async t => {
   for (const adapter of [store, new production.MemoryStore()]) await t.test(adapter.constructor.name, async child => {

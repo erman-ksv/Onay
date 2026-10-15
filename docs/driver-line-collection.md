@@ -44,10 +44,12 @@ After departure, cancellation and completion return only their own seats and do 
 
 PostgreSQL departure reads an order manifest, locks existing orders in stable ID order, then locks and rechecks the queue and current actor. A changed manifest rolls back before retrying. No departure path locks the queue and subsequently waits for an existing order. Migration `0006_line_collection.sql` adds a nullable JSONB column; preexisting rows retain their previous lifecycle.
 
-## Remaining parts of the user's requirements
+## External pickup and returning to the line
 
-- External pickup feeding a line: nearest suitable driver already in that line's queue; refusal or timeout advances to another suitable driver. This selection is not implemented by the collection change.
-- Pickup surcharge: one-way distance from the selected driver's current position to the passenger, multiplied by an administrator's per-kilometer rate. A changed price after selecting a different driver requires passenger confirmation. Road-distance provider, service zone and tariff rounding still need concrete configuration.
-- Ordinary rides outside a line: the passenger proposes a price; drivers can accept, decline or counteroffer; the passenger chooses an offer before assignment. This negotiated-price mode is separate and remains unimplemented.
+The external-pickup backend was added separately in PR #43. See [external pickup](external-pickup.md) for the explicit administrator policy, road-routing configuration, nearest eligible driver, price confirmation and repricing after refusal or timeout. A different driver requires a new passenger-approved quote; external offers do not automatically pass to another driver at an unconfirmed fare.
 
-Frontend work awaits the user's mockup. Device GPS, Android/iPhone testing, full external-pickup acceptance and Smart Pickup are separate acceptance work. No checklist item is marked complete solely by this backend foundation.
+A collecting driver returning after an external pickup can also receive an ordinary order from the same configured line while still outside the origin geofence. These ordinary orders retain FIFO, the enrollment and the one-pending-offer limit. See [returning line driver](returning-line-driver.md) for the scoped 6.4 acceptance and its GPS boundary.
+
+Ordinary rides outside a line remain a separate negotiated-price mode: the passenger proposes a price; drivers can accept, decline or counteroffer; the passenger chooses an offer before assignment.
+
+Frontend work awaits the user's mockup. Physical GPS, Android/iPhone testing, production routing deployment and new compatible pickups after departure remain separate acceptance work. Backend acceptance does not establish that the current mobile screens complete those scenarios.
