@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { OFFER_TIMEOUT_MS, OTP_TTL_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
 import { normalizePhone } from "../utils/phone";
-import type { DriverRouteChoiceInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderInput, Store } from "./storeContract";
+import type { DriverRouteChoiceInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderSelectionInput, Store } from "./storeContract";
 import { emptyOtpRateState, OTP_CLEANUP_BATCH_SIZE, otpFailureState, otpPhoneBlock, otpRateExpiresAt, otpRateKey, recordOtpFailure, takeOtpIp, takeOtpSend } from "./otpProtection";
 import type { OtpRateKind, OtpRateState } from "./otpProtection";
 import { mutateRouteStop, nextRouteUpdatedAt, replaceRouteLayout } from "../utils/routeLayout";
@@ -10,7 +10,7 @@ import { canTransitionOrder, claimQueueEntry, hasActiveOrders, joinQueueEntry, r
 import { AppError } from "../utils/errors";
 import { assertRouteQueueTelemetry, resolveRouteQueue, routeQueueSnapshot, sameQueueLane } from "../utils/routeQueue";
 import { acceptQueueOffer, assertLegacyOrderInput, assertOrderOfferPatch, assertQueueOfferPatch, compareOfferDrivers, hasLiveOrderOffer, orderedOfferCandidates, releaseQueueOffer, reserveQueueOffer } from "./orderOffers";
-import { buildRouteOrder } from "../utils/routeOrder";
+import { buildRouteOrder, validateRouteOrderSelectionInput } from "../utils/routeOrder";
 import { boundedInteger } from "../utils/validation";
 import type {
   Coordinates,
@@ -379,15 +379,15 @@ class MemoryStore implements Store {
     return { available: eligibleDriverCount > 0, eligibleDriverCount };
   }
 
-  getRouteOrderAvailability(selection: DriverRouteChoiceInput, seats: number): { available: boolean; eligibleDriverCount: number } {
-    selection = validateDriverRouteChoiceInput(selection);
+  getRouteOrderAvailability(selection: RouteOrderSelectionInput, seats: number): RouteOrderAvailability {
+    selection = validateRouteOrderSelectionInput(selection);
     seats = boundedInteger(seats, "seats", 1, 8);
     const route = this.routes.get(selection.routeId);
     const routeOrder = buildRouteOrder(route, selection);
     const eligibleDriverCount = orderedOfferCandidates(
       { ...routeOrder, seats }, this.eligibleOfferEntries(), Date.now(), route,
     ).length;
-    return { available: eligibleDriverCount > 0, eligibleDriverCount };
+    return { available: eligibleDriverCount > 0, eligibleDriverCount, fare: routeOrder.fare };
   }
 
   createOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number): Order {
@@ -409,8 +409,8 @@ class MemoryStore implements Store {
     return this.reserveNewOrder(input, expectedSessionVersion);
   }
 
-  createRouteOrderWithOffer(input: RouteOrderInput, selection: DriverRouteChoiceInput, expectedSessionVersion?: number): Order | undefined {
-    selection = validateDriverRouteChoiceInput(selection);
+  createRouteOrderWithOffer(input: RouteOrderInput, selection: RouteOrderSelectionInput, expectedSessionVersion?: number): Order | undefined {
+    selection = validateRouteOrderSelectionInput(selection);
     if (!input.pickupLocation) throw new AppError(422, "Pickup location is required", "OUTSIDE_PICKUP_GEOFENCE");
     const route = this.routes.get(selection.routeId);
     const details = buildRouteOrder(route, selection, input.pickupLocation);

@@ -1,6 +1,6 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
-import type { DriverRouteChoiceInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderInput, Store } from "./storeContract";
+import type { DriverRouteChoiceInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderSelectionInput, Store } from "./storeContract";
 import { normalizePhone } from "../utils/phone";
 import { emptyOtpRateState, OTP_CLEANUP_BATCH_SIZE, otpFailureState, otpPhoneBlock, otpRateExpiresAt, otpRateKey, recordOtpFailure, takeOtpIp, takeOtpSend } from "./otpProtection";
 import type { OtpRateKind, OtpRateState } from "./otpProtection";
@@ -28,7 +28,7 @@ import type {
 } from "../types/domain";
 import { OFFER_TIMEOUT_MS, OTP_TTL_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
 import { acceptQueueOffer, assertLegacyOrderInput, assertOrderOfferPatch, assertQueueOfferPatch, compareOfferDrivers, hasLiveOrderOffer, orderedOfferCandidates, releaseQueueOffer, reserveQueueOffer } from "./orderOffers";
-import { buildRouteOrder } from "../utils/routeOrder";
+import { buildRouteOrder, validateRouteOrderSelectionInput } from "../utils/routeOrder";
 import { boundedInteger } from "../utils/validation";
 
 type DbModule = typeof import("@workspace/db");
@@ -706,8 +706,8 @@ export class PostgresStore implements Store {
     return { available: eligibleDriverCount > 0, eligibleDriverCount };
   }
 
-  async getRouteOrderAvailability(selection: DriverRouteChoiceInput, seats: number): Promise<{ available: boolean; eligibleDriverCount: number }> {
-    const choice = validateDriverRouteChoiceInput(selection);
+  async getRouteOrderAvailability(selection: RouteOrderSelectionInput, seats: number): Promise<RouteOrderAvailability> {
+    const choice = validateRouteOrderSelectionInput(selection);
     seats = boundedInteger(seats, "seats", 1, 8);
     const { db, driverQueueTable, usersTable, routesTable } = await this.database();
     return db.transaction(async tx => {
@@ -728,7 +728,7 @@ export class PostgresStore implements Store {
       const eligibleDriverCount = orderedOfferCandidates(
         { ...details, seats }, rows.map(row => asQueueEntry(row.queue as unknown as Record<string, unknown>)), Date.now(), route,
       ).length;
-      return { available: eligibleDriverCount > 0, eligibleDriverCount };
+      return { available: eligibleDriverCount > 0, eligibleDriverCount, fare: details.fare };
     });
   }
 
@@ -737,8 +737,8 @@ export class PostgresStore implements Store {
     return this.reserveNewOrder(input, expectedSessionVersion);
   }
 
-  async createRouteOrderWithOffer(input: RouteOrderInput, selection: DriverRouteChoiceInput, expectedSessionVersion?: number): Promise<Order | undefined> {
-    const choice = validateDriverRouteChoiceInput(selection);
+  async createRouteOrderWithOffer(input: RouteOrderInput, selection: RouteOrderSelectionInput, expectedSessionVersion?: number): Promise<Order | undefined> {
+    const choice = validateRouteOrderSelectionInput(selection);
     if (!input.pickupLocation) throw new AppError(422, "Pickup location is required", "OUTSIDE_PICKUP_GEOFENCE");
     return this.reserveNewOrder({
       passengerId: input.passengerId, passengerPhone: input.passengerPhone,
@@ -749,7 +749,7 @@ export class PostgresStore implements Store {
   private async reserveNewOrder(
     input: Omit<Order, "id" | "createdAt" | "updatedAt"> | RouteOrderInput,
     expectedSessionVersion?: number,
-    selection?: DriverRouteChoiceInput,
+    selection?: RouteOrderSelectionInput,
   ): Promise<Order | undefined> {
     const { db, driverQueueTable, usersTable, ordersTable, routesTable } = await this.database();
     const legacyInput = input as Omit<Order, "id" | "createdAt" | "updatedAt">;

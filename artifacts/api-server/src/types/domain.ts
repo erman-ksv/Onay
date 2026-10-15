@@ -174,7 +174,7 @@ export interface Order {
   /** Internal dispatch history prevents offering this order to a driver twice. */
   attemptedDriverIds?: string[];
   pickupPoint: PickupPoint;
-  /** Immutable server-derived configured endpoint trip; absent for legacy C/D. */
+  /** Origin queue lane; actual selected stops live in the immutable fare snapshot. */
   routeContext?: RouteQueueContext;
   pickupLocation: Coordinates;
   pickupAddress?: NormalizedAddress;
