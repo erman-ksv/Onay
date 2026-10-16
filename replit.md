@@ -1,6 +1,6 @@
-# TezJet
+# Onay
 
-TezJet is a rural taxi hailing API with OTP authentication, FIFO driver queueing, route pooling, and realtime trip updates.
+Onay is a rural taxi hailing API with OTP authentication, FIFO driver queueing, route pooling, and realtime trip updates.
 
 ## Run & Operate
 
@@ -42,7 +42,7 @@ Passengers register with OTP, request rural trips, and receive live status updat
 
 ## User preferences
 
-The product name is TezJet.
+The product name is Onay.
 
 ## Gotchas
 

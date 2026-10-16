@@ -1,3 +1,4 @@
+import { isolateApplicationEnvironment } from "./environment.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
@@ -13,7 +14,8 @@ const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const schema = `external_pickup_${randomUUID().replaceAll("-", "")}`;
 const applicationName = `external-pickup-${randomUUID()}`;
 const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes"];
-const envKeys = ["DATABASE_URL", "TEZJET_STORAGE_ADAPTER", "NODE_ENV", "SESSION_SECRET", "LOG_LEVEL", "REQUIRE_DRIVER_APPROVAL", "PYATAK_CENTER_LAT", "PYATAK_CENTER_LNG", "TEZJET_OFFER_TIMEOUT_SECONDS", "TEZJET_OSRM_URL"];
+const envKeys = ["DATABASE_URL", "ONAY_STORAGE_ADAPTER", "NODE_ENV", "SESSION_SECRET", "LOG_LEVEL", "REQUIRE_DRIVER_APPROVAL", "PYATAK_CENTER_LAT", "PYATAK_CENTER_LNG", "ONAY_OFFER_TIMEOUT_SECONDS", "ONAY_OSRM_URL"];
+let restoreApplicationEnvironment = () => {};
 const originalEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
 let moduleDirectory, production, database, adminPool, store, otherStore, server, baseUrl;
 let schemaCreated = false;
@@ -44,24 +46,25 @@ async function startRouter() {
     response.end(JSON.stringify(routerMode === "malformed" ? { code: "Ok", distances: [[1]], durations: [] } : { code: "Ok", distances: matrix("distance"), durations: matrix("duration") }));
   });
   await new Promise(resolve => routingServer.listen(0, "127.0.0.1", resolve));
-  process.env.TEZJET_OSRM_URL = `http://127.0.0.1:${routingServer.address().port}`;
+  process.env.ONAY_OSRM_URL = `http://127.0.0.1:${routingServer.address().port}`;
 }
 
 before(async () => {
+  restoreApplicationEnvironment = isolateApplicationEnvironment();
   assert.ok(process.env.DATABASE_URL, "DATABASE_URL is required: external pickup regressions must execute real PostgreSQL.");
   const originalUrl = process.env.DATABASE_URL;
   const isolatedUrl = new URL(originalUrl);
   isolatedUrl.searchParams.set("options", `${isolatedUrl.searchParams.get("options") ?? ""} -c search_path=${schema}`.trim());
   isolatedUrl.searchParams.set("application_name", applicationName);
   process.env.DATABASE_URL = isolatedUrl.href;
-  process.env.TEZJET_STORAGE_ADAPTER = "postgres";
+  process.env.ONAY_STORAGE_ADAPTER = "postgres";
   process.env.NODE_ENV = "production";
   process.env.SESSION_SECRET = "external-pickup-regression-secret-at-least-32-characters";
   process.env.LOG_LEVEL = "silent";
   process.env.REQUIRE_DRIVER_APPROVAL = "true";
   process.env.PYATAK_CENTER_LAT = "41.3111";
   process.env.PYATAK_CENTER_LNG = "69.2797";
-  delete process.env.TEZJET_OFFER_TIMEOUT_SECONDS;
+  delete process.env.ONAY_OFFER_TIMEOUT_SECONDS;
   await startRouter();
   moduleDirectory = await mkdtemp(path.join(apiRoot, ".external-pickup-test-"));
   const entry = path.join(moduleDirectory, "production.mjs");
@@ -110,6 +113,7 @@ after(async () => {
   } finally {
     if (adminPool) await adminPool.end();
     if (moduleDirectory) await rm(moduleDirectory, { recursive: true, force: true });
+    restoreApplicationEnvironment();
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
@@ -1192,14 +1196,14 @@ test("an external quote cannot reserve a driver who legitimately switches to the
 });
 
 test("missing or unsafe routing configuration fails closed and never leaks the configured URL", async t => {
-  const { route, passenger } = await setup(t), configured = process.env.TEZJET_OSRM_URL;
+  const { route, passenger } = await setup(t), configured = process.env.ONAY_OSRM_URL;
   try {
     for (const value of [undefined, "http://user:secret@127.0.0.1/private?token=secret"]) {
-      if (value === undefined) delete process.env.TEZJET_OSRM_URL; else process.env.TEZJET_OSRM_URL = value;
+      if (value === undefined) delete process.env.ONAY_OSRM_URL; else process.env.ONAY_OSRM_URL = value;
       const result = await request("/orders/external/quote", { token: passenger.token, method: "POST", body: quoteBody(route) });
       assertError(result, 503, "ROUTING_UNAVAILABLE");
       assert.equal(JSON.stringify(result.body).includes("secret"), false);
       await assertNoPassengerOrders(passenger);
     }
-  } finally { process.env.TEZJET_OSRM_URL = configured; }
+  } finally { process.env.ONAY_OSRM_URL = configured; }
 });

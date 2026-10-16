@@ -1,12 +1,12 @@
-# TezJet implementation evidence register — 2026-10-14
+# Onay implementation evidence register — 2026-10-14
 
 This register records **verified GitHub changes** only. It is not a new percentage-of-readiness calculation.
 
 ## Baseline and counting rules
 
-- The last reported row-based baseline on 2026-10-13 is **70 of 151 TezJet checklist items (46.4%)**.
+- The last reported row-based baseline on 2026-10-13 is **70 of 151 Onay checklist items (46.4%)**.
 - The reported baseline counted some written tasks awaiting acceptance, so it is **not** a release-readiness metric.
-- The 21 Agent-Factory checklist items are separate and must not be added to the TezJet denominator.
+- The 21 Agent-Factory checklist items are separate and must not be added to the Onay denominator.
 - The source file listing all 151 individually numbered items, their statuses and acceptance criteria was **not located in this repository** as of this audit. Without that baseline, the following seven merged PRs cannot be assumed to represent seven previously uncounted tasks.
 - Each item may count as newly complete only after: (1) matching the exact original checklist row, (2) checking that it was *not* included in the baseline 70, (3) validating its acceptance requirements and (4) ensuring no overlap with another PR's row.
 - Until that mapping exists, report **last documented baseline 70/151 (46.4%)**, plus the evidence below, **not** an invented updated percentage.
@@ -28,7 +28,7 @@ All seven PRs were checked as **merged**. Each linked final CI run had **conclus
 
 ## Pending reconciliation
 
-- [ ] Retrieve or reconstruct the **original 151-item TezJet checklist**, preserving original item IDs and baseline completion flags.
+- [ ] Retrieve or reconstruct the **original 151-item Onay checklist**, preserving original item IDs and baseline completion flags.
 - [ ] Map every PR #24–#30 to those item IDs, including overlap and previously partially implemented work.
 - [ ] Re-evaluate each row's original acceptance criteria, not just whether an endpoint exists.
 - [ ] Compute `verified_completed / 151 * 100` and remaining to 99 rows. Include a date, source and evidence for each changed row.

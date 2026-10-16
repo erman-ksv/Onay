@@ -1,4 +1,5 @@
 import { AppError } from "../utils/errors";
+import { getOnayEnv } from "../utils/environment";
 
 export interface PickupRoutingPoint {
   lat: number;
@@ -33,7 +34,7 @@ function unavailable(): AppError {
 
 function configuredBaseUrl(): URL {
   try {
-    const configured = process.env.TEZJET_OSRM_URL;
+    const configured = getOnayEnv("OSRM_URL");
     if (!configured) throw unavailable();
     const url = new URL(configured);
     if (!(["http:", "https:"] as string[]).includes(url.protocol) ||

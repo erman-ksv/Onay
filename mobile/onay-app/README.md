@@ -1,10 +1,12 @@
-# TezJet Mobile
+# Onay Mobile
 
 One native React Native + Expo app for Android and iOS, with passenger and driver modes on the same phone account.
 
 ## Configure the API
 
 Open **Настройки сервера** in the app and enter the reachable HTTPS API origin, such as `https://api.your-domain.example`. The setting is saved on the device. Changing it clears the previous session before the app uses the new server; sign in again after changing servers. If removal of the saved token fails, the server change stops.
+
+Existing device stores migrate the former `tezjet_access_token` and `tezjet_api_endpoint` keys to `onay_access_token` and `onay_api_endpoint`. The app keeps the restored values available if migration fails and retries on the next launch; signing out clears both token keys. Keep the same `EXPO_PUBLIC_API_URL` when upgrading a token-only store: the previous app did not persist that token's API origin. The new native application identifier, `uz.onay.app`, uses a separate Android/iOS app sandbox, so a separately installed Onay binary needs its server configured and a fresh sign-in; it cannot read another application's private storage.
 
 For a build-time default, copy `.env.example` to `.env` and set `EXPO_PUBLIC_API_URL`. The value may be omitted; the app then starts with server settings and disables sign-in until a server is configured. Only root URLs without credentials, paths, queries, or fragments are accepted. HTTP is allowed for local development with `localhost`, `127.0.0.1`, `10.0.2.2`, or `[::1]`. A physical phone needs a reachable HTTPS endpoint; `localhost` refers to the phone itself.
 
@@ -40,7 +42,7 @@ Orders refresh on reconnect, app resume, and a ten-second interval. Incoming Soc
 
 Expo EAS can build an Android preview APK and an iOS binary. An Expo account is required; iOS distribution also requires Apple Developer membership. Store publication is a separate release step.
 
-GitHub Actions installs dependencies, checks TypeScript and API/order regressions, exports Android/iOS bundles, generates the Android project, and assembles a debug APK with JavaScript embedded. Successful runs upload `tezjet-android-debug-apk`. The optional repository variable `TEZJET_API_URL` sets the default API for export and the APK; without it, configure the endpoint in the app.
+GitHub Actions installs dependencies, checks TypeScript and API/order regressions, exports Android/iOS bundles, generates the Android project, and assembles a debug APK with JavaScript embedded. Successful runs upload `onay-android-debug-apk`. The optional repository variable `ONAY_API_URL` sets the default API for export and the APK; without it, configure the endpoint in the app.
 
 The Expo web export (`pnpm exec expo export --platform web`) uses the same application and route picker for browser validation. React DOM and React Native Web are included for Expo 54; this remains the native mobile application with a browser test surface.
 

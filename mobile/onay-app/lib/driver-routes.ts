@@ -32,7 +32,7 @@ export class DriverRouteError extends Error {
 }
 
 function invalidResponse(): never {
-  throw new DriverRouteError("Не удалось прочитать маршруты TezJet. Повтори обновление.", undefined, "INVALID_RESPONSE");
+  throw new DriverRouteError("Не удалось прочитать маршруты Onay. Повтори обновление.", undefined, "INVALID_RESPONSE");
 }
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return invalidResponse();
@@ -174,7 +174,7 @@ export function createDriverRouteClient(endpoint: string, token: string, fetcher
     } catch (error) {
       if (signal.aborted) throw new DriverRouteError("Обновление отменено.", undefined, "REQUEST_ABORTED");
       if (error instanceof DriverRouteError) throw error;
-      throw new DriverRouteError(timedOut ? "Сервер TezJet не ответил вовремя. Повтори обновление." : "Нет связи с TezJet. Проверь интернет и обнови маршруты.", undefined,
+      throw new DriverRouteError(timedOut ? "Сервер Onay не ответил вовремя. Повтори обновление." : "Нет связи с Onay. Проверь интернет и обнови маршруты.", undefined,
         timedOut ? "REQUEST_TIMEOUT" : "NETWORK_ERROR");
     } finally {
       clearTimeout(timer);

@@ -11,7 +11,8 @@ import {
 import { sql } from "drizzle-orm";
 
 /**
- * Durable TezJet storage schema.
+ * Durable Onay storage schema. Legacy table and index names remain unchanged
+ * so existing installations keep their data and applied migration history.
  *
  * Complex domain snapshots are retained as JSONB while frequently queried
  * identity/status/time fields are indexed as normal columns. This lets the

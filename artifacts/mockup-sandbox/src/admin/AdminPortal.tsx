@@ -50,7 +50,7 @@ export default function AdminPortal() {
   useEffect(() => {
     const previousTitle = document.title;
     const previousLanguage = document.documentElement.lang;
-    document.title = "TezJet — администрирование";
+    document.title = "Onay — администрирование";
     document.documentElement.lang = "ru";
     return () => {
       document.title = previousTitle;
@@ -160,12 +160,12 @@ export default function AdminPortal() {
       <div className="mx-auto max-w-md">
         <div className="mb-10 flex items-center gap-3">
           <IconBadge><CarTaxiFront size={22} /></IconBadge>
-          <div><p className="text-xl font-bold tracking-tight">TezJet</p><p className="text-xs font-medium uppercase tracking-[0.17em] text-slate-500">Администрирование</p></div>
+          <div><p className="text-xl font-bold tracking-tight">Onay</p><p className="text-xs font-medium uppercase tracking-[0.17em] text-slate-500">Администрирование</p></div>
         </div>
         <div className="rounded-[28px] border border-slate-200 bg-white p-7 shadow-sm sm:p-9">
           <span className="mb-6 inline-flex rounded-2xl bg-blue-50 p-3 text-blue-700"><ShieldCheck size={27} /></span>
           <h1 className="text-3xl font-bold tracking-tight">Вход в панель</h1>
-          <p className="mt-3 text-sm leading-6 text-slate-500">Только для уполномоченного администратора. Доступ проверяется сервером TezJet.</p>
+          <p className="mt-3 text-sm leading-6 text-slate-500">Только для уполномоченного администратора. Доступ проверяется сервером Onay.</p>
           {error && <p role="alert" className="mt-5 flex items-start gap-2 rounded-xl bg-red-50 p-3 text-sm text-red-700"><CircleAlert className="mt-0.5 shrink-0" size={17}/>{error}</p>}
           {step === "phone" ? <form className="mt-8 space-y-5" onSubmit={requestCode}>
             <label className="block text-sm font-medium text-slate-700">Телефон администратора
@@ -192,7 +192,7 @@ export default function AdminPortal() {
   return <div className="min-h-screen bg-[#f5f7fb] text-slate-900">
     <header className="border-b border-slate-200 bg-white">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-5 sm:px-8">
-        <div className="flex items-center gap-3"><IconBadge><CarTaxiFront size={21}/></IconBadge><div><p className="text-lg font-bold leading-tight tracking-tight">TezJet <span className="font-medium text-slate-400">/ Admin</span></p><p className="text-xs text-slate-500">Пользователи и маршруты</p></div></div>
+        <div className="flex items-center gap-3"><IconBadge><CarTaxiFront size={21}/></IconBadge><div><p className="text-lg font-bold leading-tight tracking-tight">Onay <span className="font-medium text-slate-400">/ Admin</span></p><p className="text-xs text-slate-500">Пользователи и маршруты</p></div></div>
         <div className="flex items-center gap-3"><span className="hidden text-right text-xs text-slate-500 sm:block"><strong className="block text-sm text-slate-800">{session.user.full_name}</strong>Администратор</span><button type="button" onClick={() => void signOut()} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-medium hover:bg-slate-50"><LogOut size={16}/>Выйти</button></div>
       </div>
     </header>
@@ -202,7 +202,7 @@ export default function AdminPortal() {
         <button type="button" aria-current={section === "routes" ? "page" : undefined} onClick={() => setSection("routes")} className={"inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold " + (section === "routes" ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50")}><MapPin size={17}/>Маршруты и остановки</button>
       </nav>
       <div hidden={section !== "users"}>
-      <div className="mb-8"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700">Панель управления</p><h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">Пользователи TezJet</h1><p className="mt-2 text-sm text-slate-500">Просмотр пассажиров и водителей. Данные поступают из защищённого API.</p></div>
+      <div className="mb-8"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700">Панель управления</p><h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">Пользователи Onay</h1><p className="mt-2 text-sm text-slate-500">Просмотр пассажиров и водителей. Данные поступают из защищённого API.</p></div>
       <section aria-label="Статистика пользователей" className="mb-8 grid gap-4 sm:grid-cols-3">
         <div className="rounded-2xl border border-slate-200 bg-white p-5"><div className="mb-5 inline-flex rounded-xl bg-blue-50 p-3 text-blue-600"><Users size={20}/></div><p className="text-sm text-slate-500">Пассажиры</p><p className="mt-1 text-3xl font-bold tabular-nums">{data.passengers.length}</p></div>
         <div className="rounded-2xl border border-slate-200 bg-white p-5"><div className="mb-5 inline-flex rounded-xl bg-violet-50 p-3 text-violet-600"><CarTaxiFront size={20}/></div><p className="text-sm text-slate-500">Водители</p><p className="mt-1 text-3xl font-bold tabular-nums">{data.drivers.length}</p></div>

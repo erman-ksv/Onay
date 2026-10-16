@@ -1,3 +1,4 @@
+import { isolateApplicationEnvironment } from "./environment.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -12,26 +13,28 @@ const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const schema = `line_collection_${randomUUID().replaceAll("-", "")}`;
 const applicationName = `line-collection-${randomUUID()}`;
 const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes"];
-const envKeys = ["DATABASE_URL", "TEZJET_STORAGE_ADAPTER", "NODE_ENV", "SESSION_SECRET", "LOG_LEVEL", "REQUIRE_DRIVER_APPROVAL", "PYATAK_CENTER_LAT", "PYATAK_CENTER_LNG", "TEZJET_OFFER_TIMEOUT_SECONDS"];
+const envKeys = ["DATABASE_URL", "ONAY_STORAGE_ADAPTER", "NODE_ENV", "SESSION_SECRET", "LOG_LEVEL", "REQUIRE_DRIVER_APPROVAL", "PYATAK_CENTER_LAT", "PYATAK_CENTER_LNG", "ONAY_OFFER_TIMEOUT_SECONDS"];
+let restoreApplicationEnvironment = () => {};
 const originalEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
 let moduleDirectory, production, database, adminPool, store, otherStore, server, baseUrl;
 let schemaCreated = false;
 
 before(async () => {
+  restoreApplicationEnvironment = isolateApplicationEnvironment();
   assert.ok(process.env.DATABASE_URL, "DATABASE_URL is required: line collection regressions must execute real PostgreSQL.");
   const originalUrl = process.env.DATABASE_URL;
   const isolatedUrl = new URL(originalUrl);
   isolatedUrl.searchParams.set("options", `${isolatedUrl.searchParams.get("options") ?? ""} -c search_path=${schema}`.trim());
   isolatedUrl.searchParams.set("application_name", applicationName);
   process.env.DATABASE_URL = isolatedUrl.href;
-  process.env.TEZJET_STORAGE_ADAPTER = "postgres";
+  process.env.ONAY_STORAGE_ADAPTER = "postgres";
   process.env.NODE_ENV = "production";
   process.env.SESSION_SECRET = "line-collection-regression-secret-at-least-32-characters";
   process.env.LOG_LEVEL = "silent";
   process.env.REQUIRE_DRIVER_APPROVAL = "true";
   process.env.PYATAK_CENTER_LAT = "41.3111";
   process.env.PYATAK_CENTER_LNG = "69.2797";
-  delete process.env.TEZJET_OFFER_TIMEOUT_SECONDS;
+  delete process.env.ONAY_OFFER_TIMEOUT_SECONDS;
   moduleDirectory = await mkdtemp(path.join(apiRoot, ".line-collection-test-"));
   const entry = path.join(moduleDirectory, "production.mjs");
   await build({
@@ -74,6 +77,7 @@ after(async () => {
   } finally {
     if (adminPool) await adminPool.end();
     if (moduleDirectory) await rm(moduleDirectory, { recursive: true, force: true });
+    restoreApplicationEnvironment();
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;

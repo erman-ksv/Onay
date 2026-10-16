@@ -118,14 +118,14 @@ class AdminLayoutQA:
 
     def identity(self):
         require(urlparse(self.page.url).path.rstrip("/") == "/admin", "Browser must remain on the actual /admin page")
-        self.expect(self.page).to_have_title("TezJet — администрирование")
+        self.expect(self.page).to_have_title("Onay — администрирование")
         self.expect(self.page.locator("#root")).not_to_be_empty()
         require(self.page.locator("vite-error-overlay, nextjs-portal, [data-nextjs-dialog-overlay]").count() == 0, "Framework error overlay is visible")
 
     def wait_for_otp_cooldown(self):
         if self.last_otp_accepted_at is None:
             return
-        cooldown_seconds = int(os.environ.get("TEZJET_OTP_RESEND_SECONDS", "60"))
+        cooldown_seconds = int(os.environ.get("ONAY_OTP_RESEND_SECONDS", os.environ.get("TEZJET_OTP_RESEND_SECONDS", "60")))
         remaining = self.last_otp_accepted_at + cooldown_seconds - time.monotonic()
         if remaining > 0:
             print(f"Waiting {remaining:.1f}s for the actual OTP resend interval", flush=True)

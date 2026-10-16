@@ -1,3 +1,4 @@
+import { isolateApplicationEnvironment } from "./environment.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -12,7 +13,8 @@ import { io as createSocket } from "socket.io-client";
 // of a database connection. Use the real server with an isolated MemoryStore
 // and make its actual lookup methods reject as the PostgreSQL adapter can.
 const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const envKeys = ["NODE_ENV", "TEZJET_STORAGE_ADAPTER", "SESSION_SECRET", "LOG_LEVEL", "REQUIRE_DRIVER_APPROVAL"];
+const envKeys = ["NODE_ENV", "ONAY_STORAGE_ADAPTER", "SESSION_SECRET", "LOG_LEVEL", "REQUIRE_DRIVER_APPROVAL"];
+let restoreApplicationEnvironment = () => {};
 const originalEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
 const sockets = new Set();
 let moduleDirectory;
@@ -25,8 +27,9 @@ let realtime;
 let serverUrl;
 
 before(async () => {
+  restoreApplicationEnvironment = isolateApplicationEnvironment();
   process.env.NODE_ENV = "test";
-  process.env.TEZJET_STORAGE_ADAPTER = "memory";
+  process.env.ONAY_STORAGE_ADAPTER = "memory";
   process.env.SESSION_SECRET = "socket-error-regression-session-secret";
   process.env.LOG_LEVEL = "silent";
   process.env.REQUIRE_DRIVER_APPROVAL = "true";
@@ -69,6 +72,7 @@ after(async () => {
     if (realtime) await new Promise(resolve => realtime.close(resolve));
   } finally {
     if (moduleDirectory) await rm(moduleDirectory, { recursive: true, force: true });
+    restoreApplicationEnvironment();
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;

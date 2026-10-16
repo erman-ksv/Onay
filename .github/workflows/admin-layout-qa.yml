@@ -50,20 +50,20 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: tezjet_admin_layout_qa
+          POSTGRES_DB: onay_admin_layout_qa
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d tezjet_admin_layout_qa"
+          --health-cmd "pg_isready -U postgres -d onay_admin_layout_qa"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
     env:
-      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tezjet_admin_layout_qa
-      TEZJET_STORAGE_ADAPTER: postgres
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/onay_admin_layout_qa
+      ONAY_STORAGE_ADAPTER: postgres
       NODE_ENV: development
       ADMIN_PHONE: "+998900000001"
-      SESSION_SECRET: tezjet-admin-layout-qa-session-secret-at-least-32-characters
+      SESSION_SECRET: onay-admin-layout-qa-session-secret-at-least-32-characters
     steps:
       - name: Checkout
         uses: actions/checkout@v4

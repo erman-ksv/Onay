@@ -1,10 +1,10 @@
-# TezJet — admin web portal
+# Onay — admin web portal
 
-The existing React/Vite `@workspace/mockup-sandbox` has a functional route `/admin` (in addition to the existing mockup previews). It reads the real passenger and driver directories and configures route stops and endpoint pitaks through the protected TezJet API. This is a development-stage admin UI; it is **not** an independently deployed production admin app.
+The existing React/Vite `@workspace/mockup-sandbox` has a functional route `/admin` (in addition to the existing mockup previews). It reads the real passenger and driver directories and configures route stops and endpoint pitaks through the protected Onay API. This is a development-stage admin UI; it is **not** an independently deployed production admin app.
 
 ## Local setup
 
-1. Set up the TezJet API server and PostgreSQL as described in `../api-server/README.md`, and set `ADMIN_PHONE` to the authorized administrator's phone in the **API backend**, never in frontend code.
+1. Set up the Onay API server and PostgreSQL as described in `../api-server/README.md`, and set `ADMIN_PHONE` to the authorized administrator's phone in the **API backend**, never in frontend code.
 2. Start the API at `http://127.0.0.1:5000` with the existing API startup script.
 3. Start this Vite app with its existing required environment settings: `PORT=5173 BASE_PATH=/ pnpm --filter @workspace/mockup-sandbox dev`. If the backend is not running on port 5000, set `API_PROXY_TARGET=http://127.0.0.1:YOUR_API_PORT` for the **Vite process only**.
 4. Open `http://127.0.0.1:5173/admin`.
