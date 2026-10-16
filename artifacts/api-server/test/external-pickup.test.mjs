@@ -1149,7 +1149,11 @@ test("external rejection never reprices across queues and permits a fresh quote 
       ...joinBody(route, 4, direction), location: { ...originFor(route, direction), timestamp: wrong.sampleTimestamp + 600_000 },
     } });
     assert.equal(joined.status, 201, JSON.stringify(joined.body));
-    const newEnrollment = joined.body.entry;
+    // Compare durable snapshots on both sides: HTTP JSON intentionally omits
+    // undefined optional fields that the PostgreSQL adapter includes.
+    const newEnrollment = await otherStore.getQueueEntry(wrong.user.id);
+    assert.equal(joined.body.entry.collectionState.enrollmentId, newEnrollment.collectionState.enrollmentId);
+    assert.equal(joined.body.entry.routeContext.direction, newEnrollment.routeContext.direction);
     assert.equal(newEnrollment.routeContext.direction, direction);
     assert.notEqual(newEnrollment.collectionState.enrollmentId, originalWrong.collectionState.enrollmentId);
     assert.deepEqual(await otherStore.getOrder(order.id), waiting, "Fresh enrollment still cannot reserve an external order without new passenger consent.");
