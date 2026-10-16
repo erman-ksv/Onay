@@ -730,6 +730,84 @@ test("real PostgreSQL overlapping configured creations reserve one offer slot an
   assert.deepEqual(availabilityState(await otherStore.getRouteOrderAvailability(choiceInput(route), 1)), { available: false, eligibleDriverCount: 0 });
 });
 
+test("real HTTP positive availability cannot preserve a booking after the last driver leaves, and a winning booking prevents leaving", { timeout: 20_000 }, async t => {
+  for (const [first, direction, collecting] of [["leave", "a_to_b", false], ["create", "b_to_a", true]]) {
+    await t.test(`${first}:${direction}:${collecting ? "collecting" : "configured"}`, async child => {
+      const f = await fixture(child), route = await f.configured(), passenger = await f.createUser("passenger");
+      const driver = await enrollHttp(f, route, direction, collecting);
+      const before = await otherStore.getQueueEntry(driver.user.id);
+      const available = await availabilityHttp(passenger, route, direction);
+      assert.equal(available.status, 200, JSON.stringify(available.body));
+      assert.equal(available.body.available, true);
+      assert.equal(available.body.eligible_driver_count, 1);
+      assert.deepEqual(await otherStore.getQueueEntry(driver.user.id), before, "Availability must not reserve the last driver's offer slot.");
+      const leave = () => request("/queue/leave", { token: driver.token, method: "DELETE" });
+      const create = () => createHttp(passenger, route, direction);
+      // The observed queue-row wait establishes each transaction's order.
+      // Both HTTP requests started after the same positive advisory GET.
+      const results = await overlapping("tezjet_driver_queue", "driver_id", driver.user.id,
+        first === "leave" ? [leave, create] : [create, leave]);
+      for (const result of results) if (result.error) throw result.error;
+      const [left, created] = (first === "leave" ? results : [...results].reverse()).map(result => result.value);
+      const orders = await otherStore.listOrdersForUser(passenger.user.id);
+      if (first === "leave") {
+        assert.equal(left.status, 204, JSON.stringify(left.body));
+        assertError(created, 409, "NO_DRIVERS");
+        assert.deepEqual(orders, [], "A cached positive availability must not leave a searching order after the final queue row is deleted.");
+        assert.equal(await otherStore.getQueueEntry(driver.user.id), undefined, "Failed creation must not recreate the departed queue enrollment.");
+      } else {
+        assert.equal(created.status, 201, JSON.stringify(created.body));
+        assertError(left, 409, "ACTIVE_ORDER");
+        assert.deepEqual(orders.map(order => order.id), [created.body.order.id]);
+        const order = await otherStore.getOrder(created.body.order.id);
+        const pending = await assertPending(otherStore, driver, order);
+        assert.equal(pending.joinedAt, before.joinedAt);
+        assert.deepEqual(pending.routeContext, before.routeContext);
+        assert.deepEqual(pending.collectionState, before.collectionState);
+        assert.equal(pending.inFifo, before.inFifo);
+      }
+    });
+  }
+});
+
+test("real HTTP creation rechecks the last driver's approval after positive availability and an observed PostgreSQL user lock", { timeout: 20_000 }, async t => {
+  for (const [direction, collecting] of [["a_to_b", false], ["b_to_a", true]]) {
+    await t.test(`${direction}:${collecting ? "collecting" : "configured"}`, async child => {
+      const f = await fixture(child), route = await f.configured(), passenger = await f.createUser("passenger");
+      const driver = await enrollHttp(f, route, direction, collecting);
+      const before = await otherStore.getQueueEntry(driver.user.id);
+      const available = await availabilityHttp(passenger, route, direction);
+      assert.equal(available.status, 200, JSON.stringify(available.body));
+      assert.equal(available.body.available, true);
+      assert.equal(available.body.eligible_driver_count, 1);
+      const blocker = await adminPool.connect(); let pending;
+      try {
+        await blocker.query("BEGIN");
+        await blocker.query(`SELECT id FROM "${schema}".tezjet_users WHERE id = $1 FOR UPDATE`, [driver.user.id]);
+        pending = createHttp(passenger, route, direction);
+        await waitForBlockedTransactions(1);
+        await blocker.query(`UPDATE "${schema}".tezjet_users SET driver_approval_status = 'rejected' WHERE id = $1`, [driver.user.id]);
+        await blocker.query("COMMIT");
+        assertError(await pending, 409, "NO_DRIVERS");
+      } finally {
+        await blocker.query("ROLLBACK"); blocker.release();
+        if (pending) await pending;
+      }
+      assert.deepEqual(await otherStore.listOrdersForUser(passenger.user.id), [], "The eligibility recheck must reject before persisting an order.");
+      assert.deepEqual(await otherStore.getQueueEntry(driver.user.id), before, "Losing approval must not debit seats or change the queue, manifest or enrollment.");
+      const unavailable = await availabilityHttp(passenger, route, direction);
+      assert.equal(unavailable.status, 200, JSON.stringify(unavailable.body));
+      assert.equal(unavailable.body.available, false);
+      assert.equal(unavailable.body.eligible_driver_count, 0);
+      await store.setDriverApproval(driver.user.id, "approved");
+      const retried = await createHttp(passenger, route, direction);
+      assert.equal(retried.status, 201, JSON.stringify(retried.body));
+      assert.deepEqual((await otherStore.listOrdersForUser(passenger.user.id)).map(order => order.id), [retried.body.order.id]);
+      await assertPending(otherStore, driver, await otherStore.getOrder(retried.body.order.id));
+    });
+  }
+});
+
 test("real PostgreSQL admin update ordered before configured HTTP creation invalidates its cached route version without a seat debit", { timeout: 20_000 }, async t => {
   const f = await fixture(t), route = await f.configured(), passenger = await f.createUser("passenger"), driver = await f.enqueue(route), admin = await f.createUser("admin");
   const results = await overlapping("tezjet_routes", "id", route.id, [
