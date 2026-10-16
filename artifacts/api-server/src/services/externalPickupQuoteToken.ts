@@ -8,6 +8,7 @@ import { AppError } from "../utils/errors";
 const PURPOSE = "external-pickup-v1";
 const MAX_TOKEN_BYTES = 12 * 1024;
 // An access token signed with JWT_SECRET cannot authenticate as a pickup quote.
+// Retain the legacy derivation domain so already issued quotes remain valid.
 const quoteSigningKey = createHmac("sha256", JWT_SECRET)
   .update("TezJet/external-pickup-quote/v1", "utf8")
   .digest();

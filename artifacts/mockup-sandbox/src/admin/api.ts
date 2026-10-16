@@ -3,7 +3,7 @@
  *
  * Credentials are held only in React memory; this module never persists,
  * logs, or embeds them into URLs. The server still enforces admin JWT access.
- * In development Vite proxies /api to the TezJet backend.
+ * In development Vite proxies /api to the Onay backend.
  */
 export type AdminRecord = {
   id: string;
@@ -85,7 +85,7 @@ export async function verifyAdminOtp(phone: string, code: string): Promise<Admin
     { method: "POST", body: { phone_number: phone.trim(), code: code.trim() } },
   );
   if (!result.access_token || result.user?.role !== "admin") {
-    throw new AdminApiError(403, "Доступ разрешён только администратору TezJet.");
+    throw new AdminApiError(403, "Доступ разрешён только администратору Onay.");
   }
   return { token: result.access_token, user: result.user };
 }

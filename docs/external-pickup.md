@@ -28,7 +28,7 @@ Configure policy before drivers save the new route version and enroll. Policy/la
 
 ## Road routing
 
-Set `TEZJET_OSRM_URL` to an operator-controlled OSRM-compatible base URL. It must support the [OSRM Table service](https://project-osrm.org/docs/v5.24.0/api/#table-service) with distance and duration annotations. No provider is selected automatically, and no straight-line billing fallback is used. A missing, failed, redirected, malformed or timed-out provider produces a controlled `503 ROUTING_UNAVAILABLE` without creating an order or reserving seats.
+Set `ONAY_OSRM_URL` to an operator-controlled OSRM-compatible base URL. It must support the [OSRM Table service](https://project-osrm.org/docs/v5.24.0/api/#table-service) with distance and duration annotations. No provider is selected automatically, and no straight-line billing fallback is used. A missing, failed, redirected, malformed or timed-out provider produces a controlled `503 ROUTING_UNAVAILABLE` without creating an order or reserving seats.
 
 The service evaluates all eligible drivers, in batches of up to 50 with two concurrent requests, up to 500 candidates. Larger fleets fail explicitly rather than being truncated. Each request has a five-second deadline and the entire operation ten seconds. Responses are bounded to 1 MiB. Unreachable matrix entries are excluded; failure of a batch fails the whole quotation. Distances are those of the provider's fastest driving routes, not shortest-path guarantees or live traffic predictions. Raw road metres determine the nearest eligible driver; ties use FIFO time, then driver ID.
 

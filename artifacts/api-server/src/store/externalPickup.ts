@@ -14,6 +14,7 @@ import { isCollecting } from "./lineCollection";
 type ExternalDetails = Pick<Order, "pickupPoint" | "routeContext" | "routeStops" | "fare" | "destination">;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const settingsKeys = ["enabled", "serviceRadiusMeters", "pricePerKmKzt", "gpsMaxAgeSeconds", "quoteTtlSeconds", "pickupGraceSeconds", "maxPickupSeconds", "fareRounding"] as const;
+// Retain the legacy derivation domain for persisted driver-location fingerprints.
 const locationFingerprintKey = createHmac("sha256", JWT_SECRET)
   .update("TezJet/external-pickup-driver-location/v1").digest();
 

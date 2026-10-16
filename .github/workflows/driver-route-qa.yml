@@ -5,7 +5,7 @@ on:
     paths:
       - "artifacts/api-server/**"
       - "lib/db/**"
-      - "mobile/tezjet-app/**"
+      - "mobile/onay-app/**"
       - "scripts/driver-route-browser-qa.py"
       - ".github/workflows/driver-route-qa.yml"
       - "package.json"
@@ -19,7 +19,7 @@ on:
     paths:
       - "artifacts/api-server/**"
       - "lib/db/**"
-      - "mobile/tezjet-app/**"
+      - "mobile/onay-app/**"
       - "scripts/driver-route-browser-qa.py"
       - ".github/workflows/driver-route-qa.yml"
       - "package.json"
@@ -50,20 +50,20 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: tezjet_driver_route_qa
+          POSTGRES_DB: onay_driver_route_qa
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d tezjet_driver_route_qa"
+          --health-cmd "pg_isready -U postgres -d onay_driver_route_qa"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
     env:
-      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tezjet_driver_route_qa
-      TEZJET_STORAGE_ADAPTER: postgres
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/onay_driver_route_qa
+      ONAY_STORAGE_ADAPTER: postgres
       NODE_ENV: development
       ADMIN_PHONE: "+998900000001"
-      SESSION_SECRET: tezjet-driver-route-qa-session-secret-at-least-32-characters
+      SESSION_SECRET: onay-driver-route-qa-session-secret-at-least-32-characters
       EXPO_PUBLIC_API_URL: http://127.0.0.1:5000
       CI: "true"
     steps:
@@ -102,19 +102,19 @@ jobs:
         run: node --test artifacts/api-server/test/*.test.mjs
 
       - name: Install separate Expo app dependencies
-        working-directory: mobile/tezjet-app
+        working-directory: mobile/onay-app
         run: pnpm install --ignore-workspace
 
       - name: Typecheck Expo app
-        working-directory: mobile/tezjet-app
+        working-directory: mobile/onay-app
         run: pnpm run typecheck
 
       - name: Test Expo app
-        working-directory: mobile/tezjet-app
+        working-directory: mobile/onay-app
         run: pnpm run test
 
       - name: Export actual Expo app for web
-        working-directory: mobile/tezjet-app
+        working-directory: mobile/onay-app
         run: pnpm exec expo export --platform web --output-dir dist
 
       - name: Install pinned browser tooling
@@ -134,8 +134,8 @@ jobs:
 
       - name: Serve actual exported Expo app
         run: |
-          test -f mobile/tezjet-app/dist/index.html
-          setsid python -m http.server 4174 --bind 127.0.0.1 --directory mobile/tezjet-app/dist > artifacts/driver-route-qa/frontend.log 2>&1 &
+          test -f mobile/onay-app/dist/index.html
+          setsid python -m http.server 4174 --bind 127.0.0.1 --directory mobile/onay-app/dist > artifacts/driver-route-qa/frontend.log 2>&1 &
           echo "$!" > artifacts/driver-route-qa/frontend.pid
 
       - name: Wait for API and exported Expo app

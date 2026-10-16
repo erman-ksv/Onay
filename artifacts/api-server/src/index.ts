@@ -32,7 +32,7 @@ async function start(): Promise<void> {
 
   httpServer.on("error", failStartup);
   httpServer.listen(port, () => {
-    logger.info({ port }, "TezJet API and realtime server listening");
+    logger.info({ port }, "Onay API and realtime server listening");
   });
 }
 

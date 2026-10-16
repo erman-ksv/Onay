@@ -1,3 +1,4 @@
+import { isolateApplicationEnvironment } from "./environment.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -13,7 +14,8 @@ const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const schema = `otp_limits_${randomUUID().replaceAll("-", "")}`;
 const applicationName = `otp-limits-${randomUUID()}`;
 const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes"];
-const envKeys = ["DATABASE_URL", "TEZJET_STORAGE_ADAPTER", "NODE_ENV", "SESSION_SECRET", "LOG_LEVEL", "ADMIN_PHONE", "TEZJET_OTP_IP_MAX"];
+const envKeys = ["DATABASE_URL", "ONAY_STORAGE_ADAPTER", "NODE_ENV", "SESSION_SECRET", "LOG_LEVEL", "ADMIN_PHONE", "ONAY_OTP_IP_MAX"];
+let restoreApplicationEnvironment = () => {};
 const originalEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
 const processes = new Set();
 let production;
@@ -29,6 +31,7 @@ let schemaCreated = false;
 let phoneSequence = 0;
 
 before(async () => {
+  restoreApplicationEnvironment = isolateApplicationEnvironment();
   assert.ok(process.env.DATABASE_URL, "DATABASE_URL is required: OTP protection must be tested against actual PostgreSQL.");
   const originalUrl = process.env.DATABASE_URL;
   const isolated = new URL(originalUrl);
@@ -36,12 +39,12 @@ before(async () => {
   isolated.searchParams.set("application_name", applicationName);
   isolatedDatabaseUrl = isolated.href;
   process.env.DATABASE_URL = isolatedDatabaseUrl;
-  process.env.TEZJET_STORAGE_ADAPTER = "postgres";
+  process.env.ONAY_STORAGE_ADAPTER = "postgres";
   process.env.NODE_ENV = "test";
   process.env.SESSION_SECRET = "otp-protection-integration-secret-at-least-32-characters";
   process.env.LOG_LEVEL = "silent";
   delete process.env.ADMIN_PHONE;
-  delete process.env.TEZJET_OTP_IP_MAX;
+  delete process.env.ONAY_OTP_IP_MAX;
   moduleDirectory = await mkdtemp(path.join(apiRoot, ".otp-limits-test-"));
   const entry = path.join(moduleDirectory, "production.mjs");
   await build({
@@ -92,6 +95,7 @@ after(async () => {
   } finally {
     if (adminPool) await adminPool.end();
     if (moduleDirectory) await rm(moduleDirectory, { recursive: true, force: true });
+    restoreApplicationEnvironment();
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
@@ -554,7 +558,7 @@ async function stopChild(child) {
 async function startChild(port) {
   const child = spawn(process.execPath, ["--enable-source-maps", "./dist/index.mjs"], {
     cwd: apiRoot,
-    env: { ...process.env, DATABASE_URL: isolatedDatabaseUrl, TEZJET_STORAGE_ADAPTER: "postgres", NODE_ENV: "test", PORT: String(port), LOG_LEVEL: "silent" },
+    env: { ...process.env, DATABASE_URL: isolatedDatabaseUrl, ONAY_STORAGE_ADAPTER: "postgres", NODE_ENV: "test", PORT: String(port), LOG_LEVEL: "silent" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   processes.add(child);
@@ -626,12 +630,12 @@ test("the committed OTP migration preserves legacy challenges and adds durable r
 test("invalid OTP configuration fails during process startup", { timeout: 20_000 }, async () => {
   const entry = pathToFileURL(path.join(moduleDirectory, "production.mjs")).href;
   const cases = [
-    ["TEZJET_OTP_RESEND_SECONDS", "0"],
-    ["TEZJET_OTP_RESEND_SECONDS", "-1"],
-    ["TEZJET_OTP_RESEND_SECONDS", "1.5"],
-    ["TEZJET_OTP_RESEND_SECONDS", "NaN"],
-    ["TEZJET_OTP_RESEND_SECONDS", "3601"],
-    ...["SEND_WINDOW_SECONDS", "SEND_MAX", "FAILURE_WINDOW_SECONDS", "FAILURE_MAX", "BLOCK_SECONDS", "IP_WINDOW_SECONDS", "IP_MAX"].map(suffix => [`TEZJET_OTP_${suffix}`, "0"]),
+    ["ONAY_OTP_RESEND_SECONDS", "0"],
+    ["ONAY_OTP_RESEND_SECONDS", "-1"],
+    ["ONAY_OTP_RESEND_SECONDS", "1.5"],
+    ["ONAY_OTP_RESEND_SECONDS", "NaN"],
+    ["ONAY_OTP_RESEND_SECONDS", "3601"],
+    ...["SEND_WINDOW_SECONDS", "SEND_MAX", "FAILURE_WINDOW_SECONDS", "FAILURE_MAX", "BLOCK_SECONDS", "IP_WINDOW_SECONDS", "IP_MAX"].map(suffix => [`ONAY_OTP_${suffix}`, "0"]),
   ];
   for (const [name, value] of cases) {
     const child = spawn(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(entry)})`], {

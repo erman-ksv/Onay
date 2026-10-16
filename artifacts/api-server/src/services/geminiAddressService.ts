@@ -91,7 +91,7 @@ export async function normalizeNaturalLanguageAddress(
     );
   }
 
-  const prompt = `You normalize natural-language addresses for TezJet, a rural taxi service.
+  const prompt = `You normalize natural-language addresses for Onay, a rural taxi service.
 Return only valid JSON matching the requested structure.
 Do not invent missing details or coordinates. Set unknown scalar fields to null,
 unknown coordinates to null, confidence to low, and explain uncertainty in notes.

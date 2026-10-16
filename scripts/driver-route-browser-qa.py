@@ -120,11 +120,11 @@ class DriverRouteQA:
     def identity(self):
         require(self.page.url.rstrip("/") == self.args.base_url.rstrip("/"), "Browser must show the actual Expo home page")
         self.expect(self.page.locator("#root")).not_to_be_empty()
-        self.expect(self.page.get_by_text("TezJet Driver", exact=True)).to_be_visible()
+        self.expect(self.page.get_by_text("Onay Driver", exact=True)).to_be_visible()
         self.expect(self.page.get_by_role("button", name="Водитель", exact=True)).to_be_visible()
         require(self.page.locator("vite-error-overlay, nextjs-portal, [data-nextjs-dialog-overlay]").count() == 0, "Framework error overlay is visible")
         require(self.page.get_by_text(re.compile(r"Uncaught Error|Something went wrong|LogBox"), exact=False).count() == 0, "Expo runtime error overlay is visible")
-        self.page_identity = {"url": self.page.url, "title": self.page.title(), "content": "TezJet Driver"}
+        self.page_identity = {"url": self.page.url, "title": self.page.title(), "content": "Onay Driver"}
 
     def admin_login_and_routes(self):
         challenge = expect_status(api_request(self.args.api_url, "/auth/request-otp", method="POST", body={

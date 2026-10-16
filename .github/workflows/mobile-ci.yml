@@ -1,16 +1,18 @@
-name: TezJet Mobile CI
+name: Onay Mobile CI
 
 on:
   pull_request:
     paths:
-      - "mobile/tezjet-app/**"
+      - "mobile/onay-app/**"
       - ".github/workflows/mobile-ci.yml"
   push:
     branches:
       - "main"
+      - "feature/onay-unified-mobile-expo"
+      # Existing development branch remains supported during the naming transition.
       - "feature/tezjet-unified-mobile-expo"
     paths:
-      - "mobile/tezjet-app/**"
+      - "mobile/onay-app/**"
       - ".github/workflows/mobile-ci.yml"
 
 permissions:
@@ -24,10 +26,10 @@ jobs:
   verify-mobile:
     runs-on: ubuntu-latest
     env:
-      EXPO_PUBLIC_API_URL: ${{ vars.TEZJET_API_URL }}
+      EXPO_PUBLIC_API_URL: ${{ vars.ONAY_API_URL || vars.TEZJET_API_URL }}
     defaults:
       run:
-        working-directory: mobile/tezjet-app
+        working-directory: mobile/onay-app
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,6 +45,19 @@ jobs:
         run: pnpm install
       - name: Typecheck
         run: pnpm typecheck
+      - name: Verify resolved Onay application identity
+        run: |
+          pnpm exec expo config --type public --json > onay-public-config.json
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const config = JSON.parse(fs.readFileSync('onay-public-config.json', 'utf8'));
+          assert.equal(config.name, 'Onay');
+          assert.equal(config.slug, 'onay');
+          assert.equal(config.scheme, 'onay');
+          assert.equal(config.android.package, 'uz.onay.app');
+          assert.equal(config.ios.bundleIdentifier, 'uz.onay.app');
+          NODE
       - name: Offer lifecycle and API error regressions
         run: pnpm test
       - name: Export Android and iOS bundles
@@ -65,9 +80,22 @@ jobs:
           NODE
       - name: Assemble Android debug APK
         run: cd android && ./gradlew assembleDebug
+      - name: Verify built APK package and application label
+        run: |
+          sdk_path="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          aapt_path="$(find "$sdk_path/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          test -n "$aapt_path"
+          "$aapt_path" dump badging android/app/build/outputs/apk/debug/app-debug.apk > onay-apk-badging.txt
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const badging = fs.readFileSync('onay-apk-badging.txt', 'utf8');
+          assert.match(badging, /^package: name='uz\.onay\.app'/m);
+          assert.match(badging, /^application-label:'Onay'/m);
+          NODE
       - name: Upload Android debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: tezjet-android-debug-apk
-          path: mobile/tezjet-app/android/app/build/outputs/apk/debug/app-debug.apk
+          name: onay-android-debug-apk
+          path: mobile/onay-app/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error

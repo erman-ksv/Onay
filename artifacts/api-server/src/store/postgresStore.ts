@@ -43,6 +43,7 @@ function otpDigest(code: string): string {
   if (!secret && process.env.NODE_ENV === "production") {
     throw new Error("SESSION_SECRET is required to protect stored OTP challenges");
   }
+  // Retain the legacy development key for OTP challenges already stored locally.
   return createHmac("sha256", secret ?? "tezjet-development-otp-key").update(code).digest("hex");
 }
 

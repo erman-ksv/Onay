@@ -1,17 +1,17 @@
-# TezJet API
+# Onay API
 
-TezJet is a rural taxi hailing backend with OTP registration, single-session JWT
+Onay is a rural taxi hailing backend with OTP registration, single-session JWT
 authentication, an anti-fraud location gate, FIFO driver queuing, Point C seat
 locks, Point D route pooling, and Socket.io realtime events.
 
 ## Natural-language addresses
 
-TezJet can use the Google Gemini API to turn a phrase such as
+Onay can use the Google Gemini API to turn a phrase such as
 `Корасув, рядом со школой` into a structured address:
 
 - `POST /api/addresses/normalize`
   - Body: `{ "address": "..." }`
-  - Requires a TezJet bearer token.
+  - Requires an Onay bearer token.
   - Returns normalized locality, street, house number, landmarks, optional
     coordinates, confidence, and uncertainty notes.
 
@@ -31,9 +31,28 @@ pnpm --filter @workspace/api-server run dev
 
 The managed workflow supplies `PORT`. Set `SESSION_SECRET` for production. Storage selection is explicit:
 
-- Tests use the in-memory adapter.
-- Development uses in-memory storage by default. To test PostgreSQL, set `TEZJET_STORAGE_ADAPTER=postgres` and `DATABASE_URL`.
-- Production refuses to start unless `TEZJET_STORAGE_ADAPTER=postgres` and `DATABASE_URL` are configured; it will not silently run with volatile in-memory data.
+- Regression scenarios use PostgreSQL; focused adapter and boundary checks also exercise in-memory storage.
+- Development uses in-memory storage by default. To test PostgreSQL, set `ONAY_STORAGE_ADAPTER=postgres` and `DATABASE_URL`.
+- Production refuses to start unless `ONAY_STORAGE_ADAPTER=postgres` and `DATABASE_URL` are configured; it will not silently run with volatile in-memory data.
+
+All application-prefixed settings use `ONAY_`: `ONAY_STORAGE_ADAPTER`,
+`ONAY_OFFER_TIMEOUT_SECONDS`, `ONAY_OSRM_URL`, and the `ONAY_OTP_*` limits
+listed below. Set `ONAY_OSRM_URL` to the HTTP(S) base URL of the OSRM service
+when enabling external pickup road routing.
+
+Existing installations may retain the equivalent `TEZJET_` variables during
+rollout. Each `ONAY_` value takes precedence over its matching legacy variable,
+including an explicitly empty value; validation still applies, so an empty or
+zero OTP limit or offer timeout fails startup. An empty routing URL leaves road
+routing unavailable. Production still requires PostgreSQL and a sufficiently
+long `SESSION_SECRET`. Rename environment keys without changing their values,
+`DATABASE_URL`, or `SESSION_SECRET`.
+
+The existing `tezjet_*` PostgreSQL table/index names and committed Drizzle
+migration files/history remain unchanged. Legacy cryptographic development
+keys and pickup quote/location derivation domains also remain byte-identical,
+preserving stored OTP challenges, local sessions, and issued pickup quotes.
+These compatibility identifiers do not affect the Onay product name.
 
 Provision the PostgreSQL database and apply the current Drizzle schema before enabling the PostgreSQL adapter:
 
@@ -54,8 +73,8 @@ pnpm test
 The check builds the API, starts an isolated test server, and verifies OTP
 registration and login session invalidation, FIFO driver queue behavior, Point
 C seat locks and status transitions, Point D pooling, and Socket.io realtime
-events. It uses development OTP responses and does not require external
-services.
+events. It uses development OTP responses and a local PostgreSQL test database;
+no SMS or routing provider is required.
 
 ## API errors and logs
 
@@ -112,14 +131,14 @@ does not continue OTP issuance or verification. No environment disables limits.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `TEZJET_OTP_RESEND_SECONDS` | 60 | Minimum time between accepted sends for a phone |
-| `TEZJET_OTP_SEND_WINDOW_SECONDS` | 3600 | Fixed send window, beginning at its first accepted send |
-| `TEZJET_OTP_SEND_MAX` | 5 | Accepted sends per phone window |
-| `TEZJET_OTP_FAILURE_WINDOW_SECONDS` | 900 | Fixed failure window, beginning at its first failed check |
-| `TEZJET_OTP_FAILURE_MAX` | 5 | Wrong checks before blocking the phone |
-| `TEZJET_OTP_BLOCK_SECONDS` | 900 | Block duration; repeated rejected requests do not extend it |
-| `TEZJET_OTP_IP_WINDOW_SECONDS` | 900 | Shared fixed window for all three OTP endpoints |
-| `TEZJET_OTP_IP_MAX` | 120 | Requests per client IP budget, including invalid input |
+| `ONAY_OTP_RESEND_SECONDS` | 60 | Minimum time between accepted sends for a phone |
+| `ONAY_OTP_SEND_WINDOW_SECONDS` | 3600 | Fixed send window, beginning at its first accepted send |
+| `ONAY_OTP_SEND_MAX` | 5 | Accepted sends per phone window |
+| `ONAY_OTP_FAILURE_WINDOW_SECONDS` | 900 | Fixed failure window, beginning at its first failed check |
+| `ONAY_OTP_FAILURE_MAX` | 5 | Wrong checks before blocking the phone |
+| `ONAY_OTP_BLOCK_SECONDS` | 900 | Block duration; repeated rejected requests do not extend it |
+| `ONAY_OTP_IP_WINDOW_SECONDS` | 900 | Shared fixed window for all three OTP endpoints |
+| `ONAY_OTP_IP_MAX` | 120 | Requests per client IP budget, including invalid input |
 
 All settings must be positive bounded integers; invalid configuration prevents
 startup. Send, failure and IP counters survive restart and are shared by API
@@ -185,7 +204,7 @@ When upgrading an existing PostgreSQL database, stop the previous API and run
 `pnpm --filter @workspace/db run migrate` before starting the new API. Migration
 `0001_order_offers` adds the pending reservation/deadline fields, reopens legacy
 searching offers that have no deadline, and enforces one pending offer per driver.
-Offers last 60 seconds by default; set `TEZJET_OFFER_TIMEOUT_SECONDS` to change
+Offers last 60 seconds by default; set `ONAY_OFFER_TIMEOUT_SECONDS` to change
 the duration. The server checks stored offer deadlines and seat locks on startup
 and every second, so deadlines continue after a process restart. Queue joins,
 departures, rejection, acceptance, cancellation, and status changes also trigger

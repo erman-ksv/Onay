@@ -1,3 +1,4 @@
+import { withoutApplicationEnvironment } from "./environment.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -175,7 +176,7 @@ before(async () => {
   });
   child = spawn(process.execPath, [entry], {
     cwd: apiRoot,
-    env: { ...process.env, NODE_ENV: "production", LOG_LEVEL: "info", DATABASE_URL: isolatedDatabaseUrl, TEZJET_STORAGE_ADAPTER: "postgres", SESSION_SECRET: secret, GEMINI_API_KEY: sentinels.header },
+    env: { ...withoutApplicationEnvironment(), NODE_ENV: "production", LOG_LEVEL: "info", DATABASE_URL: isolatedDatabaseUrl, ONAY_STORAGE_ADAPTER: "postgres", SESSION_SECRET: secret, GEMINI_API_KEY: sentinels.header },
     stdio: ["ignore", "pipe", "pipe", "ipc"],
   });
   child.stdout.setEncoding("utf8");
@@ -410,7 +411,7 @@ test("actual server startup SQL failure exits cleanly with sanitized JSON loggin
   emptySchemaCreated = true;
   const startup = spawn(process.execPath, [path.join(apiRoot, "dist/index.mjs")], {
     cwd: apiRoot,
-    env: { ...process.env, NODE_ENV: "production", LOG_LEVEL: "info", DATABASE_URL: privateUrl(process.env.DATABASE_URL, emptySchema), TEZJET_STORAGE_ADAPTER: "postgres", SESSION_SECRET: secret, PORT: "34883" },
+    env: { ...withoutApplicationEnvironment(), NODE_ENV: "production", LOG_LEVEL: "info", DATABASE_URL: privateUrl(process.env.DATABASE_URL, emptySchema), ONAY_STORAGE_ADAPTER: "postgres", SESSION_SECRET: secret, PORT: "34883" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stdout = "";

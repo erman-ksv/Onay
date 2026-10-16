@@ -1,3 +1,4 @@
+import { withoutApplicationEnvironment } from "./environment.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -175,13 +176,13 @@ function startApiServer(overrides = {}) {
   return spawn(process.execPath, ["--enable-source-maps", "./dist/index.mjs"], {
     cwd: new URL("..", import.meta.url),
     env: {
-      ...process.env,
+      ...withoutApplicationEnvironment(),
       DATABASE_URL: isolatedDatabaseUrl,
-      TEZJET_STORAGE_ADAPTER: "postgres",
-      TEZJET_OFFER_TIMEOUT_SECONDS: "60",
+      ONAY_STORAGE_ADAPTER: "postgres",
+      ONAY_OFFER_TIMEOUT_SECONDS: "60",
       NODE_ENV: "test",
       PORT: String(port),
-      SESSION_SECRET: "tezjet-test-session-secret",
+      SESSION_SECRET: "onay-test-session-secret",
       ADMIN_PHONE: "+77771000099",
       ...overrides,
     },
@@ -530,7 +531,7 @@ test("the real HTTP timer withdraws an expired offer, advances FIFO, and cancell
   // here; no clock, Store method, controller, Socket server, or SQL is mocked.
   for (const socket of sockets) socket.disconnect();
   await stopApiServer();
-  serverProcess = startApiServer({ TEZJET_OFFER_TIMEOUT_SECONDS: "1" });
+  serverProcess = startApiServer({ ONAY_OFFER_TIMEOUT_SECONDS: "1" });
   await waitForServer();
   const passenger = await registerUser("+77771000011", "passenger", "Timer Passenger");
   const firstDriver = await registerUser("+77771000012", "driver", "Timer Driver One");
