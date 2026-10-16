@@ -6,6 +6,7 @@ import { ActivityIndicator, Alert, AppState, Pressable, ScrollView, StyleSheet, 
 import { API, ApiError, errorMessage, request, setApiEndpoint, validateApiEndpoint, type Availability } from "../lib/api";
 import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextTripLabel, nextTripStatus, statusLabels, type RideOrder } from "../lib/orders";
 import DriverRoutePicker from "../components/DriverRoutePicker";
+import { registrationFullName } from "../lib/registration";
 import { canJoinDriverQueue, driverQueueChoiceInput, driverRouteSessionKey, type DriverQueueContext, type DriverRouteGate } from "../lib/driver-routes";
 
 const TOKEN = "tezjet_access_token";
@@ -32,6 +33,8 @@ export default function Home() {
   const [token, setToken] = useState("");
   const [profile, setProfile] = useState<Profile | null>(null);
   const [name, setName] = useState("");
+  const [surname, setSurname] = useState("");
+  const [registering, setRegistering] = useState(false);
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [demoCode, setDemoCode] = useState("");
@@ -311,11 +314,16 @@ export default function Home() {
   }, [token, profile?.id, activeRole, driverApproved, refreshOrders, applyOrder]);
 
   async function login(verify: boolean) {
+    const fullName = registering ? registrationFullName(name, surname) : null;
+    if (registering && !fullName) {
+      Alert.alert("Имя и фамилия", "Укажи имя и фамилию. Общая длина — не более 120 символов.");
+      return;
+    }
     setBusy(true);
     try {
       const r = await request<{ access_token?: string; demo_code?: string }>(verify ? "/api/auth/verify-otp" : "/api/auth/request-otp", undefined, {
         method: "POST",
-        body: JSON.stringify({ phone_number: phone.trim(), full_name: name.trim(), code: otp.trim(), role: mode, locale: "ru" })
+        body: JSON.stringify({ phone_number: phone.trim(), ...(registering ? { full_name: fullName } : {}), code: otp.trim(), role: mode, locale: "ru" })
       });
       if (verify && r.access_token) {
         await AsyncStorage.setItem(TOKEN, r.access_token);
@@ -527,10 +535,17 @@ export default function Home() {
     {visibleError ? <View style={s.card}><Text style={s.heading}>Нет актуальных данных</Text><Text style={s.descDark}>{visibleError}</Text><Button title="Повторить обновление" onPress={() => { void refreshOrders(); void refreshAvailability(); setProfileRefresh(value => value + 1); }} secondary disabled={busy} /></View> : null}
 
     {sessionLoading ? <View style={s.card}><ActivityIndicator color="#0D735C" /><Text style={s.descDark}>Восстанавливаем вход…</Text></View> : !token ? <View style={s.card}>
-      <Text style={s.heading}>{mode === "driver" ? "Вход или регистрация водителя" : "Вход по телефону"}</Text>
-      <TextInput style={s.input} value={name} onChangeText={setName} placeholder="Твоё имя" autoCapitalize="words" />
+      <Text style={s.heading}>{registering ? (mode === "driver" ? "Регистрация водителя" : "Регистрация пассажира") : "Вход по телефону"}</Text>
+      <View style={s.switch}>
+        <Button title="Войти" onPress={() => { setRegistering(false); setRequested(false); setOtp(""); setDemoCode(""); }} secondary={registering} disabled={busy} testID="auth-signin-mode" />
+        <Button title="Регистрация" onPress={() => { setRegistering(true); setRequested(false); setOtp(""); setDemoCode(""); }} secondary={!registering} disabled={busy} testID="auth-signup-mode" />
+      </View>
+      {registering ? <>
+        <TextInput style={s.input} value={name} onChangeText={setName} placeholder="Имя" autoCapitalize="words" autoCorrect={false} testID="registration-given-name" />
+        <TextInput style={s.input} value={surname} onChangeText={setSurname} placeholder="Фамилия" autoCapitalize="words" autoCorrect={false} testID="registration-family-name" />
+      </> : null}
       <TextInput style={s.input} value={phone} onChangeText={setPhone} placeholder="+998 90 123 45 67" keyboardType="phone-pad" />
-      {requested ? <>{demoCode ? <Text style={s.note}>Тестовый код: {demoCode}</Text> : <Text style={s.note}>Введи код подтверждения, полученный через настроенный сервис авторизации.</Text>}<TextInput style={s.input} value={otp} onChangeText={setOtp} placeholder="Код подтверждения" keyboardType="number-pad" /><Button title={busy ? "Проверяем…" : mode === "driver" ? "Продолжить как водитель" : "Войти как пассажир"} onPress={() => login(true)} disabled={busy || !apiBase || !otp.trim()} /></> : <Button title={busy ? "Отправляем…" : "Получить код"} onPress={() => login(false)} disabled={busy || !apiBase || !phone.trim() || !name.trim()} />}
+      {requested ? <>{demoCode ? <Text style={s.note}>Тестовый код: {demoCode}</Text> : <Text style={s.note}>Введи код подтверждения, полученный через настроенный сервис авторизации.</Text>}<TextInput style={s.input} value={otp} onChangeText={setOtp} placeholder="Код подтверждения" keyboardType="number-pad" /><Button title={busy ? "Проверяем…" : mode === "driver" ? "Продолжить как водитель" : "Войти как пассажир"} onPress={() => login(true)} disabled={busy || !apiBase || !otp.trim()} /></> : <Button title={busy ? "Отправляем…" : "Получить код"} onPress={() => login(false)} disabled={busy || !apiBase || !phone.trim() || (registering && !registrationFullName(name, surname))} />}
       {profileError ? <Text style={s.note}>{profileError}</Text> : null}
       {busy ? <ActivityIndicator style={s.loader} color="#0D735C" /> : null}
       {mode === "driver" ? <Text style={s.small}>Новый водительский профиль будет ожидать подтверждения администратора. До подтверждения заказы недоступны.</Text> : null}
