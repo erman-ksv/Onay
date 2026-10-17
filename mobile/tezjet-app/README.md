@@ -15,7 +15,7 @@ From this directory, run `pnpm install` and then `pnpm start`. Scan the Expo QR 
 ## Passenger mode
 
 - Phone OTP sign-in.
-- Select pickup C/D and any configured destination stop and estimate fare. Order creation stays disabled until the quote matches the selected route.
+- For normal A↔B orders choose an administrator-configured route and direction, verify current server availability and fare, then provide actual phone GPS at booking. This first mobile increment uses origin-pitak to opposite-pitak rides; intermediate stops and external pickups are separate UI work.
 - Select 1–8 passengers.
 - Create an order with pickup coordinates. The current API requires those coordinates, so order creation stops if location permission is declined.
 
@@ -26,7 +26,7 @@ From this directory, run `pnpm install` and then `pnpm start`. Scan the Expo QR 
 - Approved drivers can join/leave the queue, update their location, receive incoming offers over Socket.IO, accept orders, and advance the trip status.
 - Approved drivers can view administrator-configured routes, select A → B or B → A with actual endpoint names and ordered stops, and explicitly save the choice. The API restores the saved choice after sign-in or reload; changing servers or sessions loads that session's choice again before queue entry is available.
 - Saved A → B choices join the administrator-configured pitak A; B → A choices join pitak B. The location button requests device coordinates and the server checks the actual endpoint radius. The exact saved route/direction/version accompanies the request; queue geometry is derived on the server. Enrollment and lane position survive reload. Exit the queue before changing the route.
-- Configured A/B queue enrollment is separate from the legacy C/D order flow. Positions are counted per route and pitak. Configured drivers do not receive legacy orders; configured-route order dispatch remains a later development stage and the app states that those orders are unavailable. Clear a choice to use the existing legacy queue. Existing offers and trip controls continue to work.
+- Configured A/B queue enrollment is separate from the legacy C/D order flow. Positions are counted per route and pitak. Configured drivers do not receive legacy orders. Passenger configured-route orders use /api/orders/route and configured FIFO dispatch; line collection and manual departure are separate mobile follow-up work. Clear a choice to use the existing legacy queue. Existing offers and trip controls continue to work.
 - Route changes and clearing are unavailable while queued, on a trip, answering an offer, or performing another action. If an administrator changes a route during save, the app refreshes the catalog, keeps the route/direction draft, and requires another explicit save after reviewing the stops. An unavailable saved route remains visible until it is replaced or cleared.
 - The API checks both seat capacity and whether the driver is at or demonstrably approaching the pickup. Merely being at another pickup point is not enough.
 - Signed-in users switch modes through `POST /api/auth/switch-role`; the API returns a new token and preserves the account's roles and driver approval. No extra OTP is needed for an authenticated switch.
