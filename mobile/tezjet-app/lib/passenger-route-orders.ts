@@ -1,5 +1,5 @@
-import { ApiError } from "./api";
-import { orderedDriverStops, parseDriverRoute, type DriverDirection, type DriverRouteOption } from "./driver-routes";
+import { ApiError } from "./api.ts";
+import { orderedDriverStops, parseDriverRoute, type DriverDirection, type DriverRouteOption } from "./driver-routes.ts";
 export type PassengerRoute = DriverRouteOption & { currency: "KZT"; pricePerStopKzt: number };
 export type PassengerRouteAvailability = { available: boolean; eligible_driver_count: number; offer_timeout_seconds: number; fare: { currency: "KZT"; totalKzt: number } };
 function invalid(): never { throw new ApiError("Некорректные данные маршрута. Повтори обновление.", undefined, "INVALID_RESPONSE"); }
