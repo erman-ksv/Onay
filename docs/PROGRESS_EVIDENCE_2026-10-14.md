@@ -26,6 +26,31 @@ This register records **verified GitHub changes** only. It is not a new percenta
 
 All seven PRs were checked as **merged**. Each linked final CI run had **conclusion=success**. This means these changes are verified in CI, not that each maps to a unique checklist item or was tested on physical devices.
 
+## Recovered original section 9: Admin panel — 12 items
+
+The earlier full checklist was described as **section 9: 0 of 12 completed at baseline**. The following names are recovered from that prior checklist discussion, **not original globally unique item IDs**. The section is about delivering the **admin panel workflow**, so API-only improvements do not automatically satisfy each combined UI/backend requirement.
+
+| # within section 9 | Original admin-panel requirement | Evidence from merged work | Outstanding acceptance gap | Fully confirmed new item? |
+| --- | --- | --- | --- | --- |
+| 1 | Administrator authorization | Existing admin JWT and `requireRole("admin")` protect endpoints | Usable end-to-end admin login/panel and its acceptance not established here | No |
+| 2 | Passenger and driver lists | [#24](https://github.com/erman-ksv/TezJet/pull/24) adds passenger API; driver API already existed | Admin UI for both directories and acceptance not shown | No |
+| 3 | Approve and block drivers | Existing driver approval endpoint | Explicit driver-block workflow, UI and checks not established | No |
+| 4 | Manage A/B pitaks and route stops | Existing route/stop catalog; [#29](https://github.com/erman-ksv/TezJet/pull/29) single-route read; [#30](https://github.com/erman-ksv/TezJet/pull/30) active filter | Persistent configurable A/B pitaks, independent semantics and admin UI missing/not verified | No |
+| 5 | Configure tariffs per stop | Existing route fare CRUD and #29 route read | End-to-end admin tariff editing/acceptance not established | No |
+| 6 | Change the 60-second offer timeout | Existing environment-configurable server timeout | Admin control with persisted settings and behavior tests not established | No |
+| 7 | View queues in real time | [#28](https://github.com/erman-ksv/TezJet/pull/28) adds read-only FIFO snapshot API | Realtime admin updates/dashboard and acceptance not established | No |
+| 8 | View and cancel orders | [#25](https://github.com/erman-ksv/TezJet/pull/25) read-only order API; [#26](https://github.com/erman-ksv/TezJet/pull/26) status filters | Administrative cancellation workflow and panel not established | No |
+| 9 | Monitor active trips | #26 has `active` order-status filter | Real-time active-trip monitoring screen and workflow not established | No |
+| 10 | Action and dispute log | No evidence from #24–#30 | Audit/event log and dispute workflow not established | No |
+| 11 | Staff roles and privileges | Existing admin-only API guard | Granular staff roles and permission management not established | No |
+| 12 | Trip and revenue statistics | [#27](https://github.com/erman-ksv/TezJet/pull/27) provides aggregate trip counts | Revenue statistics and complete panel/reporting flow not established | No |
+
+**Reconciliation result for section 9:** 7 merged PRs implement verified **partial capabilities** mapped to the 12 tasks above. **0 additional fully accepted section-9 rows can currently be proved** from those PRs. This is not the claim that zero lines of code were implemented: every PR has a successful CI run (listed above). It means the checklist counts whole requirements, and the available evidence does not prove full end-to-end acceptance for any of these combined rows.
+
+**Conservative post-PR count:** retain **70/151 = 46.4% (historical baseline, no verified increment from #24–#30)**. This is **not** a fresh audit of all 151 rows or an estimate of release readiness. The previous hypothetical 77/151 = 51.0% must **not** be presented as the confirmed number.
+
+To raise this metric accurately: finish a complete original section-9 item (including admin UI, required operations, tests and review), record exact original item ID and evidence, verify it was previously uncounted, then add **one** to numerator; do not count API endpoints or PRs as rows by default.
+
 ## Pending reconciliation
 
 - [ ] Retrieve or reconstruct the **original 151-item TezJet checklist**, preserving original item IDs and baseline completion flags.
