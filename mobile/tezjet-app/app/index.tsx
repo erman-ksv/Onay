@@ -3,16 +3,15 @@ import * as Location from "expo-location";
 import { io } from "socket.io-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { API, ApiError, errorMessage, request, setApiEndpoint, validateApiEndpoint, type Availability } from "../lib/api";
+import { API, ApiError, errorMessage, request, setApiEndpoint, validateApiEndpoint } from "../lib/api";
 import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextTripLabel, nextTripStatus, statusLabels, type RideOrder } from "../lib/orders";
 import DriverRoutePicker from "../components/DriverRoutePicker";
+import { parsePassengerRouteCatalog, parsePassengerRouteAvailability, passengerRouteEndpoints, passengerRouteKey, passengerRouteAvailabilityPath, passengerRouteOrderPayload, type PassengerRoute, type PassengerRouteAvailability } from "../lib/passenger-route-orders";
 import { canJoinDriverQueue, driverQueueChoiceInput, driverRouteSessionKey, type DriverQueueContext, type DriverRouteGate } from "../lib/driver-routes";
 
 const TOKEN = "tezjet_access_token";
 const API_ENDPOINT = "tezjet_api_endpoint";
 type Mode = "passenger" | "driver";
-type Stop = { id: string; code: string; name: string; sequence: number; position: number };
-type Fare = { totalKzt: number; currency: string; distanceStops: number };
 type Profile = { id: string; role: string; active_role?: string; roles?: string[]; driver_approval_status?: "pending" | "approved" | "rejected"; full_name?: string };
 
 function Button({ title, onPress, disabled = false, secondary = false, testID }: { title: string; onPress: () => void; disabled?: boolean; secondary?: boolean; testID?: string }) {
@@ -36,11 +35,9 @@ export default function Home() {
   const [otp, setOtp] = useState("");
   const [demoCode, setDemoCode] = useState("");
   const [requested, setRequested] = useState(false);
-  const [stops, setStops] = useState<Stop[]>([]);
-  const [a, setA] = useState("");
-  const [b, setB] = useState("");
-  const [fare, setFare] = useState<(Fare & { pickup: string; destination: string }) | null>(null);
-  const [address, setAddress] = useState("");
+  const [passengerRoutes, setPassengerRoutes] = useState<PassengerRoute[]>([]);
+  const [selectedRouteId, setSelectedRouteId] = useState("");
+  const [passengerDirection, setPassengerDirection] = useState<"a_to_b" | "b_to_a">("a_to_b");
   const [seats, setSeats] = useState(1);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -64,7 +61,7 @@ export default function Home() {
   const [routeError, setRouteError] = useState("");
   const [availabilityError, setAvailabilityError] = useState("");
   const [profileRefresh, setProfileRefresh] = useState(0);
-  const [availability, setAvailability] = useState<{ pickup: string; seats: number; available: boolean; checkedAt: number } | null>(null);
+  const [availability, setAvailability] = useState<{ key: string; available: boolean; checkedAt: number; fare: PassengerRouteAvailability["fare"] | null } | null>(null);
   const [checkingAvailability, setCheckingAvailability] = useState(false);
   const [now, setNow] = useState(Date.now());
   const activeRole = profile?.active_role ?? profile?.role;
@@ -87,9 +84,11 @@ export default function Home() {
   const activeDriverOrders = orders.filter(order => !isClosed(order) && order.driver_id === profile?.id);
   const passengerOrders = orders.filter(order => order.passenger_id === profile?.id);
   const passengerHasActiveOrder = passengerOrders.some(order => !isClosed(order));
-  const availabilityFresh = availability?.pickup === a && availability?.seats === seats && now - availability.checkedAt < 15_000;
-  const canOrder = activeRole === "passenger" && availabilityFresh && availability?.available === true;
-  const fareFresh = fare?.pickup === a && fare?.destination === b;
+  const selectedRoute = passengerRoutes.find(route => route.id === selectedRouteId);
+  const selectedEndpoints = selectedRoute ? passengerRouteEndpoints(selectedRoute, passengerDirection) : null;
+  const selectedKey = selectedRoute ? passengerRouteKey(selectedRoute, passengerDirection, seats) : "";
+  const availabilityFresh = !!selectedKey && availability?.key === selectedKey && now - availability.checkedAt < 15_000;
+  const canOrder = activeRole === "passenger" && availabilityFresh && availability?.available === true && !passengerHasActiveOrder;
   const visibleError = dataError || routeError || (profile ? profileError : "");
 
   useEffect(() => {
@@ -128,7 +127,7 @@ export default function Home() {
     orderChanges.current.clear(); orderRevision.current += 1; queueRevision.current += 1;
     setToken(""); setProfile(null); setOrders([]); setIncomingOrder(null);
     setProfileLoading(false); setProfileError("");
-    setStops([]); setFare(null); setAvailability(null); setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null);
+    setPassengerRoutes([]); setSelectedRouteId(""); setAvailability(null); setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null);
     setDataError(""); setRouteError(""); setAvailabilityError("");
     try { await AsyncStorage.removeItem(TOKEN); return true; }
     catch { setProfileError("Не удалось удалить сохранённый вход на устройстве. Попробуй выйти ещё раз."); return false; }
@@ -149,7 +148,7 @@ export default function Home() {
   }
 
   useEffect(() => {
-    if (!token) { setProfile(null); setStops([]); setFare(null); setProfileLoading(false); return; }
+    if (!token) { setProfile(null); setPassengerRoutes([]); setSelectedRouteId(""); setProfileLoading(false); return; }
     let active = true;
     setProfileLoading(true); setProfileError("");
     (async () => {
@@ -170,33 +169,22 @@ export default function Home() {
   }, [token, apiBase, profileRefresh, clearSession]);
 
   useEffect(() => {
-    if (!token || activeRole !== "passenger") { setStops([]); setFare(null); return; }
-    let active = true;
-    request<{ stops: Stop[] }>("/api/fares/stops?route_id=pyatak", token)
-      .then(route => {
-        if (!active) return;
-        const list = route.stops || [];
-        setRouteError("");
-        setStops(list);
-        const pickups = list.filter(stop => stop.code === "C" || stop.code === "D");
-        if (pickups.length) {
-          setA(value => pickups.some(stop => stop.code === value) ? value : pickups[0].code);
-          setB(value => list.some(stop => stop.code === value) ? value : (list.find(stop => stop.code !== pickups[0].code)?.code ?? ""));
-        } else { setA(""); setB(""); setRouteError("На маршруте нет доступных точек подачи C или D."); }
-      })
-      .catch(e => { if (active) setRouteError(errorMessage(e, "Не удалось загрузить маршрут.")); });
-    return () => { active = false; };
-  }, [token, activeRole, profileRefresh]);
-
-  useEffect(() => {
-    if (!token || activeRole !== "passenger" || !a || !b || a === b) { setFare(null); return; }
-    let active = true;
-    setFare(null);
-    request<{ fare: Fare }>("/api/fares/estimate", token, { method: "POST", body: JSON.stringify({ route_id: "pyatak", pickup_stop: a, destination_stop: b }) })
-      .then(r => { if (active) { setFare({ ...r.fare, pickup: a, destination: b }); setRouteError(""); } })
-      .catch(e => { if (active) { setFare(null); setRouteError(errorMessage(e, "Не удалось рассчитать цену.")); } });
-    return () => { active = false; };
-  }, [token, activeRole, a, b, profileRefresh]);
+    if (!token || activeRole !== "passenger") { setPassengerRoutes([]); setSelectedRouteId(""); return; }
+    let live = true;
+    request<unknown>("/api/orders/routes", token).then(raw => {
+      if (!live || currentToken.current !== token) return;
+      const routes = parsePassengerRouteCatalog(raw);
+      setPassengerRoutes(routes);
+      setSelectedRouteId(id => routes.some(r => r.id === id) ? id : (routes[0]?.id ?? ""));
+      setAvailability(null);
+      setRouteError(routes.length ? "" : "Администратор пока не добавил маршрут A↔B.");
+    }).catch(e => {
+      if (!live || currentToken.current !== token) return;
+      setPassengerRoutes([]); setSelectedRouteId(""); setAvailability(null);
+      setRouteError(errorMessage(e, "Не удалось загрузить маршруты."));
+    });
+    return () => { live = false; };
+  }, [token, apiBase, activeRole, profileRefresh]);
 
   const refreshOrders = useCallback(async () => {
     if (!token || !profile?.id || (activeRole !== "passenger" && !driverApproved)) return;
@@ -234,27 +222,27 @@ export default function Home() {
   }, [token, apiBase, profile?.id, activeRole, driverApproved, clearSession]);
 
   const refreshAvailability = useCallback(async () => {
-    if (!token || activeRole !== "passenger" || !a) return null;
+    if (!token || activeRole !== "passenger" || !selectedRoute) {
+      ++availabilityGeneration.current; setAvailability(null); setCheckingAvailability(false); return null;
+    }
     const generation = ++availabilityGeneration.current;
+    const key = passengerRouteKey(selectedRoute, passengerDirection, seats);
     setCheckingAvailability(true);
     try {
-      const result = await request<Availability>(`/api/orders/availability?pickup_point=${encodeURIComponent(a)}&seats=${seats}`, token);
-      if (typeof result?.available !== "boolean") throw new ApiError("Не удалось проверить наличие водителей. Повтори обновление.", undefined, "INVALID_RESPONSE");
-      if (currentToken.current !== token) return null;
-      if (availabilityGeneration.current === generation) {
-        setAvailability({ pickup: a, seats, available: result.available === true, checkedAt: Date.now() });
-        setAvailabilityError("");
-      }
-      return result.available === true;
+      const raw = await request<unknown>(passengerRouteAvailabilityPath(selectedRoute, passengerDirection, seats), token);
+      const result = parsePassengerRouteAvailability(raw);
+      if (currentToken.current !== token || generation !== availabilityGeneration.current) return null;
+      setAvailability({ key, available: result.available, checkedAt: Date.now(), fare: result.fare });
+      setAvailabilityError("");
+      return result.available;
     } catch (e) {
-      if (currentToken.current === token && availabilityGeneration.current === generation) {
-        setAvailability(null);
-        setAvailabilityError(errorMessage(e, "Не удалось проверить наличие водителей."));
+      if (currentToken.current === token && generation === availabilityGeneration.current) {
+        setAvailability(null); setAvailabilityError(errorMessage(e, "Не удалось проверить водителей."));
         if (e instanceof ApiError && e.status === 401) await clearSession();
       }
       return null;
-    } finally { if (availabilityGeneration.current === generation) setCheckingAvailability(false); }
-  }, [token, apiBase, activeRole, a, seats, clearSession]);
+    } finally { if (generation === availabilityGeneration.current) setCheckingAvailability(false); }
+  }, [token, apiBase, activeRole, selectedRoute, passengerDirection, seats, clearSession]);
 
   const availabilityRef = useRef(refreshAvailability);
   useEffect(() => { availabilityRef.current = refreshAvailability; }, [refreshAvailability]);
@@ -338,7 +326,7 @@ export default function Home() {
       currentToken.current = result.access_token;
       setToken(result.access_token); setProfile(result.user); setMode(next);
       trackedOrders.current = []; orderChanges.current.clear(); orderRevision.current += 1; queueRevision.current += 1;
-      setOrders([]); setIncomingOrder(null); setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null); setAvailability(null); setFare(null);
+      setOrders([]); setIncomingOrder(null); setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null); setAvailability(null); setPassengerRoutes([]); setSelectedRouteId("");
       setRequested(false); setOtp(""); setDemoCode(""); setMessage(""); setDataError("");
       try { await AsyncStorage.setItem(TOKEN, result.access_token); }
       catch { setProfileError("Вход выполнен, но не сохранён на устройстве. При следующем запуске потребуется код."); }
@@ -365,35 +353,41 @@ export default function Home() {
   }
 
   async function order() {
-    const from = stops.find(v => v.code === a), to = stops.find(v => v.code === b);
-    if (!from || !to || a === b) return Alert.alert("Маршрут", "Выбери разные точки А и Б.");
-    if (!fareFresh) return Alert.alert("Стоимость", "Дождись расчёта стоимости выбранного маршрута.");
+    const route = selectedRoute, direction = passengerDirection, requestedSeats = seats, session = token;
+    if (!route || !availabilityFresh || !canOrder) return Alert.alert("Маршрут", "Выбери маршрут и проверь водителей.");
     setBusy(true);
     try {
       const available = await refreshAvailability();
       if (available !== true) {
-        if (available === false) setMessage("Водителей пока нет. Попробуй проверить наличие позже.");
-        else Alert.alert("Связь с TezJet", "Не удалось проверить наличие водителей. Проверь интернет и повтори попытку.");
+        if (available === false) setMessage("Водителей пока нет. Заказ не создан.");
+        else Alert.alert("Связь с Onay", "Не удалось проверить водителей. Повтори попытку.");
         return;
       }
-      const coords = await getCoordinates();
-      const r = await request<{ order: RideOrder; offer?: unknown }>("/api/orders", token, { method: "POST", body: JSON.stringify({
-        route_id: "pyatak", pickup_point: from.code, pickup_stop: from.code, destination_stop: to.code,
-        pickup_location: coords, pickup_address: address.trim() || from.name, destination: to.name, seats
-      }) });
+      const location = await getCoordinates();
+      if (currentToken.current !== session) return;
+      const payload = passengerRouteOrderPayload(route, direction, requestedSeats, location);
+      const r = await request<{ order: RideOrder; offer?: unknown }>("/api/orders/route", session, {
+        method: "POST", body: JSON.stringify(payload),
+      });
+      if (currentToken.current !== session) return;
       applyOrder(r.order);
-      setMessage(r.offer ? "Заказ отправлен водителю. Ждём подтверждения." : "Заказ создан. Ищем водителя.");
+      setMessage(r.offer ? "Заказ отправлен водителю. Ждём подтверждения." : "Заказ создан.");
       await refreshOrders();
     } catch (e) {
+      if (currentToken.current !== session) return;
       if (e instanceof ApiError && e.code === "NO_DRIVERS") {
-        setAvailability({ pickup: a, seats, available: false, checkedAt: Date.now() });
-        setMessage("Водителей пока нет. Заказ не создан. Проверь наличие позже.");
+        setAvailability({ key: passengerRouteKey(route, direction, requestedSeats), available: false, checkedAt: Date.now(), fare: null });
+        setMessage("Водителей пока нет. Заказ не создан.");
+      } else if (e instanceof ApiError && ["ROUTE_CHANGED", "ROUTE_NOT_FOUND", "ROUTE_INACTIVE", "ROUTE_NOT_CONFIGURED"].includes(e.code ?? "")) {
+        setAvailability(null); setRouteError("Маршрут изменился. Обнови список и выбери поездку снова.");
+        setProfileRefresh(value => value + 1);
+      } else if (e instanceof ApiError && e.code === "OUTSIDE_PICKUP_GEOFENCE") {
+        Alert.alert("Место посадки", "Обычный заказ требует находиться рядом с выбранным питаком. Внешняя подача будет отдельным режимом.");
       } else {
         Alert.alert("Заказ", errorMessage(e, "Не удалось создать заказ."));
         await refreshOrders();
       }
-    }
-    finally { setBusy(false); }
+    } finally { setBusy(false); }
   }
 
   async function refreshProfile() {
@@ -544,7 +538,7 @@ export default function Home() {
           <Text style={s.heading}>Рабочая смена</Text>
           <Text style={s.descDark}>Связь: {socketConnected ? "подключена" : "переподключение…"}</Text>
           <Text style={s.descDark} testID="driver-queue-status">Очередь: {driverInQueue ? `позиция ${queuePosition ?? "—"}` : activeDriverOrders.length ? "активный маршрут" : "не в очереди"}</Text>
-          {driverInQueue && driverQueueContext ? <View testID="driver-queue-context"><Text style={s.descDark}>{driverQueueContext.routeName} · питак {driverQueueContext.pitak}: {driverQueueContext.stopName}</Text><Text style={s.note}>Вступление в очередь сохранено. Заказы для этого маршрута пока недоступны.</Text></View> : null}
+          {driverInQueue && driverQueueContext ? <View testID="driver-queue-context"><Text style={s.descDark}>{driverQueueContext.routeName} · питак {driverQueueContext.pitak}: {driverQueueContext.stopName}</Text><Text style={s.note}>Вступление в очередь сохранено. Заказы по этому маршруту поступают по FIFO. Ручной выезд подключим отдельно.</Text></View> : null}
           <Text style={s.label}>МЕСТА ПРИ ВХОДЕ В ОЧЕРЕДЬ</Text><Stepper value={driverSeats} onChange={setDriverSeats} disabled={busy || driverInQueue || !!incomingOrder || activeDriverOrders.length > 0} />
           {!driverInQueue && !activeDriverOrders.length ? <Button title={busy ? "Определяем местоположение…" : driverRouteGate.hasChoice ? `Встать в очередь питак ${driverRouteGate.pitak ?? "—"}` : "Встать в очередь"} testID="driver-queue-join" onPress={joinQueue} disabled={busy || !!incomingOrder || !canJoinQueue} /> : <><Button title={busy ? "Обновляем…" : "Обновить местоположение"} testID="driver-queue-location" onPress={updateDriverLocation} disabled={busy} secondary /><Button title="Выйти из очереди" testID="driver-queue-leave" onPress={leaveQueue} disabled={busy || !!incomingOrder || activeDriverOrders.length > 0} secondary /></>}
         </View>
@@ -555,18 +549,32 @@ export default function Home() {
     ) : <>
     {passengerOrders.filter(order => !isClosed(order)).map(passengerOrder => <View key={passengerOrder.id} style={s.card}><Text style={s.heading}>Твоя поездка</Text><Text style={s.descDark}>{statusLabels[passengerOrder.status]}</Text><Text style={s.descDark}>Точка подачи: {passengerOrder.pickup_point}</Text><Text style={s.descDark}>Куда: {passengerOrder.destination || "по маршруту"}</Text><Text style={s.descDark}>Пассажиров: {passengerOrder.seats}</Text>{passengerOrder.status === "searching" && passengerOrder.offered_driver_id ? <Text style={s.note}>Ждём ответа водителя.</Text> : null}<Button title={busy ? "Отменяем…" : "Отменить заказ"} onPress={() => cancelOrder(passengerOrder)} disabled={busy} secondary /></View>)}
     <View style={s.card}>
-      <Text style={s.heading}>Маршрут поездки</Text>
-      <Text style={s.label}>ТОЧКА А · ОТПРАВЛЕНИЕ</Text>{stops.filter(v => v.code === "C" || v.code === "D").map(v => <Pressable key={"a"+v.id} onPress={() => setA(v.code)} style={[s.stop, a===v.code && s.selected]}><Text style={s.stopText}>{v.name}</Text><Text>{v.code}</Text></Pressable>)}
-      <Text style={s.label}>ТОЧКА Б · НАЗНАЧЕНИЕ</Text>{stops.map(v => <Pressable key={"b"+v.id} onPress={() => setB(v.code)} style={[s.stop, b===v.code && s.selected]}><Text style={s.stopText}>{v.name}</Text><Text>{v.code}</Text></Pressable>)}
-      <TextInput style={s.input} value={address} onChangeText={setAddress} placeholder="Уточнение адреса подачи (необязательно)" />
-      <View style={s.fare}><Text style={s.label}>ПРЕДВАРИТЕЛЬНАЯ СТОИМОСТЬ</Text><Text style={s.price}>{fareFresh && fare ? new Intl.NumberFormat("ru-RU").format(fare.totalKzt)+" ₸" : "—"}</Text></View>
-      <View style={s.seatsRow}><Text style={s.descDark}>Пассажиры (до 8)</Text><Stepper value={seats} onChange={setSeats} /></View>
+      <Text style={s.heading}>Заказ по маршруту A↔B</Text>
+      <Text style={s.label}>ВЫБЕРИ МАРШРУТ</Text>
+      {passengerRoutes.map(route => <Pressable key={route.id} testID={"passenger-route-"+route.id} disabled={busy}
+        onPress={() => { setSelectedRouteId(route.id); setAvailability(null); setMessage(""); }}
+        style={[s.stop, selectedRouteId === route.id && s.selected]}><Text style={s.stopText}>{route.name}</Text></Pressable>)}
+      <Text style={s.label}>НАПРАВЛЕНИЕ</Text>
+      {selectedRoute ? (["a_to_b", "b_to_a"] as const).map(direction => {
+        const points = passengerRouteEndpoints(selectedRoute, direction);
+        return <Pressable key={direction} testID={"passenger-direction-"+direction} disabled={busy}
+          onPress={() => { setPassengerDirection(direction); setAvailability(null); setMessage(""); }}
+          style={[s.stop, passengerDirection === direction && s.selected]}>
+          <Text style={s.stopText}>{direction === "a_to_b" ? "A → B" : "B → A"}: {points.from.name} → {points.to.name}</Text>
+        </Pressable>;
+      }) : <Text style={s.descDark}>Нет доступных маршрутов. Обнови данные.</Text>}
+      {selectedEndpoints ? <Text style={s.descDark}>Посадка: {selectedEndpoints.from.name}. Назначение: {selectedEndpoints.to.name}.</Text> : null}
+      <View style={s.seatsRow}><Text style={s.descDark}>Пассажиры (до 8)</Text><Stepper value={seats} disabled={busy}
+        onChange={value => { setSeats(value); setAvailability(null); }} /></View>
+      <View style={s.fare}><Text style={s.label}>СТОИМОСТЬ ПО ДАННЫМ СЕРВЕРА</Text>
+        <Text style={s.price}>{availabilityFresh && availability?.fare ? new Intl.NumberFormat("ru-RU").format(availability.fare.totalKzt)+" ₸" : "—"}</Text></View>
       <Text style={s.descDark}>Наличие водителей: {checkingAvailability ? "проверяем…" : !availabilityFresh ? "нет актуальных данных" : availability?.available ? "есть свободный водитель" : "Водителей пока нет"}</Text>
       {availabilityError ? <Text style={s.note}>{availabilityError}</Text> : null}
-      <Button title="Проверить наличие водителей" onPress={() => { void refreshAvailability(); }} disabled={busy || checkingAvailability} secondary />
-      <Button title={busy ? "Оформляем…" : "Заказать поездку"} onPress={order} disabled={busy || !fareFresh || !canOrder || passengerHasActiveOrder} />
+      <Button title="Проверить наличие водителей" onPress={() => { void refreshAvailability(); }} disabled={busy || checkingAvailability || !selectedRoute} secondary />
+      <Button title={busy ? "Оформляем…" : "Заказать поездку"} onPress={order} disabled={busy || !canOrder || checkingAvailability} />
       {passengerHasActiveOrder ? <Text style={s.small}>Сначала заверши или отмени текущий заказ.</Text> : null}
-      {message ? <Text style={s.note}>{message}</Text> : null}<Text style={s.small}>Геолокация запрашивается только при оформлении заказа.</Text>
+      {message ? <Text style={s.note}>{message}</Text> : null}
+      <Text style={s.small}>Для обычного заказа нужно находиться у выбранного питака. Геолокация запрашивается при оформлении. Внешняя подача с подтверждением цены — отдельный режим.</Text>
     </View>
     {availabilityFresh && availability?.available === false ? <View style={s.card}><Text style={s.heading}>Водителей пока нет</Text><Text style={s.descDark}>Для этой точки и количества пассажиров сейчас нет свободного водителя. Попробуй проверить наличие позже.</Text></View> : null}
     {passengerOrders.some(isClosed) ? <View style={s.card}><Text style={s.heading}>Последние поездки</Text>{passengerOrders.filter(isClosed).slice(0, 3).map(previous => <Text key={previous.id} style={s.descDark}>{previous.pickup_point} → {previous.destination || "по маршруту"}: {statusLabels[previous.status]}</Text>)}</View> : null}
