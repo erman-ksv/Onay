@@ -6,6 +6,7 @@ import { ActivityIndicator, Alert, AppState, Pressable, ScrollView, StyleSheet, 
 import { API, ApiError, errorMessage, request, setApiEndpoint, validateApiEndpoint, type Availability } from "../lib/api";
 import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextTripLabel, nextTripStatus, statusLabels, type RideOrder } from "../lib/orders";
 import DriverRoutePicker from "../components/DriverRoutePicker";
+import { passengerAvailabilityDisplay, verifiedDriverCount, type PassengerAvailability } from "../lib/passenger-availability";
 import { canJoinDriverQueue, driverQueueChoiceInput, driverRouteSessionKey, type DriverQueueContext, type DriverRouteGate } from "../lib/driver-routes";
 
 const TOKEN = "tezjet_access_token";
@@ -64,7 +65,7 @@ export default function Home() {
   const [routeError, setRouteError] = useState("");
   const [availabilityError, setAvailabilityError] = useState("");
   const [profileRefresh, setProfileRefresh] = useState(0);
-  const [availability, setAvailability] = useState<{ pickup: string; seats: number; available: boolean; checkedAt: number } | null>(null);
+  const [availability, setAvailability] = useState<PassengerAvailability | null>(null);
   const [checkingAvailability, setCheckingAvailability] = useState(false);
   const [now, setNow] = useState(Date.now());
   const activeRole = profile?.active_role ?? profile?.role;
@@ -87,7 +88,8 @@ export default function Home() {
   const activeDriverOrders = orders.filter(order => !isClosed(order) && order.driver_id === profile?.id);
   const passengerOrders = orders.filter(order => order.passenger_id === profile?.id);
   const passengerHasActiveOrder = passengerOrders.some(order => !isClosed(order));
-  const availabilityFresh = availability?.pickup === a && availability?.seats === seats && now - availability.checkedAt < 15_000;
+  const availabilityFresh = availability?.pickup === a && availability?.seats === seats && now >= availability.checkedAt && now - availability.checkedAt < 15_000;
+  const availabilityDisplay = passengerAvailabilityDisplay({ availability, pickup: a, seats, now, checking: checkingAvailability, error: availabilityError });
   const canOrder = activeRole === "passenger" && availabilityFresh && availability?.available === true;
   const fareFresh = fare?.pickup === a && fare?.destination === b;
   const visibleError = dataError || routeError || (profile ? profileError : "");
@@ -242,7 +244,8 @@ export default function Home() {
       if (typeof result?.available !== "boolean") throw new ApiError("Не удалось проверить наличие водителей. Повтори обновление.", undefined, "INVALID_RESPONSE");
       if (currentToken.current !== token) return null;
       if (availabilityGeneration.current === generation) {
-        setAvailability({ pickup: a, seats, available: result.available === true, checkedAt: Date.now() });
+        setAvailability({ pickup: a, seats, available: result.available === true,
+          eligibleDriverCount: verifiedDriverCount(result.eligible_driver_count), checkedAt: Date.now() });
         setAvailabilityError("");
       }
       return result.available === true;
@@ -386,7 +389,7 @@ export default function Home() {
       await refreshOrders();
     } catch (e) {
       if (e instanceof ApiError && e.code === "NO_DRIVERS") {
-        setAvailability({ pickup: a, seats, available: false, checkedAt: Date.now() });
+        setAvailability({ pickup: a, seats, available: false, eligibleDriverCount: 0, checkedAt: Date.now() });
         setMessage("Водителей пока нет. Заказ не создан. Проверь наличие позже.");
       } else {
         Alert.alert("Заказ", errorMessage(e, "Не удалось создать заказ."));
@@ -561,14 +564,14 @@ export default function Home() {
       <TextInput style={s.input} value={address} onChangeText={setAddress} placeholder="Уточнение адреса подачи (необязательно)" />
       <View style={s.fare}><Text style={s.label}>ПРЕДВАРИТЕЛЬНАЯ СТОИМОСТЬ</Text><Text style={s.price}>{fareFresh && fare ? new Intl.NumberFormat("ru-RU").format(fare.totalKzt)+" ₸" : "—"}</Text></View>
       <View style={s.seatsRow}><Text style={s.descDark}>Пассажиры (до 8)</Text><Stepper value={seats} onChange={setSeats} /></View>
-      <Text style={s.descDark}>Наличие водителей: {checkingAvailability ? "проверяем…" : !availabilityFresh ? "нет актуальных данных" : availability?.available ? "есть свободный водитель" : "Водителей пока нет"}</Text>
+      <Text style={s.descDark}>Наличие водителей: {availabilityDisplay.label}</Text>
       {availabilityError ? <Text style={s.note}>{availabilityError}</Text> : null}
       <Button title="Проверить наличие водителей" onPress={() => { void refreshAvailability(); }} disabled={busy || checkingAvailability} secondary />
       <Button title={busy ? "Оформляем…" : "Заказать поездку"} onPress={order} disabled={busy || !fareFresh || !canOrder || passengerHasActiveOrder} />
       {passengerHasActiveOrder ? <Text style={s.small}>Сначала заверши или отмени текущий заказ.</Text> : null}
       {message ? <Text style={s.note}>{message}</Text> : null}<Text style={s.small}>Геолокация запрашивается только при оформлении заказа.</Text>
     </View>
-    {availabilityFresh && availability?.available === false ? <View style={s.card}><Text style={s.heading}>Водителей пока нет</Text><Text style={s.descDark}>Для этой точки и количества пассажиров сейчас нет свободного водителя. Попробуй проверить наличие позже.</Text></View> : null}
+    {availabilityDisplay.state === "unavailable" ? <View style={s.card}><Text style={s.heading}>Водителей пока нет</Text><Text style={s.descDark}>Для этой точки и количества пассажиров сейчас нет свободного водителя. Попробуй проверить наличие позже.</Text></View> : null}
     {passengerOrders.some(isClosed) ? <View style={s.card}><Text style={s.heading}>Последние поездки</Text>{passengerOrders.filter(isClosed).slice(0, 3).map(previous => <Text key={previous.id} style={s.descDark}>{previous.pickup_point} → {previous.destination || "по маршруту"}: {statusLabels[previous.status]}</Text>)}</View> : null}
     </>}
     <Text style={s.footer}>TEZJET · ПАССАЖИР И ВОДИТЕЛЬ В ОДНОМ ПРИЛОЖЕНИИ</Text>
