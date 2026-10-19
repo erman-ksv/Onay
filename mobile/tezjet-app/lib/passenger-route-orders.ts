@@ -18,6 +18,25 @@ export function createPassengerRouteRequestScope() {
   };
 }
 
+/** The order POST has already succeeded. A failed list refresh must never be
+ * mistaken for a failed booking or trigger another booking POST. */
+export async function syncConfirmedRouteBooking(refreshOrders: () => Promise<void>): Promise<boolean> {
+  try {
+    await refreshOrders();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** HTTP timeouts can occur after a successful server commit. Only such outcomes
+ * keep booking disabled until an authoritative order list is inspected. */
+export function routeBookingOutcomeUncertain(error: { status?: number; code?: string }): boolean {
+  return error.code === "REQUEST_TIMEOUT" || error.code === "NETWORK_ERROR" ||
+    (error.code === "INVALID_RESPONSE" && error.status !== undefined &&
+      error.status >= 200 && error.status < 300);
+}
+
 export type PassengerRouteSelection = {
   route_id: string;
   direction: DriverDirection;

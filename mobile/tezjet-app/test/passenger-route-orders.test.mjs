@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createPassengerRouteRequestScope, passengerRouteSelection, passengerRouteSelectionKey,
+import { createPassengerRouteRequestScope, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, passengerRouteSelection, passengerRouteSelectionKey,
   passengerRouteAvailabilityPath, parsePassengerRouteAvailability, passengerRouteOrderBody } from "../lib/passenger-route-orders.ts";
 const route = { id: "route1", name: "Село — город", updatedAt: "2026-10-19T01:00:00Z",
   stops: [{id:"a",name:"Село"}, {id:"b",name:"Город"}] };
@@ -61,4 +61,19 @@ test("stale quotes and stale route catalogs cannot overwrite newer requests", ()
   const newQuote = scope.startAvailability();
   assert.equal(scope.isCurrentAvailability(oldQuote), false);
   assert.equal(scope.isCurrentAvailability(newQuote), true);
+});
+
+test("confirmed booking remains confirmed even when list refresh fails", async () => {
+  let refreshed = 0;
+  assert.equal(await syncConfirmedRouteBooking(async () => { refreshed++; throw Error("offline"); }), false);
+  assert.equal(refreshed, 1);
+  assert.equal(await syncConfirmedRouteBooking(async () => { refreshed++; }), true);
+  assert.equal(refreshed, 2);
+});
+
+test("only ambiguous transport outcomes require authoritative order reconciliation", () => {
+  for (const error of [{code:"REQUEST_TIMEOUT"},{code:"NETWORK_ERROR"},{code:"INVALID_RESPONSE",status:200}])
+    assert.equal(routeBookingOutcomeUncertain(error),true);
+  for (const error of [{code:"NO_DRIVERS",status:409},{code:"INVALID_RESPONSE",status:500},{code:"ROUTE_CHANGED",status:409}])
+    assert.equal(routeBookingOutcomeUncertain(error),false);
 });
