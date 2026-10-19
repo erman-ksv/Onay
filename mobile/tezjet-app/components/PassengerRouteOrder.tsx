@@ -17,6 +17,7 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
   const [checking, setChecking] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [pendingSync, setPendingSync] = useState(false);
+  const [uncertainBooking, setUncertainBooking] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [availability, setAvailability] = useState<{ key: string; checkedAt: number; value: PassengerRouteAvailability } | null>(null);
@@ -70,7 +71,8 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
     if (submitting || !pendingSync) return;
     setSubmitting(true); setError("");
     const synced = await syncConfirmedRouteBooking(onCreated);
-    if (synced) { setPendingSync(false); setMessage("Заказы обновлены. Проверь состояние поездки."); }
+    if (synced && !uncertainBooking) { setPendingSync(false); setMessage("Заказы обновлены. Проверь состояние поездки."); }
+    else if (synced) setMessage("Список обновлён, но создание заказа не подтверждено. Не оформляй повторный заказ, пока не проверишь его статус с поддержкой.");
     else setError("Не удалось обновить заказы. Повтори проверку; не создавай ещё один заказ.");
     setSubmitting(false);
   }
@@ -108,6 +110,7 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
       } else if (cause instanceof ApiError && routeBookingOutcomeUncertain(cause)) {
         setAvailability(null);
         setPendingSync(true);
+        setUncertainBooking(true);
         setMessage("Не удалось узнать, принят ли заказ сервером. Сначала обнови список поездок; повторный заказ пока заблокирован.");
       } else setError(errorMessage(cause, "Не удалось оформить заказ."));
     } finally { setSubmitting(false); }
