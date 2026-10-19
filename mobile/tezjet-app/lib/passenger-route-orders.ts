@@ -50,6 +50,17 @@ export function isFreshPassengerRouteQuote(
     now >= quote.checkedAt && now - quote.checkedAt < 15_000;
 }
 
+/** Keep a failed route-catalog request distinct from a genuinely empty catalog.
+ * The passenger can retry a failed fetch without changing account or server.
+ */
+export function passengerRouteCatalogStatus(input: {
+  loading: boolean; error: string; count: number;
+}): "loading" | "error" | "empty" | "ready" {
+  if (input.loading) return "loading";
+  if (input.error) return "error";
+  return input.count > 0 ? "ready" : "empty";
+}
+
 export type PassengerRouteSelection = {
   route_id: string;
   direction: DriverDirection;
