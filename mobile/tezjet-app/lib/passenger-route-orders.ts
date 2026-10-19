@@ -37,6 +37,19 @@ export function routeBookingOutcomeUncertain(error: { status?: number; code?: st
       error.status >= 200 && error.status < 300);
 }
 
+/** A displayed quote must still be fresh when the GPS lookup finishes.
+ * This is a client UX guard; the server remains the booking authority. */
+export function isFreshPassengerRouteQuote(
+  quote: { key: string; checkedAt: number; value: { available: boolean } } | null,
+  selectedKey: string,
+  now: number,
+): boolean {
+  return !!selectedKey && !!quote && quote.key === selectedKey &&
+    quote.value.available === true &&
+    Number.isFinite(now) && Number.isFinite(quote.checkedAt) &&
+    now >= quote.checkedAt && now - quote.checkedAt < 15_000;
+}
+
 export type PassengerRouteSelection = {
   route_id: string;
   direction: DriverDirection;

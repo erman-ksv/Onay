@@ -4,7 +4,7 @@ import * as Location from "expo-location";
 import { ApiError, errorMessage, request } from "../lib/api";
 import { orderedDriverStops, parseDriverRouteCatalog, type DriverDirection, type DriverRouteOption } from "../lib/driver-routes";
 import { createPassengerRouteRequestScope, passengerRouteSelection, passengerRouteSelectionKey, passengerRouteAvailabilityPath,
-  parsePassengerRouteAvailability, passengerRouteOrderBody, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability } from "../lib/passenger-route-orders";
+  parsePassengerRouteAvailability, passengerRouteOrderBody, isFreshPassengerRouteQuote, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability } from "../lib/passenger-route-orders";
 
 type Props = { token: string; endpoint: string; busy: boolean; activeOrder: boolean; onCreated: () => Promise<void> };
 const choices: DriverDirection[] = ["a_to_b", "b_to_a"];
@@ -29,7 +29,7 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
   activeSelectionKey.current = key;
   const [now, setNow] = useState(Date.now());
   const fresh = !!availability && availability.key === key && now >= availability.checkedAt && now - availability.checkedAt < 15000;
-  const canOrder = fresh && availability?.value.available === true && !busy && !activeOrder && !submitting && !checking && !pendingSync;
+  const canOrder = isFreshPassengerRouteQuote(availability, key, now) && !busy && !activeOrder && !submitting && !checking && !pendingSync;
   const stops = route ? orderedDriverStops(route, direction) : [];
 
   useEffect(() => {
@@ -86,6 +86,10 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
       const coords = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       if (activeSelectionKey.current !== passengerRouteSelectionKey(selection)) {
         throw new Error("Маршрут или количество мест изменились. Проверь наличие заново.");
+      }
+      if (!isFreshPassengerRouteQuote(availability, activeSelectionKey.current, Date.now())) {
+        setAvailability(null);
+        throw new Error("Пока определяли местоположение, проверка цены и водителей устарела. Проверь наличие ещё раз.");
       }
       const body = passengerRouteOrderBody(selection, {
         lat: coords.coords.latitude, lng: coords.coords.longitude, timestamp: coords.timestamp, isMocked: coords.mocked === true,

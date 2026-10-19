@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createPassengerRouteRequestScope, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, passengerRouteSelection, passengerRouteSelectionKey,
+import { createPassengerRouteRequestScope, isFreshPassengerRouteQuote, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, passengerRouteSelection, passengerRouteSelectionKey,
   passengerRouteAvailabilityPath, parsePassengerRouteAvailability, passengerRouteOrderBody } from "../lib/passenger-route-orders.ts";
 const route = { id: "route1", name: "Село — город", updatedAt: "2026-10-19T01:00:00Z",
   stops: [{id:"a",name:"Село"}, {id:"b",name:"Город"}] };
@@ -76,4 +76,14 @@ test("only ambiguous transport outcomes require authoritative order reconciliati
     assert.equal(routeBookingOutcomeUncertain(error),true);
   for (const error of [{code:"NO_DRIVERS",status:409},{code:"INVALID_RESPONSE",status:500},{code:"ROUTE_CHANGED",status:409}])
     assert.equal(routeBookingOutcomeUncertain(error),false);
+});
+
+test("route quote expires during slow location acquisition before order POST", () => {
+  const quote = { key: "route-v1", checkedAt: 1000, value: { available: true } };
+  assert.equal(isFreshPassengerRouteQuote(quote, "route-v1", 15999), true);
+  assert.equal(isFreshPassengerRouteQuote(quote, "route-v1", 16000), false);
+  assert.equal(isFreshPassengerRouteQuote(quote, "route-v2", 1100), false);
+  assert.equal(isFreshPassengerRouteQuote(null, "route-v1", 1100), false);
+  assert.equal(isFreshPassengerRouteQuote({ ...quote, value: {available:false} }, "route-v1", 1100), false);
+  assert.equal(isFreshPassengerRouteQuote(quote, "route-v1", 999), false);
 });
