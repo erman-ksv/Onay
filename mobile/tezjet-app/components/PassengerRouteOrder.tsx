@@ -108,6 +108,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
   async function submit() {
     if (!selection || !canOrder || !submissionGuard.current.tryStart()) return;
     setSubmitting(true); setMessage(""); setError("");
+    let postStarted = false;
     try {
       // The final booking request always revalidates the route, seats and FIFO on the server.
       const permission = await Location.requestForegroundPermissionsAsync();
@@ -127,6 +128,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
       await saveRouteBookingRecovery(AsyncStorage, recoveryKey, "in_flight");
       setPendingSync(true);
       setUncertainBooking(true);
+      postStarted = true;
       await request("/api/orders/route", token, { method: "POST", body: JSON.stringify(body) });
       await saveRouteBookingRecovery(AsyncStorage, recoveryKey, "confirmed");
       setUncertainBooking(false);
@@ -141,6 +143,11 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
         setMessage("Заказ создан, но список поездок не обновился. Проверь статус; повторно заказывать не нужно.");
       }
     } catch (cause) {
+      if (postStarted && cause instanceof ApiError && cause.status !== undefined && cause.status >= 400 && cause.status < 500 &&
+          !routeBookingOutcomeUncertain(cause)) {
+        try { await clearRouteBookingRecovery(AsyncStorage, recoveryKey); setPendingSync(false); setUncertainBooking(false); }
+        catch { setRecoveryError("Не удалось снять блокировку заказа. Повторное оформление запрещено до проверки."); }
+      }
       if (cause instanceof ApiError && cause.code === "NO_DRIVERS") {
         setAvailability(null);
         setMessage("Подходящих водителей больше нет. Заказ не создан.");
@@ -152,7 +159,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
         setPendingSync(true);
         setUncertainBooking(true);
         setMessage("Не удалось узнать, принят ли заказ сервером. Сначала обнови список поездок; повторный заказ пока заблокирован.");
-      } else if (pendingSync || uncertainBooking) {
+      } else if (postStarted) {
         setPendingSync(true);
         setUncertainBooking(true);
         setError("Не удалось подтвердить результат предыдущей отправки. Проверь список поездок; повторное оформление заблокировано.");
