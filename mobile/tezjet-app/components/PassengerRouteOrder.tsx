@@ -4,7 +4,7 @@ import * as Location from "expo-location";
 import { ApiError, errorMessage, request } from "../lib/api";
 import { orderedDriverStops, parseDriverRouteCatalog, type DriverDirection, type DriverRouteOption } from "../lib/driver-routes";
 import { createPassengerRouteRequestScope, passengerRouteSelection, passengerRouteSelectionKey, passengerRouteAvailabilityPath,
-  parsePassengerRouteAvailability, passengerRouteOrderBody, isFreshPassengerRouteQuote, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability } from "../lib/passenger-route-orders";
+  parsePassengerRouteAvailability, passengerRouteOrderBody, passengerRouteCatalogStatus, isFreshPassengerRouteQuote, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability } from "../lib/passenger-route-orders";
 
 type Props = { token: string; endpoint: string; busy: boolean; activeOrder: boolean; onCreated: () => Promise<void> };
 const choices: DriverDirection[] = ["a_to_b", "b_to_a"];
@@ -14,6 +14,8 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
   const [direction, setDirection] = useState<DriverDirection>("a_to_b");
   const [seats, setSeats] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState("");
+  const [catalogRetry, setCatalogRetry] = useState(0);
   const [checking, setChecking] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [pendingSync, setPendingSync] = useState(false);
@@ -31,6 +33,7 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
   const fresh = !!availability && availability.key === key && now >= availability.checkedAt && now - availability.checkedAt < 15000;
   const canOrder = isFreshPassengerRouteQuote(availability, key, now) && !busy && !activeOrder && !submitting && !checking && !pendingSync;
   const stops = route ? orderedDriverStops(route, direction) : [];
+  const catalogStatus = passengerRouteCatalogStatus({ loading, error: catalogError, count: routes.length });
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -38,7 +41,8 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
   }, []);
   useEffect(() => {
     const version = requestScope.current.startCatalog();
-    setRoutes([]); setRouteId(""); setAvailability(null); setError(""); setMessage("");
+    setRoutes([]); setRouteId(""); setAvailability(null); setCatalogError(""); setError(""); setMessage("");
+    setLoading(false);
     if (!token || !endpoint) return;
     setLoading(true);
     request<unknown>("/api/orders/routes", token)
@@ -48,10 +52,10 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
         setRoutes(items);
         setRouteId(items[0]?.id ?? "");
       })
-      .catch(cause => { if (requestScope.current.isCurrentCatalog(version)) setError(errorMessage(cause, "Не удалось загрузить маршруты.")); })
+      .catch(cause => { if (requestScope.current.isCurrentCatalog(version)) setCatalogError(errorMessage(cause, "Не удалось загрузить маршруты.")); })
       .finally(() => { if (requestScope.current.isCurrentCatalog(version)) setLoading(false); });
     return () => { requestScope.current.cancelCatalog(); };
-  }, [token, endpoint]);
+  }, [token, endpoint, catalogRetry]);
 
   useEffect(() => { setAvailability(null); setChecking(false); setMessage(""); requestScope.current.cancelAvailability(); }, [key]);
   async function check() {
@@ -131,7 +135,9 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
     <Text style={v.title}>Куда едем?</Text>
     <Text style={v.subtitle}>Выберите линию и количество мест. Доступность водителей и цену проверит сервер.</Text>
     {loading ? <ActivityIndicator color="#33DB9C" style={v.loader}/> : null}
-    {!loading && routes.length === 0 ? <Text style={v.hint}>Настроенных маршрутов пока нет.</Text> : null}
+    {catalogStatus === "empty" && token && endpoint ? <Text style={v.hint}>Настроенных маршрутов пока нет.</Text> : null}
+    {catalogStatus === "error" ? <View><Text style={v.error}>Не удалось загрузить маршруты: {catalogError}</Text>
+      {button("Повторить загрузку маршрутов", () => setCatalogRetry(value => value + 1), submitting || busy, false, "route-catalog-retry")}</View> : null}
     {routes.map(item => <Pressable key={item.id} onPress={() => setRouteId(item.id)} disabled={submitting}
       accessibilityRole="button" accessibilityState={{ selected: item.id === routeId }}
       style={[v.route, item.id === routeId && v.routeActive]}>
