@@ -1,5 +1,23 @@
 import type { DriverDirection, DriverRouteOption } from "./driver-routes";
 
+/**
+ * Keep route-catalog fetches independent from short-lived availability quotes.
+ * A selection change must not cancel the initial catalog load; a stale quote
+ * must never be allowed to repopulate availability after its selection changes.
+ */
+export function createPassengerRouteRequestScope() {
+  let catalog = 0;
+  let availability = 0;
+  return {
+    startCatalog: () => ++catalog,
+    isCurrentCatalog: (version: number) => version === catalog,
+    cancelCatalog: () => { catalog += 1; },
+    startAvailability: () => ++availability,
+    isCurrentAvailability: (version: number) => version === availability,
+    cancelAvailability: () => { availability += 1; },
+  };
+}
+
 export type PassengerRouteSelection = {
   route_id: string;
   direction: DriverDirection;
