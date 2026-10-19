@@ -7,6 +7,7 @@ import { API, ApiError, errorMessage, request, setApiEndpoint, validateApiEndpoi
 import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextTripLabel, nextTripStatus, statusLabels, type RideOrder } from "../lib/orders";
 import DriverRoutePicker from "../components/DriverRoutePicker";
 import PassengerRouteOrder from "../components/PassengerRouteOrder";
+import { canBoardLinePassenger, canDepartLine, lineDepartBody, parseLineCollectionState, type LineCollectionState } from "../lib/driver-line";
 import { passengerAvailabilityDisplay, verifiedDriverCount, type PassengerAvailability } from "../lib/passenger-availability";
 import { canJoinDriverQueue, driverQueueChoiceInput, driverRouteSessionKey, type DriverQueueContext, type DriverRouteGate } from "../lib/driver-routes";
 
@@ -50,6 +51,7 @@ export default function Home() {
   const [queuePosition, setQueuePosition] = useState<number | null>(null);
   const [driverInQueue, setDriverInQueue] = useState(false);
   const [driverQueueContext, setDriverQueueContext] = useState<DriverQueueContext | null>(null);
+  const [lineState, setLineState] = useState<LineCollectionState | null>(null);
   const [driverRouteGate, setDriverRouteGate] = useState<DriverRouteGate>({ sessionKey: "", ready: false, hasChoice: false, mutating: false });
   const driverRouteGateRef = useRef(driverRouteGate);
   const updateDriverRouteGate = useCallback((next: DriverRouteGate) => {
@@ -131,7 +133,7 @@ export default function Home() {
     orderChanges.current.clear(); orderRevision.current += 1; queueRevision.current += 1;
     setToken(""); setProfile(null); setOrders([]); setIncomingOrder(null);
     setProfileLoading(false); setProfileError("");
-    setStops([]); setFare(null); setAvailability(null); setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null);
+    setStops([]); setFare(null); setAvailability(null); setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null); setLineState(null);
     setDataError(""); setRouteError(""); setAvailabilityError("");
     try { await AsyncStorage.removeItem(TOKEN); return true; }
     catch { setProfileError("Не удалось удалить сохранённый вход на устройстве. Попробуй выйти ещё раз."); return false; }
@@ -209,7 +211,7 @@ export default function Home() {
     const queueRevisionAtStart = queueRevision.current;
     const results = await Promise.allSettled([
       request<{ orders: RideOrder[] }>("/api/orders", token),
-      driverApproved ? request<{ your_position: number | null; your_entry: { routeContext?: DriverQueueContext } | null }>("/api/queue", token) : Promise.resolve(undefined),
+      driverApproved ? request<{ your_position: number | null; your_entry: { routeContext?: DriverQueueContext; collectionState?: unknown } | null }>("/api/queue", token) : Promise.resolve(undefined),
     ]);
     const ordersResult = results[0];
     const queueResult = results[1];
@@ -228,6 +230,8 @@ export default function Home() {
       const position = (queueResult.value as { your_position: number | null }).your_position;
       setQueuePosition(position); setDriverInQueue(position !== null);
       setDriverQueueContext((queueResult.value as { your_entry?: { routeContext?: DriverQueueContext } }).your_entry?.routeContext ?? null);
+      try { setLineState(parseLineCollectionState(queueResult.value.your_entry)); }
+      catch { setLineState(null); setRouteError("Не удалось подтвердить состояние линии. Повтори обновление."); }
     }
     const failed = results.find(result => result.status === "rejected");
     if (failed?.status === "rejected") {
@@ -310,7 +314,7 @@ export default function Home() {
       setDriverInQueue(payload.position != null);
       setDriverQueueContext(payload.route_context ?? null);
     });
-    socket.on("queue:update", () => { void availabilityRef.current(); });
+    socket.on("queue:update", () => { void availabilityRef.current(); if (driverApproved) void refreshOrders(); });
     return () => { socket.disconnect(); setSocketConnected(false); };
   }, [token, profile?.id, activeRole, driverApproved, refreshOrders, applyOrder]);
 
@@ -342,7 +346,7 @@ export default function Home() {
       currentToken.current = result.access_token;
       setToken(result.access_token); setProfile(result.user); setMode(next);
       trackedOrders.current = []; orderChanges.current.clear(); orderRevision.current += 1; queueRevision.current += 1;
-      setOrders([]); setIncomingOrder(null); setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null); setAvailability(null); setFare(null);
+      setOrders([]); setIncomingOrder(null); setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null); setLineState(null); setAvailability(null); setFare(null);
       setRequested(false); setOtp(""); setDemoCode(""); setMessage(""); setDataError("");
       try { await AsyncStorage.setItem(TOKEN, result.access_token); }
       catch { setProfileError("Вход выполнен, но не сохранён на устройстве. При следующем запуске потребуется код."); }
@@ -433,11 +437,92 @@ export default function Home() {
         queueRevision.current += 1;
         setQueuePosition(result.position); setDriverInQueue(result.position !== null);
         setDriverQueueContext(result.entry?.routeContext ?? null);
+        setLineState(parseLineCollectionState(result.entry));
       }
       await refreshOrders();
       Alert.alert("TezJet Driver", `Ты в очереди. Позиция: ${result.position ?? "обновляется"}.`);
     } catch (e) { Alert.alert("Не удалось встать в очередь", e instanceof Error ? e.message : "Проверь геолокацию и доступность."); }
     finally { setBusy(false); }
+  }
+
+  async function joinLine() {
+    const requestToken = token;
+    const requestSession = driverRouteSession;
+    const gate = driverRouteGateRef.current;
+    if (busy || driverInQueue || lineState || activeDriverOrders.length > 0 ||
+        !canJoinDriverQueue(gate, requestSession) || !gate.hasChoice) return;
+    const routeChoice = driverQueueChoiceInput(gate, requestSession);
+    if (!routeChoice) return;
+    setBusy(true);
+    try {
+      const location = await getCoordinates();
+      const refreshedGate = driverRouteGateRef.current;
+      if (currentToken.current !== requestToken || !canJoinDriverQueue(refreshedGate, requestSession) ||
+          JSON.stringify(driverQueueChoiceInput(refreshedGate, requestSession)) !== JSON.stringify(routeChoice)) return;
+      const queueRevisionAtStart = queueRevision.current;
+      const result = await request<{ position: number | null; entry: {
+        routeContext?: DriverQueueContext; collectionState?: unknown;
+      } }>("/api/queue/line", requestToken, { method: "POST",
+        body: JSON.stringify({ location, available_seats: driverSeats, route_choice: routeChoice }) });
+      if (currentToken.current !== requestToken) return;
+      const enrolled = parseLineCollectionState(result.entry);
+      if (!enrolled || enrolled.phase !== "collecting") throw new Error("Сервер не подтвердил начало сбора пассажиров.");
+      if (queueRevision.current === queueRevisionAtStart) {
+        queueRevision.current += 1;
+        setQueuePosition(result.position); setDriverInQueue(result.position !== null);
+        setDriverQueueContext(result.entry?.routeContext ?? null);
+        setLineState(enrolled);
+      }
+      await refreshOrders();
+      Alert.alert("Сбор пассажиров", "Линия активна. Можно принимать пассажиров до отправления.");
+    } catch (e) { Alert.alert("Сбор пассажиров", errorMessage(e, "Не удалось начать сбор пассажиров.")); }
+    finally { setBusy(false); }
+  }
+
+  async function boardLinePassenger(order: RideOrder) {
+    if (busy || !canBoardLinePassenger(lineState, order) || order.driver_id !== profile?.id) return;
+    const requestToken = token;
+    setBusy(true);
+    try {
+      const result = await request<{ order: RideOrder }>(`/api/orders/${order.id}/board`, requestToken,
+        { method: "POST", body: JSON.stringify({}) });
+      if (currentToken.current !== requestToken) return;
+      applyOrder(result.order);
+      await refreshOrders();
+    } catch (e) {
+      Alert.alert("Посадка пассажира", errorMessage(e, "Не удалось подтвердить посадку."));
+      await refreshOrders();
+    } finally { setBusy(false); }
+  }
+
+  function confirmLineDeparture() {
+    if (busy || !canDepartLine(lineState)) return;
+    const receipt = lineDepartBody(lineState);
+    Alert.alert("Отправление с питака", "Подтвердить отправление машины? Это действие нельзя отменить.", [
+      { text: "Не сейчас", style: "cancel" },
+      { text: "Отправиться", onPress: () => { void departLine(receipt.expected_enrollment_id); } },
+    ]);
+  }
+
+  async function departLine(enrollmentId: string) {
+    if (busy || !canDepartLine(lineState) || lineState?.enrollmentId !== enrollmentId) return;
+    const requestToken = token;
+    setBusy(true);
+    try {
+      const result = await request<{ entry: { collectionState?: unknown }; orders: RideOrder[] }>(
+        "/api/queue/depart", requestToken, { method: "POST",
+          body: JSON.stringify({ expected_enrollment_id: enrollmentId }) });
+      if (currentToken.current !== requestToken) return;
+      queueRevision.current += 1;
+      setLineState(parseLineCollectionState(result.entry));
+      setDriverInQueue(false); setQueuePosition(null);
+      for (const order of result.orders ?? []) applyOrder(order);
+      await refreshOrders();
+      Alert.alert("Линия", "Отправление подтверждено сервером.");
+    } catch (e) {
+      Alert.alert("Отправление", errorMessage(e, "Не удалось отправиться. Обнови очередь."));
+      await refreshOrders();
+    } finally { setBusy(false); }
   }
 
   async function updateDriverLocation() {
@@ -460,7 +545,7 @@ export default function Home() {
       await request<void>("/api/queue/leave", requestToken, { method: "DELETE" });
       if (currentToken.current !== requestToken) return;
       queueRevision.current += 1;
-      setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null);
+      setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null); setLineState(null);
     } catch (e) { Alert.alert("Очередь", e instanceof Error ? e.message : "Не удалось выйти из очереди."); }
     finally { setBusy(false); }
   }
