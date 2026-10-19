@@ -23,6 +23,8 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
   const route = routes.find(item => item.id === routeId);
   const selection = route ? passengerRouteSelection(route, direction, seats) : null;
   const key = selection ? passengerRouteSelectionKey(selection) : "";
+  const activeSelectionKey = useRef(key);
+  activeSelectionKey.current = key;
   const [now, setNow] = useState(Date.now());
   const fresh = !!availability && availability.key === key && now >= availability.checkedAt && now - availability.checkedAt < 15000;
   const canOrder = fresh && availability?.value.available === true && !busy && !activeOrder && !submitting && !checking;
@@ -49,7 +51,7 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
     return () => { requestVersion.current += 1; };
   }, [token, endpoint]);
 
-  useEffect(() => { setAvailability(null); setMessage(""); requestVersion.current += 1; }, [key]);
+  useEffect(() => { setAvailability(null); setChecking(false); setMessage(""); requestVersion.current += 1; }, [key]);
   async function check() {
     if (!selection || checking || submitting) return;
     const version = ++requestVersion.current;
@@ -71,6 +73,9 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
       const permission = await Location.requestForegroundPermissionsAsync();
       if (!permission.granted) throw new Error("Разреши геолокацию для проверки точки посадки.");
       const coords = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      if (activeSelectionKey.current !== passengerRouteSelectionKey(selection)) {
+        throw new Error("Маршрут или количество мест изменились. Проверь наличие заново.");
+      }
       const body = passengerRouteOrderBody(selection, {
         lat: coords.coords.latitude, lng: coords.coords.longitude, timestamp: coords.timestamp, isMocked: coords.mocked === true,
       });
