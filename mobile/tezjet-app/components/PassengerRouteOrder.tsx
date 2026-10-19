@@ -5,7 +5,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ApiError, errorMessage, request } from "../lib/api";
 import { orderedDriverStops, parseDriverRouteCatalog, type DriverDirection, type DriverRouteOption } from "../lib/driver-routes";
 import { createPassengerRouteRequestScope, passengerRouteSelection, passengerRouteSelectionKey, passengerRouteAvailabilityPath,
-  parsePassengerRouteAvailability, passengerRouteOrderBody, passengerRouteCatalogStatus, createPassengerRouteSubmissionGuard, routeBookingRecoveryKey, readRouteBookingRecovery, saveRouteBookingRecovery, clearRouteBookingRecovery, isFreshPassengerRouteQuote, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability } from "../lib/passenger-route-orders";
+  parsePassengerRouteAvailability, passengerRouteOrderBody, passengerRouteCatalogStatus, createPassengerRouteSubmissionGuard, routeBookingRecoveryKey, readRouteBookingRecovery, saveRouteBookingRecovery, clearRouteBookingRecovery, confirmedRouteBookingPresent, isFreshPassengerRouteQuote, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability } from "../lib/passenger-route-orders";
 
 type Props = { token: string; endpoint: string; userId: string; busy: boolean; activeOrder: boolean; onCreated: () => Promise<void> };
 const choices: DriverDirection[] = ["a_to_b", "b_to_a"];
@@ -52,8 +52,8 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
       .then(state => {
         if (!mounted) return;
         setPendingSync(state !== null);
-        setUncertainBooking(state !== null && state !== "confirmed");
-        setMessage(state === "confirmed" ? "Ранее заказ был создан. Проверь список поездок перед новым заказом."
+        setUncertainBooking(state !== null && state.status !== "confirmed");
+        setMessage(state?.status === "confirmed" ? "Ранее заказ был создан. Проверь список поездок перед новым заказом."
           : state ? "Предыдущий заказ мог быть создан. Проверь его статус; повторное оформление заблокировано." : "");
         setRecoveryReady(true);
       })
@@ -100,13 +100,21 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
     if (submitting || !pendingSync || !recoveryReady) return;
     setSubmitting(true); setError("");
     const synced = await syncConfirmedRouteBooking(onCreated);
-    if (synced && !uncertainBooking) {
+    const record = await readRouteBookingRecovery(AsyncStorage, recoveryKey).catch(() => null);
+    let exactConfirmed = false;
+    if (synced && record?.status === "confirmed") {
+      try {
+        const response = await request<{orders: {id: string}[]}>("/api/orders", token);
+        exactConfirmed = Array.isArray(response.orders) && confirmedRouteBookingPresent(record, response.orders);
+      } catch { /* Remain blocked if verification is unavailable. */ }
+    }
+    if (synced && exactConfirmed) {
       try {
         await clearRouteBookingRecovery(AsyncStorage, recoveryKey);
         setPendingSync(false);
         setMessage("Заказы обновлены. Проверь состояние поездки.");
       } catch { setError("Не удалось сохранить результат проверки. Повтори обновление; новый заказ заблокирован."); }
-    } else if (synced) setMessage("Список обновлён, но создание заказа не подтверждено. Не оформляй повторный заказ, пока не проверишь его статус с поддержкой.");
+    } else if (synced) setMessage("Проверка завершена, но конкретный заказ не подтверждён. Повторная отправка заблокирована; обратись в поддержку.");
     else setError("Не удалось обновить заказы. Повтори проверку; не создавай ещё один заказ.");
     setSubmitting(false);
   }
@@ -130,18 +138,21 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
         lat: coords.coords.latitude, lng: coords.coords.longitude, timestamp: coords.timestamp, isMocked: coords.mocked === true,
       });
       // Persist BEFORE the first network write; if storage fails, do not create a booking.
-      await saveRouteBookingRecovery(AsyncStorage, recoveryKey, "in_flight");
+      await saveRouteBookingRecovery(AsyncStorage, recoveryKey, { status: "in_flight", orderId: null });
       setPendingSync(true);
       setUncertainBooking(true);
       postStarted = true;
-      await request("/api/orders/route", token, { method: "POST", body: JSON.stringify(body) });
-      await saveRouteBookingRecovery(AsyncStorage, recoveryKey, "confirmed");
+      const created = await request<{ order: { id: string } }>("/api/orders/route", token, { method: "POST", body: JSON.stringify(body) });
+      if (!created?.order?.id) throw new Error("Сервер не вернул идентификатор созданного заказа.");
+      await saveRouteBookingRecovery(AsyncStorage, recoveryKey, { status: "confirmed", orderId: created.order.id });
       setUncertainBooking(false);
       setAvailability(null);
       setPendingSync(true);
       const synced = await syncConfirmedRouteBooking(onCreated);
       if (synced) {
-        try { await clearRouteBookingRecovery(AsyncStorage, recoveryKey); setPendingSync(false); }
+        // Do not clear the persisted receipt here: a refresh might have returned
+        // successfully without containing the just-created order.
+        // The explicit reconciliation button verifies the exact order ID.
         catch { setError("Заказ подтверждён, но не удалось сохранить обновление. Не оформляй его повторно."); }
         setMessage("Заказ создан. Ожидаем подтверждения водителя.");
       } else {
