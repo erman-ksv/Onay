@@ -1,4 +1,4 @@
-export type RideStatus = "searching" | "en_route_to_c" | "arrived_at_c" | "in_transit" | "completed" | "cancelled";
+export type RideStatus = "searching" | "en_route_to_c" | "arrived_at_c" | "boarded_waiting" | "in_transit" | "completed" | "cancelled";
 export type RideOrder = {
   id: string;
   status: RideStatus;
@@ -44,11 +44,15 @@ export const statusLabels: Record<RideStatus, string> = {
   searching: "Ищем водителя",
   en_route_to_c: "Водитель едет к точке подачи",
   arrived_at_c: "Водитель прибыл",
+  boarded_waiting: "Ты в машине. Ожидаем отправления водителя",
   in_transit: "Поездка началась",
   completed: "Поездка завершена",
   cancelled: "Заказ отменён",
 };
 
+/** For line collection, boarding is recorded separately by /orders/:id/board;
+ * departure is a queue-level action. Never advance boarded_waiting using
+ * the legacy per-order status button. */
 export function nextTripStatus(order: RideOrder): RideStatus | null {
   return order.status === "en_route_to_c" ? "arrived_at_c"
     : order.status === "arrived_at_c" ? "in_transit"
