@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "TezJet",
+    "name": "Onay",
     "slug": "tezjet",
     "scheme": "tezjet",
     "version": "0.1.0",
@@ -12,7 +12,7 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "TezJet использует местоположение только по запросу, чтобы оформить поездку."
+          "locationWhenInUsePermission": "Onay использует местоположение только по запросу, чтобы оформить поездку."
         }
       ]
     ],
@@ -22,7 +22,10 @@
     },
     "android": {
       "package": "uz.tezjet.app",
-      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ]
     },
     "experiments": {
       "typedRoutes": true
