@@ -23,7 +23,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
   const [uncertainBooking, setUncertainBooking] = useState(false);
   const [recoveryReady, setRecoveryReady] = useState(false);
   const [recoveryError, setRecoveryError] = useState("");
-  const recoveryKey = routeBookingRecoveryKey(endpoint, userId);
+  const recoveryKey = endpoint && userId ? routeBookingRecoveryKey(endpoint, userId) : "";
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [availability, setAvailability] = useState<{ key: string; checkedAt: number; value: PassengerRouteAvailability } | null>(null);
@@ -43,6 +43,11 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
   useEffect(() => {
     let mounted = true;
     setRecoveryReady(false);
+    if (!recoveryKey) {
+      setRecoveryError("Сначала подключи сервер и войди в аккаунт. Создание заказа заблокировано.");
+      return;
+    }
+    setRecoveryError("");
     readRouteBookingRecovery(AsyncStorage, recoveryKey)
       .then(state => {
         if (!mounted) return;
