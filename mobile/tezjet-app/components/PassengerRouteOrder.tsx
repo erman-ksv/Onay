@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-nati
 import * as Location from "expo-location";
 import { ApiError, errorMessage, request } from "../lib/api";
 import { orderedDriverStops, parseDriverRouteCatalog, type DriverDirection, type DriverRouteOption } from "../lib/driver-routes";
-import { passengerRouteSelection, passengerRouteSelectionKey, passengerRouteAvailabilityPath,
+import { createPassengerRouteRequestScope, passengerRouteSelection, passengerRouteSelectionKey, passengerRouteAvailabilityPath,
   parsePassengerRouteAvailability, passengerRouteOrderBody, type PassengerRouteAvailability } from "../lib/passenger-route-orders";
 
 type Props = { token: string; endpoint: string; busy: boolean; activeOrder: boolean; onCreated: () => Promise<void> };
@@ -19,7 +19,7 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [availability, setAvailability] = useState<{ key: string; checkedAt: number; value: PassengerRouteAvailability } | null>(null);
-  const requestVersion = useRef(0);
+  const requestScope = useRef(createPassengerRouteRequestScope());
   const route = routes.find(item => item.id === routeId);
   const selection = route ? passengerRouteSelection(route, direction, seats) : null;
   const key = selection ? passengerRouteSelectionKey(selection) : "";
@@ -35,35 +35,35 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
     return () => clearInterval(timer);
   }, []);
   useEffect(() => {
-    const version = ++requestVersion.current;
+    const version = requestScope.current.startCatalog();
     setRoutes([]); setRouteId(""); setAvailability(null); setError(""); setMessage("");
     if (!token || !endpoint) return;
     setLoading(true);
     request<unknown>("/api/orders/routes", token)
       .then(result => {
-        if (version !== requestVersion.current) return;
+        if (!requestScope.current.isCurrentCatalog(version)) return;
         const items = parseDriverRouteCatalog(result);
         setRoutes(items);
         setRouteId(items[0]?.id ?? "");
       })
-      .catch(cause => { if (version === requestVersion.current) setError(errorMessage(cause, "Не удалось загрузить маршруты.")); })
-      .finally(() => { if (version === requestVersion.current) setLoading(false); });
-    return () => { requestVersion.current += 1; };
+      .catch(cause => { if (requestScope.current.isCurrentCatalog(version)) setError(errorMessage(cause, "Не удалось загрузить маршруты.")); })
+      .finally(() => { if (requestScope.current.isCurrentCatalog(version)) setLoading(false); });
+    return () => { requestScope.current.cancelCatalog(); };
   }, [token, endpoint]);
 
-  useEffect(() => { setAvailability(null); setChecking(false); setMessage(""); requestVersion.current += 1; }, [key]);
+  useEffect(() => { setAvailability(null); setChecking(false); setMessage(""); requestScope.current.cancelAvailability(); }, [key]);
   async function check() {
     if (!selection || checking || submitting) return;
-    const version = ++requestVersion.current;
+    const version = requestScope.current.startAvailability();
     const checkingKey = passengerRouteSelectionKey(selection);
     setChecking(true); setAvailability(null); setError(""); setMessage("");
     try {
       const result = parsePassengerRouteAvailability(await request<unknown>(passengerRouteAvailabilityPath(selection), token));
-      if (version !== requestVersion.current) return;
+      if (!requestScope.current.isCurrentAvailability(version)) return;
       setAvailability({ key: checkingKey, value: result, checkedAt: Date.now() });
     } catch (cause) {
-      if (version === requestVersion.current) setError(errorMessage(cause, "Не удалось проверить водителей."));
-    } finally { if (version === requestVersion.current) setChecking(false); }
+      if (requestScope.current.isCurrentAvailability(version)) setError(errorMessage(cause, "Не удалось проверить водителей."));
+    } finally { if (requestScope.current.isCurrentAvailability(version)) setChecking(false); }
   }
   async function submit() {
     if (!selection || !canOrder) return;
