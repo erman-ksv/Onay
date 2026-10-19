@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseLineCollectionState, canBoardLinePassenger, canDepartLine, lineDepartBody } from "../lib/driver-line.ts";
+import { parseLineCollectionState, canBoardLinePassenger, canDepartLine, lineDepartBody, nextDriverTripStatus } from "../lib/driver-line.ts";
 
 const receipt = { collectionState: { version: 1, enrollmentId: "enroll-1", phase: "collecting", capacity: 4 } };
 const ride = { id: "r1", status: "arrived_at_c", driver_id: "driver-1", seats: 1 };
@@ -32,4 +32,14 @@ test("reject forged, missing, malformed or changed line enrollment receipts", ()
   ]) assert.throws(() => parseLineCollectionState(value));
   const departed = parseLineCollectionState({ collectionState: { ...receipt.collectionState, phase: "departed" } });
   assert.equal(canDepartLine(departed), false);
+});
+
+test("collecting driver cannot use legacy start-trip button or handler", () => {
+  const line = parseLineCollectionState(receipt);
+  assert.equal(nextDriverTripStatus(line, ride), null);
+  assert.equal(nextDriverTripStatus(line, { ...ride, status: "en_route_to_c" }), "arrived_at_c");
+  assert.equal(nextDriverTripStatus(line, { ...ride, status: "boarded_waiting" }), null);
+  assert.equal(nextDriverTripStatus(line, { ...ride, status: "in_transit" }), "completed");
+  assert.equal(nextDriverTripStatus(null, ride), "in_transit");
+  assert.equal(nextDriverTripStatus({ ...line, phase: "departed" }, ride), "in_transit");
 });
