@@ -4,7 +4,7 @@ import { io } from "socket.io-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { API, ApiError, errorMessage, request, setApiEndpoint, validateApiEndpoint, type Availability } from "../lib/api";
-import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextTripLabel, nextTripStatus, statusLabels, type RideOrder } from "../lib/orders";
+import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextTripLabel, statusLabels, type RideOrder } from "../lib/orders";
 import DriverRoutePicker from "../components/DriverRoutePicker";
 import PassengerRouteOrder from "../components/PassengerRouteOrder";
 import { canBoardLinePassenger, canDepartLine, lineDepartBody, nextDriverTripStatus, parseLineCollectionState, type LineCollectionState } from "../lib/driver-line";
