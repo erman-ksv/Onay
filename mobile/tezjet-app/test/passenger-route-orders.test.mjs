@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createPassengerRouteRequestScope, createPassengerRouteSubmissionGuard, routeBookingRecoveryKey, readRouteBookingRecovery, saveRouteBookingRecovery, clearRouteBookingRecovery, passengerRouteCatalogStatus, isFreshPassengerRouteQuote, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, passengerRouteSelection, passengerRouteSelectionKey,
+import { createPassengerRouteRequestScope, createPassengerRouteSubmissionGuard, routeBookingRecoveryKey, readRouteBookingRecovery, saveRouteBookingRecovery, clearRouteBookingRecovery, confirmedRouteBookingPresent, passengerRouteCatalogStatus, isFreshPassengerRouteQuote, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, passengerRouteSelection, passengerRouteSelectionKey,
   passengerRouteAvailabilityPath, parsePassengerRouteAvailability, passengerRouteOrderBody } from "../lib/passenger-route-orders.ts";
 const route = { id: "route1", name: "Село — город", updatedAt: "2026-10-19T01:00:00Z",
   stops: [{id:"a",name:"Село"}, {id:"b",name:"Город"}] };
@@ -117,7 +117,7 @@ test("rapid double tap cannot run two passenger booking requests before render",
   guard.finish();
 });
 
-test("booking recovery persists uncertain state through remount until acknowledged", async () => {
+test("booking recovery survives remount and requires an exact server order id", async () => {
   const records = new Map();
   const storage = {
     getItem: async key => records.get(key) ?? null,
@@ -128,22 +128,23 @@ test("booking recovery persists uncertain state through remount until acknowledg
   const another = routeBookingRecoveryKey("https://onay.example", "passenger-2");
   assert.notEqual(key, another);
   assert.equal(await readRouteBookingRecovery(storage, key), null);
-  await saveRouteBookingRecovery(storage, key, "in_flight");
-  assert.equal(await readRouteBookingRecovery(storage, key), "in_flight");
+  await saveRouteBookingRecovery(storage, key, {status:"in_flight",orderId:null});
+  assert.deepEqual(await readRouteBookingRecovery(storage, key), {status:"in_flight",orderId:null});
   assert.equal(await readRouteBookingRecovery(storage, another), null);
-  await saveRouteBookingRecovery(storage, key, "confirmed");
-  assert.equal(await readRouteBookingRecovery(storage, key), "confirmed");
+  await saveRouteBookingRecovery(storage, key, {status:"confirmed",orderId:"order-123"});
+  const record = await readRouteBookingRecovery(storage, key);
+  assert.deepEqual(record, {status:"confirmed",orderId:"order-123"});
+  assert.equal(confirmedRouteBookingPresent(record, [{id:"order-123"}]),true);
+  assert.equal(confirmedRouteBookingPresent(record, [{id:"other"}]),false);
   await clearRouteBookingRecovery(storage, key);
   assert.equal(await readRouteBookingRecovery(storage, key), null);
 });
 
-test("corrupt booking recovery is fail-closed, not permission to resubmit", async () => {
-  const storage = {
-    getItem: async () => "{corrupt-payload}",
-    setItem: async () => {},
-    removeItem: async () => {},
-  };
-  assert.equal(await readRouteBookingRecovery(storage, "key"), "uncertain");
+test("corrupt and legacy booking recovery stay blocked", async () => {
+  const storage = {getItem: async () => "{corrupt-payload}",setItem: async () => {},removeItem: async () => {}};
+  assert.deepEqual(await readRouteBookingRecovery(storage, "key"), {status:"uncertain",orderId:null});
+  assert.equal(confirmedRouteBookingPresent({status:"uncertain",orderId:null}, [{id:"order-123"}]),false);
+  assert.rejects(() => saveRouteBookingRecovery(storage,"key",{status:"confirmed",orderId:null}));
   assert.throws(() => routeBookingRecoveryKey("", "passenger"));
   assert.throws(() => routeBookingRecoveryKey("https://onay.example", ""));
 });
