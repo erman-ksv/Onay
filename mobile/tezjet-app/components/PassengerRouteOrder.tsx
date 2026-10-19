@@ -153,7 +153,6 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
         // Do not clear the persisted receipt here: a refresh might have returned
         // successfully without containing the just-created order.
         // The explicit reconciliation button verifies the exact order ID.
-        catch { setError("Заказ подтверждён, но не удалось сохранить обновление. Не оформляй его повторно."); }
         setMessage("Заказ создан. Ожидаем подтверждения водителя.");
       } else {
         setMessage("Заказ создан, но список поездок не обновился. Проверь статус; повторно заказывать не нужно.");
