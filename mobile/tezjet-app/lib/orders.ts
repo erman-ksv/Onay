@@ -59,6 +59,13 @@ export function nextTripStatus(order: RideOrder): RideStatus | null {
     : order.status === "in_transit" ? "completed" : null;
 }
 
+/** Suppress the legacy start-trip action while a line is collecting passengers.
+ * The server's /queue/depart owns the collecting-line departure. */
+export function nextDriverTripStatus(linePhase: "collecting" | "departed" | null, order: RideOrder): RideStatus | null {
+  const next = nextTripStatus(order);
+  return linePhase === "collecting" && next === "in_transit" ? null : next;
+}
+
 export function nextTripLabel(order: RideOrder): string {
   const next = nextTripStatus(order);
   return next === "arrived_at_c" ? "Я прибыл на точку"
