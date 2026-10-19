@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createPassengerRouteRequestScope, isFreshPassengerRouteQuote, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, passengerRouteSelection, passengerRouteSelectionKey,
+import { createPassengerRouteRequestScope, passengerRouteCatalogStatus, isFreshPassengerRouteQuote, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, passengerRouteSelection, passengerRouteSelectionKey,
   passengerRouteAvailabilityPath, parsePassengerRouteAvailability, passengerRouteOrderBody } from "../lib/passenger-route-orders.ts";
 const route = { id: "route1", name: "Село — город", updatedAt: "2026-10-19T01:00:00Z",
   stops: [{id:"a",name:"Село"}, {id:"b",name:"Город"}] };
@@ -86,4 +86,12 @@ test("route quote expires during slow location acquisition before order POST", (
   assert.equal(isFreshPassengerRouteQuote(null, "route-v1", 1100), false);
   assert.equal(isFreshPassengerRouteQuote({ ...quote, value: {available:false} }, "route-v1", 1100), false);
   assert.equal(isFreshPassengerRouteQuote(quote, "route-v1", 999), false);
+});
+
+test("route catalog distinguishes network failure from legitimate empty routes and supports retry", () => {
+  assert.equal(passengerRouteCatalogStatus({ loading: true, error: "", count: 0 }), "loading");
+  assert.equal(passengerRouteCatalogStatus({ loading: false, error: "offline", count: 0 }), "error");
+  assert.equal(passengerRouteCatalogStatus({ loading: false, error: "", count: 0 }), "empty");
+  assert.equal(passengerRouteCatalogStatus({ loading: false, error: "", count: 2 }), "ready");
+  assert.equal(passengerRouteCatalogStatus({ loading: true, error: "old error", count: 0 }), "loading");
 });
