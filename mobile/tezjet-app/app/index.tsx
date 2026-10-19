@@ -4,10 +4,10 @@ import { io } from "socket.io-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { API, ApiError, errorMessage, request, setApiEndpoint, validateApiEndpoint, type Availability } from "../lib/api";
-import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextTripLabel, statusLabels, type RideOrder } from "../lib/orders";
+import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextDriverTripStatus, nextTripLabel, statusLabels, type RideOrder } from "../lib/orders";
 import DriverRoutePicker from "../components/DriverRoutePicker";
 import PassengerRouteOrder from "../components/PassengerRouteOrder";
-import { canBoardLinePassenger, canDepartLine, lineDepartBody, nextDriverTripStatus, parseLineCollectionState, type LineCollectionState } from "../lib/driver-line";
+import { canBoardLinePassenger, canDepartLine, lineDepartBody, parseLineCollectionState, type LineCollectionState } from "../lib/driver-line";
 import { passengerAvailabilityDisplay, verifiedDriverCount, type PassengerAvailability } from "../lib/passenger-availability";
 import { canJoinDriverQueue, driverQueueChoiceInput, driverRouteSessionKey, type DriverQueueContext, type DriverRouteGate } from "../lib/driver-routes";
 
@@ -597,7 +597,7 @@ export default function Home() {
   }
 
   async function progressOrder(activeOrder: RideOrder) {
-    const next = nextDriverTripStatus(lineState, activeOrder);
+    const next = nextDriverTripStatus(lineState?.phase ?? null, activeOrder);
     if (!next) return;
     setBusy(true);
     try {
@@ -640,7 +640,7 @@ export default function Home() {
           {lineState?.phase === "collecting" ? <View testID="driver-line-collection"><Text style={s.note}>Сбор пассажиров · линия активна. Посадка и отправление подтверждаются сервером.</Text><Button title="Отправиться с питака" testID="driver-line-depart" onPress={confirmLineDeparture} disabled={busy || !!incomingOrder || !canDepartLine(lineState)} /></View> : null}
         </View>
         {incomingOrder ? <View style={s.card}><Text style={s.heading}>Новый заказ</Text><Text style={s.descDark}>Точка подачи: {incomingOrder.pickup_point}</Text><Text style={s.descDark}>Куда: {incomingOrder.destination || "смотри маршрут"}</Text><Text style={s.descDark}>Пассажиров: {incomingOrder.seats}</Text><Text style={s.note}>Ответить за {Math.max(0, Math.ceil(((incomingOrder.offer_expires_at ?? now) - now) / 1_000))} сек.</Text><Button title={busy ? "Принимаем…" : "Принять заказ"} onPress={acceptOrder} disabled={busy || !isLiveOffer(incomingOrder, profile.id, now)} /><Button title="Отклонить" onPress={rejectOrder} disabled={busy || !isLiveOffer(incomingOrder, profile.id, now)} secondary /></View> : null}
-        {activeDriverOrders.map(activeOrder => <View key={activeOrder.id} style={s.card}><Text style={s.heading}>Текущая поездка</Text><Text style={s.descDark}>Статус: {statusLabels[activeOrder.status]}</Text><Text style={s.descDark}>Точка подачи: {activeOrder.pickup_point}</Text><Text style={s.descDark}>Назначение: {activeOrder.destination || "по маршруту"}</Text>{canBoardLinePassenger(lineState, activeOrder) ? <Button title="Пассажир сел в машину" testID="driver-line-board" onPress={() => { void boardLinePassenger(activeOrder); }} disabled={busy} /> : null}{nextDriverTripStatus(lineState, activeOrder) ? <Button title={busy ? "Обновляем…" : nextTripLabel(activeOrder)} onPress={() => progressOrder(activeOrder)} disabled={busy} /> : null}</View>)}
+        {activeDriverOrders.map(activeOrder => <View key={activeOrder.id} style={s.card}><Text style={s.heading}>Текущая поездка</Text><Text style={s.descDark}>Статус: {statusLabels[activeOrder.status]}</Text><Text style={s.descDark}>Точка подачи: {activeOrder.pickup_point}</Text><Text style={s.descDark}>Назначение: {activeOrder.destination || "по маршруту"}</Text>{canBoardLinePassenger(lineState, activeOrder) ? <Button title="Пассажир сел в машину" testID="driver-line-board" onPress={() => { void boardLinePassenger(activeOrder); }} disabled={busy} /> : null}{nextDriverTripStatus(lineState?.phase ?? null, activeOrder) ? <Button title={busy ? "Обновляем…" : nextTripLabel(activeOrder)} onPress={() => progressOrder(activeOrder)} disabled={busy} /> : null}</View>)}
         {!driverRouteGate.hasChoice && !driverQueueContext && !incomingOrder && !activeDriverOrders.length ? <View style={s.card}><Text style={s.descDark}>Ожидаем подходящий заказ. Сервер выбирает водителя по очереди и доступным местам.</Text></View> : null}
       </>
     ) : <>
