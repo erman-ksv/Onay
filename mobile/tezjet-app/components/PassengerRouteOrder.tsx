@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import * as Location from "expo-location";
 import { ApiError, errorMessage, request } from "../lib/api";
 import { orderedDriverStops, parseDriverRouteCatalog, type DriverDirection, type DriverRouteOption } from "../lib/driver-routes";
@@ -93,44 +93,121 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
       } else setError(errorMessage(cause, "Не удалось оформить заказ."));
     } finally { setSubmitting(false); }
   }
-  const button = (title: string, onPress: () => void, disabled = false) =>
-    <Pressable accessibilityRole="button" accessibilityState={{ disabled }} onPress={onPress} disabled={disabled}
-      style={{ padding: 12, borderRadius: 12, backgroundColor: disabled ? "#C8D6D0" : "#0D735C", marginTop: 8 }}>
-      <Text style={{ color: "#fff", fontWeight: "700", textAlign: "center" }}>{title}</Text>
+  const button = (title: string, onPress: () => void, disabled = false, primary = false, testID?: string) =>
+    <Pressable testID={testID} accessibilityRole="button" accessibilityState={{ disabled }}
+      onPress={onPress} disabled={disabled}
+      style={[v.button, primary ? v.buttonPrimary : v.buttonSecondary, disabled && v.disabled]}>
+      <Text style={[v.buttonLabel, primary ? v.primaryText : v.secondaryText]}>{title}</Text>
     </Pressable>;
-  return <View testID="configured-route-passenger" style={{ padding: 20, borderRadius: 24, backgroundColor: "#fff", marginBottom: 16 }}>
-    <Text style={{ color: "#102D26", fontWeight: "800", fontSize: 21 }}>Такси по маршруту</Text>
-    <Text style={{ color: "#53675E", marginVertical: 8 }}>Выбери линию и направление. Цена и свободные места проверяются сервером.</Text>
-    {loading ? <ActivityIndicator /> : null}
-    {!loading && routes.length === 0 ? <Text>Настроенных маршрутов пока нет.</Text> : null}
-    {routes.map(item => <Pressable key={item.id} onPress={() => setRouteId(item.id)}
+
+  return <View testID="configured-route-passenger" style={v.card}>
+    <Text style={v.eyebrow}>ONAY · МАРШРУТНОЕ ТАКСИ</Text>
+    <Text style={v.title}>Куда едем?</Text>
+    <Text style={v.subtitle}>Выберите линию и количество мест. Доступность водителей и цену проверит сервер.</Text>
+    {loading ? <ActivityIndicator color="#33DB9C" style={v.loader}/> : null}
+    {!loading && routes.length === 0 ? <Text style={v.hint}>Настроенных маршрутов пока нет.</Text> : null}
+    {routes.map(item => <Pressable key={item.id} onPress={() => setRouteId(item.id)} disabled={submitting}
       accessibilityRole="button" accessibilityState={{ selected: item.id === routeId }}
-      style={{ padding: 10, borderRadius: 10, borderWidth: 1, borderColor: item.id === routeId ? "#0D735C" : "#DCE5DF", marginTop: 5 }}>
-      <Text>{item.name}</Text>
+      style={[v.route, item.id === routeId && v.routeActive]}>
+      <View style={[v.indicator, item.id === routeId && v.indicatorActive]}/>
+      <View style={v.routeContent}>
+        <Text style={v.routeName}>{item.name}</Text>
+        <Text style={v.routeInfo}>Выбрать маршрут</Text>
+      </View>
+      <Text style={v.chevron}>›</Text>
     </Pressable>)}
     {route ? <>
-      <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
-        {choices.map(value => <Pressable key={value} onPress={() => setDirection(value)}
+      <Text style={v.sectionHeading}>НАПРАВЛЕНИЕ</Text>
+      <View style={v.directions}>
+        {choices.map(value => <Pressable key={value} onPress={() => setDirection(value)} disabled={submitting}
           accessibilityRole="button" accessibilityState={{ selected: direction === value }}
-          style={{ flex: 1, padding: 10, borderWidth: 1, borderRadius: 10, borderColor: direction === value ? "#0D735C" : "#DCE5DF" }}>
-          <Text style={{ textAlign: "center" }}>{value === "a_to_b" ? "A → B" : "B → A"}</Text>
+          style={[v.direction, direction === value && v.directionActive]}>
+          <Text style={[v.directionText, direction === value && v.directionTextActive]}>
+            {value === "a_to_b" ? "A → B" : "B → A"}
+          </Text>
         </Pressable>)}
       </View>
-      <Text style={{ marginTop: 10 }}>{stops[0]?.name} → {stops[stops.length - 1]?.name}</Text>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 18, marginTop: 12 }}>
-        <Text>Места: {seats}</Text>
-        {button("−", () => setSeats(Math.max(1, seats - 1)), seats <= 1 || submitting)}
-        {button("+", () => setSeats(Math.min(8, seats + 1)), seats >= 8 || submitting)}
+      <View style={v.trip}>
+        <View style={v.tripDots}><View style={v.originDot}/><View style={v.tripLine}/><View style={v.destinationDot}/></View>
+        <View style={v.tripLabels}>
+          <Text style={v.tripName}>{stops[0]?.name ?? "Начало маршрута"}</Text>
+          <Text style={v.tripCaption}>Откуда</Text>
+          <Text style={[v.tripName, v.destinationName]}>{stops[stops.length - 1]?.name ?? "Конец маршрута"}</Text>
+          <Text style={v.tripCaption}>Куда</Text>
+        </View>
       </View>
-      {button(checking ? "Проверяем…" : "Проверить наличие и цену", () => { void check(); }, checking || submitting || busy)}
-      {fresh && availability ? <Text style={{ marginTop: 10 }}>
-        {availability.value.available ? `Подходящих водителей: ${availability.value.eligibleDriverCount}` : "Подходящих водителей сейчас нет."}
-        {"\n"}Стоимость: {new Intl.NumberFormat("ru-RU").format(availability.value.priceKzt)} ₸
-      </Text> : <Text style={{ marginTop: 10 }}>Для заказа нужна свежая проверка доступности.</Text>}
-      {button(submitting ? "Оформляем…" : "Заказать поездку", () => { void submit(); }, !canOrder)}
+      <View style={v.seats}>
+        <View><Text style={v.seatsTitle}>Пассажиры</Text><Text style={v.seatsDescription}>Места: от 1 до 8</Text></View>
+        <View style={v.stepper}>
+          <Pressable testID="route-seats-minus" accessibilityRole="button" accessibilityLabel="Уменьшить количество мест"
+            disabled={seats <= 1 || submitting} onPress={() => setSeats(Math.max(1, seats - 1))}
+            style={[v.step, (seats <= 1 || submitting) && v.disabled]}><Text style={v.stepText}>−</Text></Pressable>
+          <Text style={v.count}>{seats}</Text>
+          <Pressable testID="route-seats-plus" accessibilityRole="button" accessibilityLabel="Увеличить количество мест"
+            disabled={seats >= 8 || submitting} onPress={() => setSeats(Math.min(8, seats + 1))}
+            style={[v.step, (seats >= 8 || submitting) && v.disabled]}><Text style={v.stepText}>+</Text></Pressable>
+        </View>
+      </View>
+      {button(checking ? "Проверяем…" : "Проверить цену и водителей",
+        () => { void check(); }, checking || submitting || busy, false, "route-check-availability")}
+      <View style={v.priceCard}>
+        <Text style={v.sectionHeading}>ПОДТВЕРЖДЁННАЯ СТОИМОСТЬ</Text>
+        <Text style={v.price}>{fresh && availability ? new Intl.NumberFormat("ru-RU").format(availability.value.priceKzt) + " ₸" : "—"}</Text>
+        <Text style={[v.availability, fresh && availability?.value.available && v.availabilityPositive]}>
+          {fresh && availability
+            ? availability.value.available
+              ? "Свободных водителей: " + availability.value.eligibleDriverCount
+              : "Свободных водителей сейчас нет"
+            : "Обновите наличие и цену перед заказом"}
+        </Text>
+      </View>
+      {button(submitting ? "Оформляем…" : "Заказать поездку",
+        () => { void submit(); }, !canOrder, true, "route-book-trip")}
     </> : null}
-    {activeOrder ? <Text>Сначала заверши или отмени текущую поездку.</Text> : null}
-    {message ? <Text style={{ color: "#175444", marginTop: 10 }}>{message}</Text> : null}
-    {error ? <Text style={{ color: "#A42323", marginTop: 10 }}>{error}</Text> : null}
+    {activeOrder ? <Text style={v.notice}>Сначала заверши или отмени текущую поездку.</Text> : null}
+    {message ? <Text style={v.notice}>{message}</Text> : null}
+    {error ? <Text style={v.error}>{error}</Text> : null}
   </View>;
 }
+
+const v = StyleSheet.create({
+  card:{padding:20,borderRadius:24,backgroundColor:"#0B271A",marginBottom:16,borderWidth:1,borderColor:"#1F4B32"},
+  eyebrow:{color:"#31DE9C",fontSize:10,fontWeight:"800",letterSpacing:1.5,marginBottom:10},
+  title:{color:"#F2FFF6",fontSize:30,fontWeight:"900"},
+  subtitle:{color:"#ADCCB9",fontSize:13,lineHeight:20,marginTop:6,marginBottom:18},
+  loader:{marginVertical:12},hint:{color:"#C6DECE",marginBottom:10,fontSize:13},
+  route:{flexDirection:"row",alignItems:"center",backgroundColor:"#153624",borderWidth:1,borderColor:"#315540",borderRadius:16,padding:13,marginBottom:8,gap:10},
+  routeActive:{backgroundColor:"#195338",borderColor:"#35D99B"},
+  indicator:{height:12,width:12,borderRadius:6,borderWidth:2,borderColor:"#83AA95"},
+  indicatorActive:{backgroundColor:"#35DF9D",borderColor:"#35DF9D"},
+  routeContent:{flex:1},routeName:{color:"#EFFFF1",fontSize:15,fontWeight:"800"},
+  routeInfo:{color:"#97B8A2",fontSize:11,marginTop:3},chevron:{color:"#36DD9B",fontSize:26},
+  sectionHeading:{color:"#A2C4AD",fontSize:10,fontWeight:"800",letterSpacing:1.2,marginTop:14,marginBottom:10},
+  directions:{flexDirection:"row",gap:9},
+  direction:{flex:1,alignItems:"center",paddingVertical:12,borderWidth:1,borderRadius:13,backgroundColor:"#153624",borderColor:"#315540"},
+  directionActive:{backgroundColor:"#236C49",borderColor:"#33DC9B"},
+  directionText:{color:"#ACC9B7",fontSize:15,fontWeight:"700"},directionTextActive:{color:"#F5FFF7"},
+  trip:{backgroundColor:"#153624",borderRadius:16,marginTop:16,padding:15,flexDirection:"row",gap:14},
+  tripDots:{alignItems:"center",width:15,paddingTop:4},
+  originDot:{width:11,height:11,borderRadius:6,backgroundColor:"#37DAA1"},
+  tripLine:{height:40,width:2,backgroundColor:"#3F7754"},
+  destinationDot:{width:11,height:11,borderRadius:6,borderWidth:2,borderColor:"#37DAA1"},
+  tripLabels:{flex:1},tripName:{color:"#F0FFF5",fontWeight:"700",fontSize:14},
+  destinationName:{marginTop:16},tripCaption:{color:"#8CAD98",fontSize:11,marginTop:2},
+  seats:{flexDirection:"row",alignItems:"center",justifyContent:"space-between",marginTop:18},
+  seatsTitle:{color:"#F3FFF7",fontSize:14,fontWeight:"800"},seatsDescription:{color:"#91B29D",fontSize:11,marginTop:3},
+  stepper:{flexDirection:"row",gap:12,alignItems:"center"},
+  step:{height:34,width:34,alignItems:"center",justifyContent:"center",borderRadius:17,backgroundColor:"#22583A"},
+  stepText:{color:"#45E7A7",fontSize:22,fontWeight:"700"},
+  count:{color:"#F5FFF7",fontWeight:"800",fontSize:17,minWidth:18,textAlign:"center"},
+  button:{minHeight:49,borderRadius:14,padding:13,alignItems:"center",justifyContent:"center",marginTop:12},
+  buttonPrimary:{backgroundColor:"#31DA9C"},buttonSecondary:{backgroundColor:"#1B4C32",borderWidth:1,borderColor:"#36A978"},
+  buttonLabel:{fontSize:14,fontWeight:"800"},
+  primaryText:{color:"#062718"},secondaryText:{color:"#E8FFF0"},disabled:{opacity:0.43},
+  priceCard:{marginTop:14,padding:14,borderRadius:16,backgroundColor:"#153624"},
+  price:{fontSize:26,color:"#F2FFF7",fontWeight:"900"},
+  availability:{fontSize:12,color:"#B3CDBA",marginTop:6,lineHeight:19},
+  availabilityPositive:{color:"#42ECA9"},
+  notice:{fontSize:12,color:"#C8FAE0",backgroundColor:"#19543A",padding:11,borderRadius:12,marginTop:12},
+  error:{fontSize:12,color:"#FFD8D8",backgroundColor:"#562A2A",padding:11,borderRadius:12,marginTop:12},
+});
