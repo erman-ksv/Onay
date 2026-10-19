@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createPassengerRouteRequestScope, createPassengerRouteSubmissionGuard, passengerRouteCatalogStatus, isFreshPassengerRouteQuote, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, passengerRouteSelection, passengerRouteSelectionKey,
+import { createPassengerRouteRequestScope, createPassengerRouteSubmissionGuard, routeBookingRecoveryKey, readRouteBookingRecovery, saveRouteBookingRecovery, clearRouteBookingRecovery, passengerRouteCatalogStatus, isFreshPassengerRouteQuote, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, passengerRouteSelection, passengerRouteSelectionKey,
   passengerRouteAvailabilityPath, parsePassengerRouteAvailability, passengerRouteOrderBody } from "../lib/passenger-route-orders.ts";
 const route = { id: "route1", name: "Село — город", updatedAt: "2026-10-19T01:00:00Z",
   stops: [{id:"a",name:"Село"}, {id:"b",name:"Город"}] };
@@ -115,4 +115,35 @@ test("rapid double tap cannot run two passenger booking requests before render",
   assert.equal(guard.isInFlight(), false);
   assert.equal(guard.tryStart(), true);
   guard.finish();
+});
+
+test("booking recovery persists uncertain state through remount until acknowledged", async () => {
+  const records = new Map();
+  const storage = {
+    getItem: async key => records.get(key) ?? null,
+    setItem: async (key, value) => { records.set(key, value); },
+    removeItem: async key => { records.delete(key); },
+  };
+  const key = routeBookingRecoveryKey("https://onay.example", "passenger-1");
+  const another = routeBookingRecoveryKey("https://onay.example", "passenger-2");
+  assert.notEqual(key, another);
+  assert.equal(await readRouteBookingRecovery(storage, key), null);
+  await saveRouteBookingRecovery(storage, key, "in_flight");
+  assert.equal(await readRouteBookingRecovery(storage, key), "in_flight");
+  assert.equal(await readRouteBookingRecovery(storage, another), null);
+  await saveRouteBookingRecovery(storage, key, "confirmed");
+  assert.equal(await readRouteBookingRecovery(storage, key), "confirmed");
+  await clearRouteBookingRecovery(storage, key);
+  assert.equal(await readRouteBookingRecovery(storage, key), null);
+});
+
+test("corrupt booking recovery is fail-closed, not permission to resubmit", async () => {
+  const storage = {
+    getItem: async () => "{corrupt-payload}",
+    setItem: async () => {},
+    removeItem: async () => {},
+  };
+  assert.equal(await readRouteBookingRecovery(storage, "key"), "uncertain");
+  assert.throws(() => routeBookingRecoveryKey("", "passenger"));
+  assert.throws(() => routeBookingRecoveryKey("https://onay.example", ""));
 });
