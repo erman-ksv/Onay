@@ -77,6 +77,36 @@ export function createPassengerRouteSubmissionGuard() {
   };
 }
 
+/** A booking POST can be committed before the phone receives its reply.
+ * Remember that fact by authenticated user and endpoint across app restarts.
+ * No credentials, trip location or phone number are stored here. */
+export type RouteBookingRecovery = "in_flight" | "confirmed" | "uncertain";
+export type RouteBookingStorage = {
+  getItem(key: string): Promise<string | null>;
+  setItem(key: string, value: string): Promise<unknown>;
+  removeItem(key: string): Promise<unknown>;
+};
+
+export function routeBookingRecoveryKey(endpoint: string, userId: string): string {
+  if (!/^https?:\/\//.test(endpoint) || !userId.trim()) throw new Error("Booking recovery requires a valid endpoint and authenticated passenger.");
+  return "@onay/route-booking/v1/" + encodeURIComponent(endpoint) + "/" + encodeURIComponent(userId);
+}
+
+export async function readRouteBookingRecovery(storage: RouteBookingStorage, key: string): Promise<RouteBookingRecovery | null> {
+  const value = await storage.getItem(key);
+  if (value === null) return null;
+  // Treat corrupt records as uncertain, never as permission to create again.
+  return value === "confirmed" ? "confirmed" : value === "in_flight" ? "in_flight" : "uncertain";
+}
+
+export async function saveRouteBookingRecovery(storage: RouteBookingStorage, key: string, state: RouteBookingRecovery): Promise<void> {
+  await storage.setItem(key, state);
+}
+
+export async function clearRouteBookingRecovery(storage: RouteBookingStorage, key: string): Promise<void> {
+  await storage.removeItem(key);
+}
+
 export type PassengerRouteSelection = {
   route_id: string;
   direction: DriverDirection;
