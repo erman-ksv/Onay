@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isLiveOffer, mergeOrder, mergeOrderSnapshot, nextTripStatus } from "../lib/orders.ts";
+import { isLiveOffer, mergeOrder, mergeOrderSnapshot, nextTripStatus, nextTripLabel, statusLabels } from "../lib/orders.ts";
 
 const offered = {
   id: "ride", status: "searching", pickup_point: "C", seats: 2,
@@ -55,4 +55,19 @@ test("a snapshot preserves newer accepted passenger trip status", () => {
   const accepted = { ...offered, status: "en_route_to_c", driver_id: "driver", updated_at: "2026-10-13T00:00:02.000Z" };
   const merged = mergeOrderSnapshot([accepted], [offered]);
   assert.equal(merged[0].status, "en_route_to_c");
+});
+
+test("boarded passenger waits for explicit driver departure, not legacy trip advancement", () => {
+  const boarded = { ...offered, status: "boarded_waiting", driver_id: "driver", offered_driver_id: undefined };
+  assert.match(statusLabels[boarded.status], /Ожидаем отправления/);
+  assert.notEqual(statusLabels[boarded.status], statusLabels.in_transit);
+  assert.equal(nextTripStatus(boarded), null);
+  assert.equal(nextTripLabel(boarded), "");
+  assert.equal(isLiveOffer(boarded, "driver", 60_999), false);
+});
+test("a boarded status survives an older arrival snapshot", () => {
+  const boarded = { ...offered, status: "boarded_waiting", driver_id: "driver", updated_at: "2026-10-13T00:00:04.000Z" };
+  const arrived = { ...boarded, status: "arrived_at_c", updated_at: "2026-10-13T00:00:03.000Z" };
+  assert.equal(mergeOrder([boarded], arrived)[0].status, "boarded_waiting");
+  assert.equal(nextTripStatus({ ...boarded, status: "in_transit" }), "completed");
 });
