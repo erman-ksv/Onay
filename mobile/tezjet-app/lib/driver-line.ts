@@ -1,4 +1,4 @@
-import type { RideOrder } from "./orders";
+import { nextTripStatus, type RideOrder, type RideStatus } from "./orders";
 
 /** Opaque queue enrollment receipt from the server. Never synthesize an ID. */
 export type LineCollectionState = {
@@ -26,6 +26,14 @@ export function parseLineCollectionState(entry: unknown): LineCollectionState | 
 export function canBoardLinePassenger(line: LineCollectionState | null, order: RideOrder): boolean {
   return line?.phase === "collecting" && order.status === "arrived_at_c" &&
     typeof order.driver_id === "string" && order.driver_id.length > 0;
+}
+
+/** The collecting line must board each passenger; only /queue/depart starts the trip.
+ * Keep the legacy arrival and completion buttons available when appropriate. */
+export function nextDriverTripStatus(line: LineCollectionState | null, order: RideOrder): RideStatus | null {
+  const next = nextTripStatus(order);
+  if (line?.phase === "collecting" && next === "in_transit") return null;
+  return next;
 }
 
 export function canDepartLine(line: LineCollectionState | null): boolean {
