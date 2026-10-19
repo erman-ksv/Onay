@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createPassengerRouteRequestScope, passengerRouteCatalogStatus, isFreshPassengerRouteQuote, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, passengerRouteSelection, passengerRouteSelectionKey,
+import { createPassengerRouteRequestScope, createPassengerRouteSubmissionGuard, passengerRouteCatalogStatus, isFreshPassengerRouteQuote, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, passengerRouteSelection, passengerRouteSelectionKey,
   passengerRouteAvailabilityPath, parsePassengerRouteAvailability, passengerRouteOrderBody } from "../lib/passenger-route-orders.ts";
 const route = { id: "route1", name: "Село — город", updatedAt: "2026-10-19T01:00:00Z",
   stops: [{id:"a",name:"Село"}, {id:"b",name:"Город"}] };
@@ -94,4 +94,25 @@ test("route catalog distinguishes network failure from legitimate empty routes a
   assert.equal(passengerRouteCatalogStatus({ loading: false, error: "", count: 0 }), "empty");
   assert.equal(passengerRouteCatalogStatus({ loading: false, error: "", count: 2 }), "ready");
   assert.equal(passengerRouteCatalogStatus({ loading: true, error: "old error", count: 0 }), "loading");
+});
+
+test("rapid double tap cannot run two passenger booking requests before render", async () => {
+  const guard = createPassengerRouteSubmissionGuard();
+  let posts = 0;
+  let resolveFirst;
+  const first = new Promise(resolve => { resolveFirst = resolve; });
+  const submit = async () => {
+    if (!guard.tryStart()) return false;
+    try { posts++; await first; return true; }
+    finally { guard.finish(); }
+  };
+  const firstTap = submit();
+  assert.equal(await submit(), false);
+  assert.equal(posts, 1);
+  assert.equal(guard.isInFlight(), true);
+  resolveFirst();
+  assert.equal(await firstTap, true);
+  assert.equal(guard.isInFlight(), false);
+  assert.equal(guard.tryStart(), true);
+  guard.finish();
 });
