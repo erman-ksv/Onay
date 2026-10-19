@@ -77,10 +77,12 @@ export function createPassengerRouteSubmissionGuard() {
   };
 }
 
-/** A booking POST can be committed before the phone receives its reply.
- * Remember that fact by authenticated user and endpoint across app restarts.
- * No credentials, trip location or phone number are stored here. */
-export type RouteBookingRecovery = "in_flight" | "confirmed" | "uncertain";
+/** Persist a booking attempt before the POST so restarting the app cannot erase
+ * an uncertain server commit. Never store tokens, names, or GPS coordinates. */
+export type RouteBookingRecovery = {
+  status: "in_flight" | "confirmed" | "uncertain";
+  orderId: string | null;
+};
 export type RouteBookingStorage = {
   getItem(key: string): Promise<string | null>;
   setItem(key: string, value: string): Promise<unknown>;
@@ -88,23 +90,50 @@ export type RouteBookingStorage = {
 };
 
 export function routeBookingRecoveryKey(endpoint: string, userId: string): string {
-  if (!/^https?:\/\//.test(endpoint) || !userId.trim()) throw new Error("Booking recovery requires a valid endpoint and authenticated passenger.");
+  if (!/^https?:\/\//.test(endpoint) || !userId.trim()) {
+    throw new Error("Booking recovery requires a valid endpoint and authenticated passenger.");
+  }
   return "@onay/route-booking/v1/" + encodeURIComponent(endpoint) + "/" + encodeURIComponent(userId);
 }
 
 export async function readRouteBookingRecovery(storage: RouteBookingStorage, key: string): Promise<RouteBookingRecovery | null> {
   const value = await storage.getItem(key);
   if (value === null) return null;
-  // Treat corrupt records as uncertain, never as permission to create again.
-  return value === "confirmed" ? "confirmed" : value === "in_flight" ? "in_flight" : "uncertain";
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const data = parsed as Record<string, unknown>;
+      if (data.status === "confirmed" && typeof data.orderId === "string" &&
+          /^[a-z0-9-]{1,128}$/i.test(data.orderId)) {
+        return { status: "confirmed", orderId: data.orderId };
+      }
+      if (data.status === "in_flight" || data.status === "uncertain") {
+        return { status: data.status, orderId: null };
+      }
+    }
+  } catch { /* Fail closed on truncated or legacy records. */ }
+  return { status: "uncertain", orderId: null };
 }
 
-export async function saveRouteBookingRecovery(storage: RouteBookingStorage, key: string, state: RouteBookingRecovery): Promise<void> {
-  await storage.setItem(key, state);
+export async function saveRouteBookingRecovery(
+  storage: RouteBookingStorage, key: string, state: RouteBookingRecovery,
+): Promise<void> {
+  if (state.status === "confirmed" && !state.orderId) throw new Error("Confirmed bookings require a server order id.");
+  await storage.setItem(key, JSON.stringify(state));
 }
 
 export async function clearRouteBookingRecovery(storage: RouteBookingStorage, key: string): Promise<void> {
   await storage.removeItem(key);
+}
+
+/** A successful orders GET is not enough: the exact confirmed order must be
+ * visible before permitting another booking. An uncertain POST stays blocked. */
+export function confirmedRouteBookingPresent(
+  record: RouteBookingRecovery | null,
+  orders: readonly { id: string }[],
+): boolean {
+  return record?.status === "confirmed" && !!record.orderId &&
+    orders.some(order => order.id === record.orderId);
 }
 
 export type PassengerRouteSelection = {
