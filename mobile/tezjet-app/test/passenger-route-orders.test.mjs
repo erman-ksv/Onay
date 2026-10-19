@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { passengerRouteSelection, passengerRouteSelectionKey,
+import { createPassengerRouteRequestScope, passengerRouteSelection, passengerRouteSelectionKey,
   passengerRouteAvailabilityPath, parsePassengerRouteAvailability, passengerRouteOrderBody } from "../lib/passenger-route-orders.ts";
 const route = { id: "route1", name: "Село — город", updatedAt: "2026-10-19T01:00:00Z",
   stops: [{id:"a",name:"Село"}, {id:"b",name:"Город"}] };
@@ -35,4 +35,30 @@ test("reject invalid seats and fake location before submission",()=>{
   assert.throws(()=>passengerRouteSelection(route,"a_to_b",9));
   assert.throws(()=>passengerRouteOrderBody(passengerRouteSelection(route,"a_to_b",1),
     {lat:42,lng:71,timestamp:1234,isMocked:true}));
+});
+
+test("changing route availability never cancels the initial catalog loading request", () => {
+  const scope = createPassengerRouteRequestScope();
+  const initialCatalog = scope.startCatalog();
+  const firstAvailability = scope.startAvailability();
+  scope.cancelAvailability();
+  assert.equal(scope.isCurrentCatalog(initialCatalog), true);
+  assert.equal(scope.isCurrentAvailability(firstAvailability), false);
+  const secondAvailability = scope.startAvailability();
+  assert.equal(scope.isCurrentAvailability(secondAvailability), true);
+  scope.cancelCatalog();
+  assert.equal(scope.isCurrentCatalog(initialCatalog), false);
+  assert.equal(scope.isCurrentAvailability(secondAvailability), true);
+});
+
+test("stale quotes and stale route catalogs cannot overwrite newer requests", () => {
+  const scope = createPassengerRouteRequestScope();
+  const oldCatalog = scope.startCatalog();
+  const newCatalog = scope.startCatalog();
+  assert.equal(scope.isCurrentCatalog(oldCatalog), false);
+  assert.equal(scope.isCurrentCatalog(newCatalog), true);
+  const oldQuote = scope.startAvailability();
+  const newQuote = scope.startAvailability();
+  assert.equal(scope.isCurrentAvailability(oldQuote), false);
+  assert.equal(scope.isCurrentAvailability(newQuote), true);
 });
