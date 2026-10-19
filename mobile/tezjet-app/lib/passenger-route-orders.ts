@@ -61,6 +61,22 @@ export function passengerRouteCatalogStatus(input: {
   return input.count > 0 ? "ready" : "empty";
 }
 
+/** Synchronous single-flight guard for a passenger booking attempt.
+ * React's disabled button state applies on the next render, so two taps in the
+ * same frame must be stopped before asking for GPS or posting an order. */
+export function createPassengerRouteSubmissionGuard() {
+  let inFlight = false;
+  return {
+    tryStart(): boolean {
+      if (inFlight) return false;
+      inFlight = true;
+      return true;
+    },
+    finish(): void { inFlight = false; },
+    isInFlight(): boolean { return inFlight; },
+  };
+}
+
 export type PassengerRouteSelection = {
   route_id: string;
   direction: DriverDirection;
