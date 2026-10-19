@@ -4,7 +4,7 @@ import * as Location from "expo-location";
 import { ApiError, errorMessage, request } from "../lib/api";
 import { orderedDriverStops, parseDriverRouteCatalog, type DriverDirection, type DriverRouteOption } from "../lib/driver-routes";
 import { createPassengerRouteRequestScope, passengerRouteSelection, passengerRouteSelectionKey, passengerRouteAvailabilityPath,
-  parsePassengerRouteAvailability, passengerRouteOrderBody, type PassengerRouteAvailability } from "../lib/passenger-route-orders";
+  parsePassengerRouteAvailability, passengerRouteOrderBody, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability } from "../lib/passenger-route-orders";
 
 type Props = { token: string; endpoint: string; busy: boolean; activeOrder: boolean; onCreated: () => Promise<void> };
 const choices: DriverDirection[] = ["a_to_b", "b_to_a"];
@@ -16,6 +16,7 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [pendingSync, setPendingSync] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [availability, setAvailability] = useState<{ key: string; checkedAt: number; value: PassengerRouteAvailability } | null>(null);
@@ -27,7 +28,7 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
   activeSelectionKey.current = key;
   const [now, setNow] = useState(Date.now());
   const fresh = !!availability && availability.key === key && now >= availability.checkedAt && now - availability.checkedAt < 15000;
-  const canOrder = fresh && availability?.value.available === true && !busy && !activeOrder && !submitting && !checking;
+  const canOrder = fresh && availability?.value.available === true && !busy && !activeOrder && !submitting && !checking && !pendingSync;
   const stops = route ? orderedDriverStops(route, direction) : [];
 
   useEffect(() => {
@@ -65,6 +66,14 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
       if (requestScope.current.isCurrentAvailability(version)) setError(errorMessage(cause, "Не удалось проверить водителей."));
     } finally { if (requestScope.current.isCurrentAvailability(version)) setChecking(false); }
   }
+  async function retrySync() {
+    if (submitting || !pendingSync) return;
+    setSubmitting(true); setError("");
+    const synced = await syncConfirmedRouteBooking(onCreated);
+    if (synced) { setPendingSync(false); setMessage("Заказы обновлены. Проверь состояние поездки."); }
+    else setError("Не удалось обновить заказы. Повтори проверку; не создавай ещё один заказ.");
+    setSubmitting(false);
+  }
   async function submit() {
     if (!selection || !canOrder) return;
     setSubmitting(true); setMessage(""); setError("");
@@ -81,8 +90,14 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
       });
       await request("/api/orders/route", token, { method: "POST", body: JSON.stringify(body) });
       setAvailability(null);
-      setMessage("Заказ создан. Ожидаем подтверждения водителя.");
-      await onCreated();
+      setPendingSync(true);
+      const synced = await syncConfirmedRouteBooking(onCreated);
+      if (synced) {
+        setPendingSync(false);
+        setMessage("Заказ создан. Ожидаем подтверждения водителя.");
+      } else {
+        setMessage("Заказ создан, но список поездок не обновился. Проверь статус; повторно заказывать не нужно.");
+      }
     } catch (cause) {
       if (cause instanceof ApiError && cause.code === "NO_DRIVERS") {
         setAvailability(null);
@@ -90,6 +105,10 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
       } else if (cause instanceof ApiError && ["ROUTE_CHANGED", "ROUTE_NOT_FOUND", "ROUTE_INACTIVE"].includes(cause.code ?? "")) {
         setAvailability(null);
         setError("Маршрут изменился. Обнови список маршрутов.");
+      } else if (cause instanceof ApiError && routeBookingOutcomeUncertain(cause)) {
+        setAvailability(null);
+        setPendingSync(true);
+        setMessage("Не удалось узнать, принят ли заказ сервером. Сначала обнови список поездок; повторный заказ пока заблокирован.");
       } else setError(errorMessage(cause, "Не удалось оформить заказ."));
     } finally { setSubmitting(false); }
   }
@@ -161,6 +180,8 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
             : "Обновите наличие и цену перед заказом"}
         </Text>
       </View>
+      {pendingSync ? button(submitting ? "Обновляем…" : "Проверить список поездок",
+        () => { void retrySync(); }, submitting || busy, false, "route-refresh-after-submit") : null}
       {button(submitting ? "Оформляем…" : "Заказать поездку",
         () => { void submit(); }, !canOrder, true, "route-book-trip")}
     </> : null}
