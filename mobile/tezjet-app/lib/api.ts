@@ -49,7 +49,7 @@ export function setApiEndpoint(value: string): string {
 export type Availability = { available: boolean; eligible_driver_count: number; offer_timeout_seconds: number };
 
 export async function request<T>(path: string, token?: string, init: RequestInit = {}): Promise<T> {
-  if (!API) throw new ApiError("Укажи адрес сервера TezJet в настройках подключения.", undefined, "API_NOT_CONFIGURED");
+  if (!API) throw new ApiError("Укажи адрес сервера Onay в настройках подключения.", undefined, "API_NOT_CONFIGURED");
   const controller = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -64,7 +64,7 @@ export async function request<T>(path: string, token?: string, init: RequestInit
     });
     if (response.ok && response.status === 204) return undefined as T;
     const data = await response.json().catch(() => {
-      if (response.ok) throw new ApiError("TezJet вернул некорректный ответ. Повтори обновление.", response.status, "INVALID_RESPONSE");
+      if (response.ok) throw new ApiError("Onay вернул некорректный ответ. Повтори обновление.", response.status, "INVALID_RESPONSE");
       return {};
     });
     if (!response.ok) {
@@ -80,8 +80,8 @@ export async function request<T>(path: string, token?: string, init: RequestInit
     return data as T;
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    if (timedOut) throw new ApiError("Сервер TezJet не ответил вовремя. Повтори попытку.", undefined, "REQUEST_TIMEOUT");
-    throw new ApiError("Нет связи с TezJet. Проверь интернет и повтори попытку.", undefined, "NETWORK_ERROR");
+    if (timedOut) throw new ApiError("Сервер Onay не ответил вовремя. Повтори попытку.", undefined, "REQUEST_TIMEOUT");
+    throw new ApiError("Нет связи с Onay. Проверь интернет и повтори попытку.", undefined, "NETWORK_ERROR");
   } finally {
     clearTimeout(timer);
   }
