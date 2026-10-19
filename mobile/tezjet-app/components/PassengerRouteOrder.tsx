@@ -4,7 +4,7 @@ import * as Location from "expo-location";
 import { ApiError, errorMessage, request } from "../lib/api";
 import { orderedDriverStops, parseDriverRouteCatalog, type DriverDirection, type DriverRouteOption } from "../lib/driver-routes";
 import { createPassengerRouteRequestScope, passengerRouteSelection, passengerRouteSelectionKey, passengerRouteAvailabilityPath,
-  parsePassengerRouteAvailability, passengerRouteOrderBody, passengerRouteCatalogStatus, isFreshPassengerRouteQuote, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability } from "../lib/passenger-route-orders";
+  parsePassengerRouteAvailability, passengerRouteOrderBody, passengerRouteCatalogStatus, createPassengerRouteSubmissionGuard, isFreshPassengerRouteQuote, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability } from "../lib/passenger-route-orders";
 
 type Props = { token: string; endpoint: string; busy: boolean; activeOrder: boolean; onCreated: () => Promise<void> };
 const choices: DriverDirection[] = ["a_to_b", "b_to_a"];
@@ -24,6 +24,7 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
   const [message, setMessage] = useState("");
   const [availability, setAvailability] = useState<{ key: string; checkedAt: number; value: PassengerRouteAvailability } | null>(null);
   const requestScope = useRef(createPassengerRouteRequestScope());
+  const submissionGuard = useRef(createPassengerRouteSubmissionGuard());
   const route = routes.find(item => item.id === routeId);
   const selection = route ? passengerRouteSelection(route, direction, seats) : null;
   const key = selection ? passengerRouteSelectionKey(selection) : "";
@@ -81,7 +82,7 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
     setSubmitting(false);
   }
   async function submit() {
-    if (!selection || !canOrder) return;
+    if (!selection || !canOrder || !submissionGuard.current.tryStart()) return;
     setSubmitting(true); setMessage(""); setError("");
     try {
       // The final booking request always revalidates the route, seats and FIFO on the server.
@@ -121,7 +122,7 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
         setUncertainBooking(true);
         setMessage("Не удалось узнать, принят ли заказ сервером. Сначала обнови список поездок; повторный заказ пока заблокирован.");
       } else setError(errorMessage(cause, "Не удалось оформить заказ."));
-    } finally { setSubmitting(false); }
+    } finally { submissionGuard.current.finish(); setSubmitting(false); }
   }
   const button = (title: string, onPress: () => void, disabled = false, primary = false, testID?: string) =>
     <Pressable testID={testID} accessibilityRole="button" accessibilityState={{ disabled }}
