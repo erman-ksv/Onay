@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import * as Location from "expo-location";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ApiError, errorMessage, request } from "../lib/api";
 import { orderedDriverStops, parseDriverRouteCatalog, type DriverDirection, type DriverRouteOption } from "../lib/driver-routes";
 import { createPassengerRouteRequestScope, passengerRouteSelection, passengerRouteSelectionKey, passengerRouteAvailabilityPath,
-  parsePassengerRouteAvailability, passengerRouteOrderBody, passengerRouteCatalogStatus, createPassengerRouteSubmissionGuard, isFreshPassengerRouteQuote, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability } from "../lib/passenger-route-orders";
+  parsePassengerRouteAvailability, passengerRouteOrderBody, passengerRouteCatalogStatus, createPassengerRouteSubmissionGuard, routeBookingRecoveryKey, readRouteBookingRecovery, saveRouteBookingRecovery, clearRouteBookingRecovery, isFreshPassengerRouteQuote, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability } from "../lib/passenger-route-orders";
 
-type Props = { token: string; endpoint: string; busy: boolean; activeOrder: boolean; onCreated: () => Promise<void> };
+type Props = { token: string; endpoint: string; userId: string; busy: boolean; activeOrder: boolean; onCreated: () => Promise<void> };
 const choices: DriverDirection[] = ["a_to_b", "b_to_a"];
-export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder, onCreated }: Props) {
+export default function PassengerRouteOrder({ token, endpoint, userId, busy, activeOrder, onCreated }: Props) {
   const [routes, setRoutes] = useState<DriverRouteOption[]>([]);
   const [routeId, setRouteId] = useState("");
   const [direction, setDirection] = useState<DriverDirection>("a_to_b");
@@ -20,6 +21,9 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
   const [submitting, setSubmitting] = useState(false);
   const [pendingSync, setPendingSync] = useState(false);
   const [uncertainBooking, setUncertainBooking] = useState(false);
+  const [recoveryReady, setRecoveryReady] = useState(false);
+  const [recoveryError, setRecoveryError] = useState("");
+  const recoveryKey = routeBookingRecoveryKey(endpoint, userId);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [availability, setAvailability] = useState<{ key: string; checkedAt: number; value: PassengerRouteAvailability } | null>(null);
@@ -32,10 +36,25 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
   activeSelectionKey.current = key;
   const [now, setNow] = useState(Date.now());
   const fresh = !!availability && availability.key === key && now >= availability.checkedAt && now - availability.checkedAt < 15000;
-  const canOrder = isFreshPassengerRouteQuote(availability, key, now) && !busy && !activeOrder && !submitting && !checking && !pendingSync;
+  const canOrder = isFreshPassengerRouteQuote(availability, key, now) && !busy && !activeOrder && !submitting && !checking && !pendingSync && recoveryReady && !recoveryError;
   const stops = route ? orderedDriverStops(route, direction) : [];
   const catalogStatus = passengerRouteCatalogStatus({ loading, error: catalogError, count: routes.length });
 
+  useEffect(() => {
+    let mounted = true;
+    setRecoveryReady(false);
+    readRouteBookingRecovery(AsyncStorage, recoveryKey)
+      .then(state => {
+        if (!mounted) return;
+        setPendingSync(state !== null);
+        setUncertainBooking(state !== null && state !== "confirmed");
+        setMessage(state === "confirmed" ? "Ранее заказ был создан. Проверь список поездок перед новым заказом."
+          : state ? "Предыдущий заказ мог быть создан. Проверь его статус; повторное оформление заблокировано." : "");
+        setRecoveryReady(true);
+      })
+      .catch(() => { if (mounted) setRecoveryError("Не удалось проверить предыдущие заказы на устройстве. Создание нового заказа заблокировано."); });
+    return () => { mounted = false; };
+  }, [recoveryKey]);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
@@ -73,11 +92,16 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
     } finally { if (requestScope.current.isCurrentAvailability(version)) setChecking(false); }
   }
   async function retrySync() {
-    if (submitting || !pendingSync) return;
+    if (submitting || !pendingSync || !recoveryReady) return;
     setSubmitting(true); setError("");
     const synced = await syncConfirmedRouteBooking(onCreated);
-    if (synced && !uncertainBooking) { setPendingSync(false); setMessage("Заказы обновлены. Проверь состояние поездки."); }
-    else if (synced) setMessage("Список обновлён, но создание заказа не подтверждено. Не оформляй повторный заказ, пока не проверишь его статус с поддержкой.");
+    if (synced && !uncertainBooking) {
+      try {
+        await clearRouteBookingRecovery(AsyncStorage, recoveryKey);
+        setPendingSync(false);
+        setMessage("Заказы обновлены. Проверь состояние поездки.");
+      } catch { setError("Не удалось сохранить результат проверки. Повтори обновление; новый заказ заблокирован."); }
+    } else if (synced) setMessage("Список обновлён, но создание заказа не подтверждено. Не оформляй повторный заказ, пока не проверишь его статус с поддержкой.");
     else setError("Не удалось обновить заказы. Повтори проверку; не создавай ещё один заказ.");
     setSubmitting(false);
   }
@@ -99,12 +123,19 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
       const body = passengerRouteOrderBody(selection, {
         lat: coords.coords.latitude, lng: coords.coords.longitude, timestamp: coords.timestamp, isMocked: coords.mocked === true,
       });
+      // Persist BEFORE the first network write; if storage fails, do not create a booking.
+      await saveRouteBookingRecovery(AsyncStorage, recoveryKey, "in_flight");
+      setPendingSync(true);
+      setUncertainBooking(true);
       await request("/api/orders/route", token, { method: "POST", body: JSON.stringify(body) });
+      await saveRouteBookingRecovery(AsyncStorage, recoveryKey, "confirmed");
+      setUncertainBooking(false);
       setAvailability(null);
       setPendingSync(true);
       const synced = await syncConfirmedRouteBooking(onCreated);
       if (synced) {
-        setPendingSync(false);
+        try { await clearRouteBookingRecovery(AsyncStorage, recoveryKey); setPendingSync(false); }
+        catch { setError("Заказ подтверждён, но не удалось сохранить обновление. Не оформляй его повторно."); }
         setMessage("Заказ создан. Ожидаем подтверждения водителя.");
       } else {
         setMessage("Заказ создан, но список поездок не обновился. Проверь статус; повторно заказывать не нужно.");
@@ -121,6 +152,10 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
         setPendingSync(true);
         setUncertainBooking(true);
         setMessage("Не удалось узнать, принят ли заказ сервером. Сначала обнови список поездок; повторный заказ пока заблокирован.");
+      } else if (pendingSync || uncertainBooking) {
+        setPendingSync(true);
+        setUncertainBooking(true);
+        setError("Не удалось подтвердить результат предыдущей отправки. Проверь список поездок; повторное оформление заблокировано.");
       } else setError(errorMessage(cause, "Не удалось оформить заказ."));
     } finally { submissionGuard.current.finish(); setSubmitting(false); }
   }
@@ -200,6 +235,7 @@ export default function PassengerRouteOrder({ token, endpoint, busy, activeOrder
         () => { void submit(); }, !canOrder, true, "route-book-trip")}
     </> : null}
     {activeOrder ? <Text style={v.notice}>Сначала заверши или отмени текущую поездку.</Text> : null}
+    {recoveryError ? <Text style={v.error}>{recoveryError}</Text> : null}
     {message ? <Text style={v.notice}>{message}</Text> : null}
     {error ? <Text style={v.error}>{error}</Text> : null}
   </View>;
