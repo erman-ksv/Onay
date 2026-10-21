@@ -81,6 +81,11 @@ export interface RouteOrderInput {
   seats: number;
 }
 
+export interface RouteOrderReceipt {
+  order: Order;
+  requestHash: string;
+}
+
 export interface Store {
   initialize(): MaybePromise<void>;
   createUser(input: {
@@ -130,6 +135,10 @@ export interface Store {
   getRouteOrderAvailability(selection: RouteOrderSelectionInput, seats: number): MaybePromise<RouteOrderAvailability>;
   /** Derive live route/fare and reserve one matching lane atomically. */
   createRouteOrderWithOffer(input: RouteOrderInput, selection: RouteOrderSelectionInput, expectedSessionVersion?: number): MaybePromise<Order | undefined>;
+  /** Resolve a passenger-owned booking without repeating GPS, fare or seat allocation. */
+  getRouteOrderRequest(passengerId: string, requestKey: string, expectedSessionVersion?: number): MaybePromise<RouteOrderReceipt | undefined>;
+  /** Persist the receipt and reservation together; replay never reserves seats again. */
+  createRouteOrderOnce(input: RouteOrderInput, selection: RouteOrderSelectionInput, requestKey: string, expectedSessionVersion?: number): MaybePromise<{ order: Order; created: boolean } | undefined>;
   /** Advisory snapshot only; road routing happens outside transaction locks. */
   getExternalPickupCandidates(selection: ExternalPickupSelectionInput, seats: number, excludedDriverIds?: string[]): MaybePromise<{ route: RouteDefinition; candidates: QueueEntry[] }>;
   /** Confirm only the signed driver/price; initial quote ID is the order's immutable primary key. */

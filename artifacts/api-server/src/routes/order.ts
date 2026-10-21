@@ -11,10 +11,13 @@ import {
   getOrder,
   getOrderAvailability,
   getRouteOrderAvailability,
+  getRouteOrderRequest,
   listOrderRoutes,
   listOrders,
+  newRouteOrderRequestKey,
   offerToFirstDriver,
   rejectOrder,
+  replayRouteOrderRequest,
   updateOrderStatus,
   validateRouteOrderRequest,
 } from "../controllers/orderController";
@@ -27,11 +30,14 @@ router.get("/orders/routes", authenticate, requireRole("passenger"), listOrderRo
 router.post("/orders/external/quote", authenticate, requireRole("passenger"), createExternalPickupQuote);
 router.post("/orders/external/confirm", authenticate, requireRole("passenger"), confirmExternalPickup);
 router.get("/orders/route/availability", authenticate, requireRole("passenger"), getRouteOrderAvailability);
+router.get("/orders/route/request-key", authenticate, requireRole("passenger"), newRouteOrderRequestKey);
+router.get("/orders/route/requests/:requestKey", authenticate, requireRole("passenger"), getRouteOrderRequest);
 router.post(
   "/orders/route",
   authenticate,
   requireRole("passenger"),
   validateRouteOrderRequest,
+  replayRouteOrderRequest,
   antiFakeGPS,
   createRouteOrder,
 );

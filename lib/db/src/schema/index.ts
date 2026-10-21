@@ -117,6 +117,22 @@ export const ordersTable = pgTable(
   ],
 );
 
+/** A committed booking intent survives transport failures and server restarts.
+ * Receipts deliberately outlive order deletion: a missing order must fail closed,
+ * rather than make the same key eligible to reserve seats a second time.
+ */
+export const routeOrderRequestsTable = pgTable(
+  "tezjet_route_order_requests",
+  {
+    passengerId: text("passenger_id").notNull(),
+    requestKey: text("request_key").notNull(),
+    requestHash: text("request_hash").notNull(),
+    orderId: text("order_id").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [uniqueIndex("tezjet_route_order_requests_passenger_key_uq").on(table.passengerId, table.requestKey)],
+);
+
 export const deviceRegistrationsTable = pgTable(
   "tezjet_device_registrations",
   {

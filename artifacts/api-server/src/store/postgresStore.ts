@@ -1,6 +1,6 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
-import type { DriverRouteChoiceInput, ExternalPickupSelectionInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderSelectionInput, Store } from "./storeContract";
+import type { DriverRouteChoiceInput, ExternalPickupSelectionInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderReceipt, RouteOrderSelectionInput, Store } from "./storeContract";
 import { normalizePhone } from "../utils/phone";
 import { emptyOtpRateState, OTP_CLEANUP_BATCH_SIZE, otpFailureState, otpPhoneBlock, otpRateExpiresAt, otpRateKey, recordOtpFailure, takeOtpIp, takeOtpSend } from "./otpProtection";
 import type { OtpRateKind, OtpRateState } from "./otpProtection";
@@ -34,6 +34,7 @@ import { OFFER_TIMEOUT_MS, OTP_TTL_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS
 import { acceptQueueOffer, assertLegacyOrderInput, assertOrderOfferPatch, assertQueueOfferPatch, compareOfferDrivers, hasLiveOrderOffer, orderedOfferCandidates, releaseQueueOffer, reserveQueueOffer } from "./orderOffers";
 import { buildRouteOrder, validateRouteOrderSelectionInput } from "../utils/routeOrder";
 import { boundedInteger } from "../utils/validation";
+import { assertRouteOrderRequestHash, requireRouteOrderRequestKey, routeOrderRequestHash } from "../utils/routeOrderRequest";
 
 type DbModule = typeof import("@workspace/db");
 type DbTransaction = Parameters<Parameters<DbModule["db"]["transaction"]>[0]>[0];
@@ -957,26 +958,90 @@ export class PostgresStore implements Store {
 
   async createOrderWithOffer(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number): Promise<Order | undefined> {
     assertLegacyOrderInput(input);
-    return this.reserveNewOrder(input, expectedSessionVersion);
+    return (await this.reserveNewOrder(input, expectedSessionVersion))?.order;
   }
 
   async createRouteOrderWithOffer(input: RouteOrderInput, selection: RouteOrderSelectionInput, expectedSessionVersion?: number): Promise<Order | undefined> {
     const choice = validateRouteOrderSelectionInput(selection);
     if (!input.pickupLocation) throw new AppError(422, "Pickup location is required", "OUTSIDE_PICKUP_GEOFENCE");
-    return this.reserveNewOrder({
+    return (await this.reserveNewOrder({
       passengerId: input.passengerId, passengerPhone: input.passengerPhone,
       pickupLocation: structuredClone(input.pickupLocation), seats: boundedInteger(input.seats, "seats", 1, 8),
-    }, expectedSessionVersion, choice);
+    }, expectedSessionVersion, choice))?.order;
+  }
+
+  async getRouteOrderRequest(passengerId: string, requestKey: string, expectedSessionVersion?: number): Promise<RouteOrderReceipt | undefined> {
+    const key = requireRouteOrderRequestKey(requestKey);
+    const { db, usersTable, ordersTable, routeOrderRequestsTable } = await this.database();
+    return db.transaction(async tx => {
+      // No order/queue lock is taken after this user lock. A revoked session
+      // cannot recover a receipt, even if the caller already knows its key.
+      const [passenger] = await tx.select().from(usersTable)
+        .where(eq(usersTable.id, passengerId)).for("share").limit(1);
+      if (!passenger || (expectedSessionVersion !== undefined && passenger.sessionVersion !== expectedSessionVersion)) {
+        throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+      }
+      if (passenger.role !== "passenger") throw new AppError(403, "passenger mode is required", "FORBIDDEN");
+      const [receipt] = await tx.select().from(routeOrderRequestsTable).where(and(
+        eq(routeOrderRequestsTable.passengerId, passengerId), eq(routeOrderRequestsTable.requestKey, key),
+      )).limit(1);
+      if (!receipt) return undefined;
+      const [row] = await tx.select().from(ordersTable).where(and(
+        eq(ordersTable.id, receipt.orderId), eq(ordersTable.passengerId, passengerId),
+      )).limit(1);
+      if (!row) throw new AppError(409, "Order recovery requires review", "ORDER_RECOVERY_REQUIRED");
+      return { order: asOrder(row as unknown as Record<string, unknown>), requestHash: receipt.requestHash };
+    });
+  }
+
+  async createRouteOrderOnce(input: RouteOrderInput, selection: RouteOrderSelectionInput, requestKey: string, expectedSessionVersion?: number): Promise<{ order: Order; created: boolean } | undefined> {
+    const key = requireRouteOrderRequestKey(requestKey);
+    const choice = validateRouteOrderSelectionInput(selection);
+    if (!input.pickupLocation) throw new AppError(422, "Pickup location is required", "OUTSIDE_PICKUP_GEOFENCE");
+    const seats = boundedInteger(input.seats, "seats", 1, 8);
+    return this.reserveNewOrder({
+      passengerId: input.passengerId, passengerPhone: input.passengerPhone,
+      pickupLocation: structuredClone(input.pickupLocation), seats,
+    }, expectedSessionVersion, choice, { key, hash: routeOrderRequestHash(choice, seats) });
   }
 
   private async reserveNewOrder(
     input: Omit<Order, "id" | "createdAt" | "updatedAt"> | RouteOrderInput,
     expectedSessionVersion?: number,
     selection?: RouteOrderSelectionInput,
-  ): Promise<Order | undefined> {
-    const { db, driverQueueTable, usersTable, ordersTable, routesTable } = await this.database();
+    request?: { key: string; hash: string },
+  ): Promise<{ order: Order; created: boolean } | undefined> {
+    const { db, driverQueueTable, usersTable, ordersTable, routesTable, routeOrderRequestsTable } = await this.database();
     const legacyInput = input as Omit<Order, "id" | "createdAt" | "updatedAt">;
     return db.transaction(async tx => {
+      if (request) {
+        // Serialize the same passenger/key across server instances before any
+        // queue/user lock. The receipt and reservation commit together, so a
+        // transport failure or process restart cannot reserve a second order.
+        // Hash collisions only serialize unrelated requests; they cannot alias
+        // receipts, whose unique identity is the full passenger/key pair.
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${JSON.stringify(["onay-route-order", input.passengerId, request.key])}, 0))`);
+        const [receipt] = await tx.select().from(routeOrderRequestsTable).where(and(
+          eq(routeOrderRequestsTable.passengerId, input.passengerId),
+          eq(routeOrderRequestsTable.requestKey, request.key),
+        )).limit(1);
+        if (receipt) {
+          const [passenger] = await tx.select().from(usersTable)
+            .where(eq(usersTable.id, input.passengerId)).for("share").limit(1);
+          if (!passenger || (expectedSessionVersion !== undefined && passenger.sessionVersion !== expectedSessionVersion)) {
+            throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+          }
+          if (passenger.role !== "passenger") throw new AppError(403, "passenger mode is required", "FORBIDDEN");
+          assertRouteOrderRequestHash(receipt.requestHash, request.hash);
+          // Read without a row lock: lifecycle writes use order -> queue ->
+          // user, and adding an order lock here would invert that ordering.
+          const [row] = await tx.select().from(ordersTable).where(and(
+            eq(ordersTable.id, receipt.orderId), eq(ordersTable.passengerId, input.passengerId),
+          )).limit(1);
+          if (!row) throw new AppError(409, "Order recovery requires review", "ORDER_RECOVERY_REQUIRED");
+          return { order: asOrder(row as unknown as Record<string, unknown>), created: false };
+        }
+      }
       // This order does not exist yet. Locking queue rows before inserting its
       // new UUID cannot acquire or wait on another existing order row.
       const queueRows = await tx.select().from(driverQueueTable).where(and(
@@ -1041,7 +1106,13 @@ export class PostgresStore implements Store {
         createdAt: order.createdAt,
         ...orderValues(order),
       }).returning();
-      return asOrder(row as unknown as Record<string, unknown>);
+      if (request) {
+        await tx.insert(routeOrderRequestsTable).values({
+          passengerId: input.passengerId, requestKey: request.key,
+          requestHash: request.hash, orderId: order.id, createdAt: timestamp,
+        });
+      }
+      return { order: asOrder(row as unknown as Record<string, unknown>), created: true };
     });
   }
 

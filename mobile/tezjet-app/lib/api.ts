@@ -57,10 +57,16 @@ export async function request<T>(path: string, token?: string, init: RequestInit
     controller.abort();
   }, 15_000);
   try {
+    const headers = new Headers(init.headers);
+    headers.set("Content-Type", "application/json");
+    // Callers may add an idempotency key, but cannot replace the active session.
+    headers.delete("Authorization");
+    const customHeaders: Record<string, string> = {};
+    headers.forEach((value, name) => { customHeaders[name] = value; });
     const response = await fetch(API + path, {
       ...init,
       signal: controller.signal,
-      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: { ...customHeaders, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     });
     if (response.ok && response.status === 204) return undefined as T;
     const data = await response.json().catch(() => {
