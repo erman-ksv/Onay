@@ -330,6 +330,7 @@ export async function updateDriverApproval(request: Request, response: Response)
   const user = await store.setDriverApproval(
     requiredString(request.params["driverId"], "driver_id", 80),
     status,
+    request.body?.expected_vehicle_revision,
   );
   if (!user) {
     throw new AppError(404, "Driver not found", "DRIVER_NOT_FOUND");

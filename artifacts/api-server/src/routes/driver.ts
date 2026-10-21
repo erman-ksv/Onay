@@ -1,8 +1,11 @@
 import { Router, type IRouter } from "express";
-import { clearDriverRoute, getDriverRoute, getDriverRoutes, setDriverRoute } from "../controllers/driverController";
+import { getDriverVehicle, setDriverVehicle, clearDriverRoute, getDriverRoute, getDriverRoutes, setDriverRoute } from "../controllers/driverController";
 import { authenticate, requireApprovedDriver, requireRole } from "../middleware/auth";
 
 const router: IRouter = Router();
+router.get("/driver/vehicle", authenticate, requireRole("driver"), getDriverVehicle);
+router.put("/driver/vehicle", authenticate, requireRole("driver"), setDriverVehicle);
+
 const driverAccess = [authenticate, requireRole("driver"), requireApprovedDriver];
 
 router.get("/driver/routes", ...driverAccess, getDriverRoutes);

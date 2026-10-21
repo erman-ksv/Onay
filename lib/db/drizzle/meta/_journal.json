@@ -57,6 +57,13 @@
       "when": 1792540800000,
       "tag": "0007_route_order_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792584000000,
+      "tag": "0008_driver_vehicle",
+      "breakpoints": true
     }
   ]
 }

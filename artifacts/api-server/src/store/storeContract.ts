@@ -2,6 +2,7 @@ import type {
   DeviceRegistration,
   Coordinates,
   DriverApprovalStatus,
+  DriverVehicleInput,
   DriverRouteChoice,
   DriverRouteDirection,
   FareQuote,
@@ -95,6 +96,7 @@ export interface Store {
     locale: Locale;
   }): MaybePromise<User>;
   getUser(userId: string): MaybePromise<User | undefined>;
+  setDriverVehicle(userId: string, input: DriverVehicleInput, expectedSessionVersion: number): MaybePromise<User>;
   getUserByPhone(phoneNumber: string): MaybePromise<User | undefined>;
   updateUser(
     userId: string,
@@ -178,6 +180,7 @@ export interface Store {
   setDriverApproval(
     userId: string,
     status: DriverApprovalStatus,
+    expectedVehicleRevision?: string | null,
   ): MaybePromise<User | undefined>;
 
   listRoutes(): MaybePromise<RouteDefinition[]>;

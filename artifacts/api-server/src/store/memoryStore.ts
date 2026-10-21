@@ -1,3 +1,4 @@
+import { assertVehicleQueueCapacity, assertVehicleReview, createDriverVehicle } from "../utils/driverVehicle";
 import { randomUUID } from "node:crypto";
 import { OFFER_TIMEOUT_MS, OTP_TTL_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
 import { normalizePhone } from "../utils/phone";
@@ -20,6 +21,7 @@ import type {
   DeviceRegistration,
   DriverQueueStatus,
   DriverApprovalStatus,
+  DriverVehicleInput,
   DriverRouteChoice,
   ExternalPickupQuote,
   ExternalPickupSettings,
@@ -243,6 +245,19 @@ class MemoryStore implements Store {
     if (user.role !== role) throw new AppError(403, `${role} mode is required`, "FORBIDDEN");
   }
 
+  setDriverVehicle(userId: string, input: DriverVehicleInput, expectedSessionVersion: number): User {
+    this.requireCurrentRole(userId, "driver", expectedSessionVersion);
+    const user = this.users.get(userId)!;
+    if (this.queueEntries.has(userId) || [...this.orders.values()].some(order =>
+      order.status !== "completed" && order.status !== "cancelled" &&
+      (order.passengerId === userId || order.driverId === userId || order.offeredDriverId === userId))) {
+      throw new AppError(409, "Finish active orders and leave the queue before changing the vehicle", "DRIVER_VEHICLE_BUSY");
+    }
+    user.driverVehicle = createDriverVehicle(input, user.driverVehicle);
+    user.driverApprovalStatus = "pending";
+    return structuredClone(user);
+  }
+
   setDriverRouteChoice(userId: string, input: DriverRouteChoiceInput | null, expectedSessionVersion: number): DriverRouteChoice | null {
     const value = input === null ? null : validateDriverRouteChoiceInput(input);
     if (this.users.get(userId)?.sessionVersion !== expectedSessionVersion) {
@@ -305,6 +320,7 @@ class MemoryStore implements Store {
     this.requireCurrentRole(entry.driverId, "driver", expectedSessionVersion);
     if (entry.routeContext || entry.collectionState !== undefined) throw new AppError(400, "Queue context is server-owned", "VALIDATION_ERROR");
     const user = this.users.get(entry.driverId)!;
+    assertVehicleQueueCapacity(user, entry.availableSeats);
     if (user.driverRouteChoice && REQUIRE_DRIVER_APPROVAL && user.driverApprovalStatus !== "approved") {
       throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");
     }
@@ -806,11 +822,13 @@ class MemoryStore implements Store {
   setDriverApproval(
     userId: string,
     status: DriverApprovalStatus,
+    expectedVehicleRevision?: string | null,
   ): User | undefined {
     const user = this.users.get(userId);
     if (!user || !user.roles.includes("driver")) {
       return undefined;
     }
+    assertVehicleReview(user, expectedVehicleRevision);
     user.driverApprovalStatus = status;
     return structuredClone(user);
   }

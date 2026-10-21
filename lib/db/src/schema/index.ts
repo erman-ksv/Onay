@@ -30,6 +30,7 @@ export const usersTable = pgTable(
     profileLocked: boolean("profile_locked").notNull().default(true),
     sessionVersion: integer("session_version").notNull().default(0),
     driverApprovalStatus: text("driver_approval_status"),
+    driverVehicle: jsonb("driver_vehicle").$type<Record<string, unknown> | null>(),
     driverRouteChoice: jsonb("driver_route_choice").$type<Record<string, unknown> | null>(),
     lastLocation: jsonb("last_location").$type<Record<string, unknown> | null>(),
     createdAt: text("created_at").notNull(),

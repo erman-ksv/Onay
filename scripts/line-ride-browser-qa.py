@@ -168,8 +168,18 @@ class LineRideQA(shared.DriverRouteQA):
         require(driver.get("driver_approval_status") == "pending", "New driver must require actual administrator approval")
         self.expect(self.page.get_by_text("Профиль на проверке", exact=True)).to_be_visible()
         self.expect(self.control("driver-line-join")).to_have_count(0)
+        for field, value in (("make", "Chevrolet"), ("model", "Cobalt"), ("plate", "01 A123 BC"), ("seats", "3")):
+            self.control("driver-vehicle-" + field).fill(value)
+        with self.response_for("/driver/vehicle", "PUT") as pending:
+            self.control("driver-vehicle-save").click()
+        require(pending.value.status == 200, "Actual driver vehicle form must persist its profile")
+        profile = pending.value.json()
+        require(profile.get("approval_status") == "pending", "New vehicle must require review")
+        vehicle = profile["driver_vehicle"]
+        require(pending.value.request.post_data_json["expected_revision"] is None, "First profile save must bind an absent receipt")
+        self.expected_driver["vehicle"] = {key: vehicle[key] for key in ("make", "model", "plate_number", "seat_capacity")}
         self.expected(api_request(self.args.api_url, "/admin/drivers/" + self.driver_id + "/approval", "PATCH",
-            {"status": "approved"}, self.admin_token), 200, "Approve actual driver")
+            {"status": "approved", "expected_vehicle_revision": vehicle["revision"]}, self.admin_token), 200, "Approve the actual reviewed driver vehicle")
         with self.response_for("/auth/me", "GET") as pending:
             self.page.get_by_role("button", name="Проверить статус", exact=True).click()
         require(pending.value.status == 200, "Actual driver must refresh approval")
@@ -219,6 +229,7 @@ class LineRideQA(shared.DriverRouteQA):
         self.expect(self.control("driver-queue-context")).to_contain_text("питак " + code)
         self.expect(self.control("driver-route-save")).to_be_disabled()
         self.expect(self.page.get_by_text(re.compile(r"Заказы для этого маршрута пока недоступны"))).to_have_count(0)
+        self.expect(self.control("driver-vehicle-save")).to_be_disabled()
         self.queue("joined-" + code, 3, "collecting")
 
     def join_forward(self):
@@ -286,6 +297,8 @@ class LineRideQA(shared.DriverRouteQA):
         actual = self.expected(api_request(self.args.api_url, "/orders/" + self.order_id + "/driver", token=self.passenger_token), 200, "Assigned passenger reads minimal driver contact")
         require(actual == {"driver": self.expected_driver}, "Contact response must contain only the actual assigned driver fields")
         self.expected(api_request(self.args.api_url, "/orders/" + self.order_id + "/driver", token=self.driver_token), 403, "Driver role cannot call the passenger contact endpoint")
+        self.expect(self.passenger_page.get_by_test_id("passenger-driver-vehicle")).to_contain_text("Chevrolet Cobalt")
+        self.expect(self.passenger_page.get_by_test_id("passenger-driver-vehicle")).to_contain_text("01 A123 BC")
         self.queue("accepted-no-second-charge", 2, "collecting")
         self.progress("arrived_at_c")
         self.passenger_status("Водитель прибыл")
@@ -358,6 +371,7 @@ class LineRideQA(shared.DriverRouteQA):
         snapshot = pending.value.json()
         require(pending.value.status == 200 and snapshot.get("your_position") is None and snapshot.get("your_entry") is not None,
             "Reload must distinguish null FIFO position from a retained enrollment")
+        self.expect(self.control("driver-vehicle-plate")).to_have_value("01 A123 BC")
         self.queue("reloaded-finished-no-extra-release", 3, "departed")
         self.expect(self.control("driver-line-finished")).to_be_visible()
         leave = self.control("driver-queue-leave")
