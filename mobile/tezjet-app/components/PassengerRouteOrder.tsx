@@ -292,7 +292,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
           const disabled = submitting || (stopPicker === "pickup" ? index >= destinationIndex : index <= pickupIndex);
           const selected = stop.id === (stopPicker === "pickup" ? segment?.pickupStopId : segment?.destinationStopId);
           return <Pressable key={stop.id} testID={"passenger-" + stopPicker + "-" + stop.id}
-            accessibilityRole="radio" accessibilityLabel={stop.name} accessibilityState={{ checked: selected, disabled }}
+            accessibilityRole="radio" accessibilityLabel={stop.name} accessibilityState={{ checked: selected, disabled }} aria-checked={selected}
             disabled={disabled} onPress={() => chooseStop(stopPicker, stop.id)}
             style={[v.stopOption, selected && v.stopOptionSelected, disabled && v.disabled]}>
             <Text style={v.stopOptionName}>{stop.name}{selected ? " ✓" : ""}</Text>
