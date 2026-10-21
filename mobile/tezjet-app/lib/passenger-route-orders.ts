@@ -188,7 +188,11 @@ export type PassengerRouteSelection = {
   direction: DriverDirection;
   expected_updated_at: string;
   seats: number;
+  pickup_stop_id?: string;
+  destination_stop_id?: string;
 };
+
+export type PassengerRouteSegment = { pickupStopId: string; destinationStopId: string };
 
 export type PassengerRouteAvailability = {
   available: boolean;
@@ -200,7 +204,7 @@ export type PassengerRouteAvailability = {
 function validText(value: string): boolean { return Boolean(value && value.trim()); }
 
 export function passengerRouteSelection(
-  route: DriverRouteOption, direction: DriverDirection, seats: number,
+  route: DriverRouteOption, direction: DriverDirection, seats: number, segment?: PassengerRouteSegment,
 ): PassengerRouteSelection {
   if (!validText(route.id) || !validText(route.updatedAt) ||
       (direction !== "a_to_b" && direction !== "b_to_a") ||
@@ -208,17 +212,31 @@ export function passengerRouteSelection(
       route.stops.length < 2) {
     throw new Error("Выбери действующий маршрут, направление и количество пассажиров.");
   }
-  return { route_id: route.id, direction, expected_updated_at: route.updatedAt, seats };
+  if (segment) {
+    const stops = direction === "a_to_b" ? route.stops : [...route.stops].reverse();
+    const pickupIndex = stops.findIndex(stop => stop.id === segment.pickupStopId);
+    const destinationIndex = stops.findIndex(stop => stop.id === segment.destinationStopId);
+    if (!validText(segment.pickupStopId) || !validText(segment.destinationStopId) ||
+        pickupIndex < 0 || destinationIndex < 0 || pickupIndex >= destinationIndex) {
+      throw new Error("Выбери разные остановки: посадка должна быть раньше назначения по направлению поездки.");
+    }
+  }
+  return { route_id: route.id, direction, expected_updated_at: route.updatedAt, seats,
+    ...(segment ? { pickup_stop_id: segment.pickupStopId, destination_stop_id: segment.destinationStopId } : {}),
+  };
 }
 
 export function passengerRouteSelectionKey(selection: PassengerRouteSelection): string {
-  return JSON.stringify([selection.route_id, selection.direction, selection.expected_updated_at, selection.seats]);
+  return JSON.stringify([selection.route_id, selection.direction, selection.expected_updated_at, selection.seats,
+    selection.pickup_stop_id ?? null, selection.destination_stop_id ?? null]);
 }
 
 export function passengerRouteAvailabilityPath(selection: PassengerRouteSelection): string {
   return "/api/orders/route/availability?" + new URLSearchParams({
     route_id: selection.route_id, direction: selection.direction,
     expected_updated_at: selection.expected_updated_at, seats: String(selection.seats),
+    ...(selection.pickup_stop_id === undefined ? {} : { pickup_stop_id: selection.pickup_stop_id }),
+    ...(selection.destination_stop_id === undefined ? {} : { destination_stop_id: selection.destination_stop_id }),
   }).toString();
 }
 
@@ -245,7 +263,7 @@ export function parsePassengerRouteAvailability(body: unknown): PassengerRouteAv
   };
 }
 
-/** Defaults to full trip in the selected direction; server resolves stops. */
+/** Preserve the selected segment; only the server resolves its geometry and fare. */
 export function passengerRouteOrderBody(selection: PassengerRouteSelection, pickupLocation: {
   lat: number; lng: number; timestamp: number; isMocked?: boolean;
 }) {

@@ -7,6 +7,7 @@ on:
       - "lib/db/**"
       - "mobile/tezjet-app/**"
       - "scripts/driver-route-browser-qa.py"
+      - "scripts/passenger-route-stops-browser-qa.py"
       - ".github/workflows/driver-route-qa.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -21,6 +22,7 @@ on:
       - "lib/db/**"
       - "mobile/tezjet-app/**"
       - "scripts/driver-route-browser-qa.py"
+      - "scripts/passenger-route-stops-browser-qa.py"
       - ".github/workflows/driver-route-qa.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -177,6 +179,14 @@ jobs:
             --api-url http://127.0.0.1:5000 \
             --output-dir artifacts/driver-route-qa \
             2>&1 | tee artifacts/driver-route-qa/browser-qa.log
+
+      - name: Run passenger route stop selection browser QA
+        run: |
+          python scripts/passenger-route-stops-browser-qa.py \
+            --base-url http://127.0.0.1:4174 \
+            --api-url http://127.0.0.1:5000 \
+            --output-dir artifacts/driver-route-qa/passenger-stops \
+            2>&1 | tee artifacts/driver-route-qa/passenger-stops-qa.log
 
       - name: Stop saved server processes
         if: always()

@@ -5,7 +5,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { API, ApiError, errorMessage, request } from "../lib/api";
 import { orderedDriverStops, parseDriverRouteCatalog, type DriverDirection, type DriverRouteOption } from "../lib/driver-routes";
 import { createPassengerRouteRequestScope, passengerRouteSelection, passengerRouteSelectionKey, passengerRouteAvailabilityPath,
-  parsePassengerRouteAvailability, passengerRouteOrderBody, passengerRouteCatalogStatus, createPassengerRouteSubmissionGuard, routeBookingRecoveryKey, routeBookingRequestKey, reconcileRouteBookingRequest, readRouteBookingRecovery, saveRouteBookingRecovery, clearRouteBookingRecovery, discardUnsentRouteBooking, confirmedRouteBookingPresent, isFreshPassengerRouteQuote, routeBookingDefinitivelyRejected, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability } from "../lib/passenger-route-orders";
+  parsePassengerRouteAvailability, passengerRouteOrderBody, passengerRouteCatalogStatus, createPassengerRouteSubmissionGuard, routeBookingRecoveryKey, routeBookingRequestKey, reconcileRouteBookingRequest, readRouteBookingRecovery, saveRouteBookingRecovery, clearRouteBookingRecovery, discardUnsentRouteBooking, confirmedRouteBookingPresent, isFreshPassengerRouteQuote, routeBookingDefinitivelyRejected, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability, type PassengerRouteSegment } from "../lib/passenger-route-orders";
 
 type Props = { token: string; endpoint: string; userId: string; busy: boolean; activeOrder: boolean; onCreated: () => Promise<void> };
 const choices: DriverDirection[] = ["a_to_b", "b_to_a"];
@@ -14,6 +14,8 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
   const [routeId, setRouteId] = useState("");
   const [direction, setDirection] = useState<DriverDirection>("a_to_b");
   const [seats, setSeats] = useState(1);
+  const [segmentDraft, setSegmentDraft] = useState<{ context: string; value: PassengerRouteSegment } | null>(null);
+  const [stopPicker, setStopPicker] = useState<"pickup" | "destination" | null>(null);
   const [loading, setLoading] = useState(false);
   const [catalogError, setCatalogError] = useState("");
   const [catalogRetry, setCatalogRetry] = useState(0);
@@ -32,14 +34,22 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const route = routes.find(item => item.id === routeId);
-  const selection = route ? passengerRouteSelection(route, direction, seats) : null;
+  const stops = route ? orderedDriverStops(route, direction) : [];
+  // A route/direction/catalog change gets fresh endpoints immediately, before
+  // effects run; IDs from another segment must never enter the next request.
+  const segmentContext = route ? JSON.stringify([route.id, route.updatedAt, direction]) : "";
+  const segment = route ? segmentDraft?.context === segmentContext ? segmentDraft.value : {
+    pickupStopId: stops[0]!.id, destinationStopId: stops[stops.length - 1]!.id,
+  } : null;
+  const pickupIndex = stops.findIndex(stop => stop.id === segment?.pickupStopId);
+  const destinationIndex = stops.findIndex(stop => stop.id === segment?.destinationStopId);
+  const selection = route && segment ? passengerRouteSelection(route, direction, seats, segment) : null;
   const key = selection ? passengerRouteSelectionKey(selection) : "";
   const activeSelectionKey = useRef(key);
   activeSelectionKey.current = key;
   const [now, setNow] = useState(Date.now());
   const fresh = !!availability && availability.key === key && now >= availability.checkedAt && now - availability.checkedAt < 15000;
   const canOrder = isFreshPassengerRouteQuote(availability, key, now) && !busy && !activeOrder && !submitting && !checking && !pendingSync && recoveryReady && !recoveryError;
-  const stops = route ? orderedDriverStops(route, direction) : [];
   const catalogStatus = passengerRouteCatalogStatus({ loading, error: catalogError, count: routes.length });
 
   const inScope = () => mounted.current && API === endpoint;
@@ -92,7 +102,15 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
     return () => { requestScope.current.cancelCatalog(); };
   }, [token, endpoint, catalogRetry]);
 
-  useEffect(() => { setAvailability(null); setChecking(false); setMessage(""); requestScope.current.cancelAvailability(); }, [key]);
+  useEffect(() => { setAvailability(null); setChecking(false); setMessage(""); setStopPicker(null); requestScope.current.cancelAvailability(); }, [key]);
+
+  function chooseStop(field: "pickup" | "destination", stopId: string) {
+    if (!route || !segment || submitting) return;
+    const next = { ...segment, ...(field === "pickup" ? { pickupStopId: stopId } : { destinationStopId: stopId }) };
+    passengerRouteSelection(route, direction, seats, next);
+    setSegmentDraft({ context: segmentContext, value: next });
+    setStopPicker(null);
+  }
   async function check() {
     if (!selection || checking || submitting) return;
     const version = requestScope.current.startAvailability();
@@ -228,7 +246,8 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
     {catalogStatus === "empty" && token && endpoint ? <Text style={v.hint}>Настроенных маршрутов пока нет.</Text> : null}
     {catalogStatus === "error" ? <View><Text style={v.error}>Не удалось загрузить маршруты: {catalogError}</Text>
       {button("Повторить загрузку маршрутов", () => setCatalogRetry(value => value + 1), submitting || busy, false, "route-catalog-retry")}</View> : null}
-    {routes.map(item => <Pressable key={item.id} onPress={() => setRouteId(item.id)} disabled={submitting}
+    {routes.map(item => <Pressable key={item.id} testID={"passenger-route-" + item.id}
+      onPress={() => { if (item.id !== routeId) { setSegmentDraft(null); setRouteId(item.id); } }} disabled={submitting}
       accessibilityRole="button" accessibilityState={{ selected: item.id === routeId }}
       style={[v.route, item.id === routeId && v.routeActive]}>
       <View style={[v.indicator, item.id === routeId && v.indicatorActive]}/>
@@ -241,7 +260,8 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
     {route ? <>
       <Text style={v.sectionHeading}>НАПРАВЛЕНИЕ</Text>
       <View style={v.directions}>
-        {choices.map(value => <Pressable key={value} onPress={() => setDirection(value)} disabled={submitting}
+        {choices.map(value => <Pressable key={value} testID={"passenger-direction-" + value}
+          onPress={() => { if (value !== direction) { setSegmentDraft(null); setDirection(value); } }} disabled={submitting}
           accessibilityRole="button" accessibilityState={{ selected: direction === value }}
           style={[v.direction, direction === value && v.directionActive]}>
           <Text style={[v.directionText, direction === value && v.directionTextActive]}>
@@ -252,12 +272,34 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
       <View style={v.trip}>
         <View style={v.tripDots}><View style={v.originDot}/><View style={v.tripLine}/><View style={v.destinationDot}/></View>
         <View style={v.tripLabels}>
-          <Text style={v.tripName}>{stops[0]?.name ?? "Начало маршрута"}</Text>
-          <Text style={v.tripCaption}>Откуда</Text>
-          <Text style={[v.tripName, v.destinationName]}>{stops[stops.length - 1]?.name ?? "Конец маршрута"}</Text>
-          <Text style={v.tripCaption}>Куда</Text>
+          <Pressable testID="passenger-pickup-open" accessibilityRole="button" accessibilityState={{ disabled: submitting }}
+            accessibilityLabel={"Место посадки: " + stops[pickupIndex]?.name} disabled={submitting}
+            onPress={() => setStopPicker(stopPicker === "pickup" ? null : "pickup")} style={v.stopField}>
+            <Text style={v.tripName}>{stops[pickupIndex]?.name ?? "Выберите посадку"} ▾</Text>
+            <Text style={v.tripCaption}>Откуда · выбрать остановку</Text>
+          </Pressable>
+          <Pressable testID="passenger-destination-open" accessibilityRole="button" accessibilityState={{ disabled: submitting }}
+            accessibilityLabel={"Назначение: " + stops[destinationIndex]?.name} disabled={submitting}
+            onPress={() => setStopPicker(stopPicker === "destination" ? null : "destination")} style={v.stopField}>
+            <Text style={v.tripName}>{stops[destinationIndex]?.name ?? "Выберите назначение"} ▾</Text>
+            <Text style={v.tripCaption}>Куда · выбрать остановку</Text>
+          </Pressable>
         </View>
       </View>
+      {stopPicker ? <View testID="passenger-stop-picker" accessibilityRole="radiogroup" style={v.stopPicker}>
+        <Text style={v.sectionHeading}>{stopPicker === "pickup" ? "ГДЕ САДИТЕСЬ?" : "КУДА ЕДЕТЕ?"}</Text>
+        {stops.map((stop, index) => {
+          const disabled = submitting || (stopPicker === "pickup" ? index >= destinationIndex : index <= pickupIndex);
+          const selected = stop.id === (stopPicker === "pickup" ? segment?.pickupStopId : segment?.destinationStopId);
+          return <Pressable key={stop.id} testID={"passenger-" + stopPicker + "-" + stop.id}
+            accessibilityRole="radio" accessibilityLabel={stop.name} accessibilityState={{ checked: selected, disabled }}
+            disabled={disabled} onPress={() => chooseStop(stopPicker, stop.id)}
+            style={[v.stopOption, selected && v.stopOptionSelected, disabled && v.disabled]}>
+            <Text style={v.stopOptionName}>{stop.name}{selected ? " ✓" : ""}</Text>
+          </Pressable>;
+        })}
+        <Text style={v.tripCaption}>Посадка должна быть раньше назначения по выбранному направлению.</Text>
+      </View> : null}
       <View style={v.seats}>
         <View><Text style={v.seatsTitle}>Пассажиры</Text><Text style={v.seatsDescription}>Места: от 1 до 8</Text></View>
         <View style={v.stepper}>
@@ -318,6 +360,11 @@ const v = StyleSheet.create({
   tripLine:{height:40,width:2,backgroundColor:"#3F7754"},
   destinationDot:{width:11,height:11,borderRadius:6,borderWidth:2,borderColor:"#37DAA1"},
   tripLabels:{flex:1},tripName:{color:"#F0FFF5",fontWeight:"700",fontSize:14},
+  stopField:{minHeight:48,justifyContent:"center",paddingVertical:5},
+  stopPicker:{marginTop:8,padding:12,borderRadius:14,backgroundColor:"#153624"},
+  stopOption:{minHeight:44,justifyContent:"center",paddingHorizontal:10,paddingVertical:10,borderRadius:10,marginBottom:5,borderWidth:1,borderColor:"#315540"},
+  stopOptionSelected:{backgroundColor:"#236C49",borderColor:"#33DC9B"},
+  stopOptionName:{color:"#EFFFF1",fontSize:14},
   destinationName:{marginTop:16},tripCaption:{color:"#8CAD98",fontSize:11,marginTop:2},
   seats:{flexDirection:"row",alignItems:"center",justifyContent:"space-between",marginTop:18},
   seatsTitle:{color:"#F3FFF7",fontSize:14,fontWeight:"800"},seatsDescription:{color:"#91B29D",fontSize:11,marginTop:3},

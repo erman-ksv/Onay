@@ -4,6 +4,8 @@ export type RideOrder = {
   status: RideStatus;
   pickup_point: string;
   destination?: string;
+  pickup_address?: string;
+  fare?: { pickupStop?: { name?: string }; destinationStop?: { name?: string } };
   seats: number;
   passenger_id?: string;
   driver_id?: string;
@@ -13,6 +15,20 @@ export type RideOrder = {
   created_at?: string;
   updated_at?: string;
 };
+
+function stopLabel(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/** pickup_point identifies the dispatch lane; it can differ from the booked stop. */
+export function ridePickupLabel(order: RideOrder): string {
+  return stopLabel(order.pickup_address) ?? stopLabel(order.fare?.pickupStop?.name) ??
+    stopLabel(order.pickup_point) ?? "Место посадки";
+}
+
+export function rideDestinationLabel(order: RideOrder): string {
+  return stopLabel(order.destination) ?? stopLabel(order.fare?.destinationStop?.name) ?? "По маршруту";
+}
 
 export function isClosed(order: RideOrder): boolean {
   return order.status === "completed" || order.status === "cancelled";
