@@ -80,7 +80,8 @@ class LineRideQA(shared.DriverRouteQA):
     def shot(self, page, name):
         page.screenshot(path=str(self.args.output_dir / (name + ".png")), full_page=True,
             mask=[page.get_by_placeholder("Код подтверждения", exact=True),
-                  page.get_by_text(re.compile(r"Тестовый код:"))])
+                  page.get_by_text(re.compile(r"Тестовый код:")),
+                  page.get_by_test_id("passenger-driver-phone")])
 
     def screenshot(self, name):
         self.shot(self.page, name + "-driver")
@@ -163,6 +164,7 @@ class LineRideQA(shared.DriverRouteQA):
     def authenticate(self):
         self.driver_token, driver = self.ui_login(self.page, "driver")
         self.driver_id = driver["id"]
+        self.expected_driver = {key: driver[key] for key in ("id", "full_name", "phone_number")}
         require(driver.get("driver_approval_status") == "pending", "New driver must require actual administrator approval")
         self.expect(self.page.get_by_text("Профиль на проверке", exact=True)).to_be_visible()
         self.expect(self.control("driver-line-join")).to_have_count(0)
@@ -256,6 +258,8 @@ class LineRideQA(shared.DriverRouteQA):
         require(order.get("offered_driver_id") == self.driver_id and order["status"] == "searching", "Real FIFO must offer the booking to the line driver")
         self.expect(self.control("driver-incoming-order")).to_be_visible()
         self.expect(page.get_by_test_id("passenger-trip-" + self.order_id)).to_contain_text("Ждём ответа водителя")
+        self.expect(page.get_by_test_id("passenger-driver-card")).to_have_count(0)
+        self.expected(api_request(self.args.api_url, "/orders/" + self.order_id + "/driver", token=self.passenger_token), 404, "Driver contact stays private before acceptance")
         self.queue("offer-seat-lock", 2, "collecting")
         self.assert_leave_protected()
         self.passed("Actual one-seat passenger booking reaches the FIFO driver, reserves one seat and protects enrollment")
@@ -277,6 +281,11 @@ class LineRideQA(shared.DriverRouteQA):
         require(pending.value.status == 200 and pending.value.json()["order"]["status"] == "en_route_to_c", "Actual driver must accept the offer")
         self.expect(self.control("driver-trip-" + self.order_id)).to_be_visible()
         self.passenger_status("Водитель едет к точке подачи")
+        self.expect(self.passenger_page.get_by_test_id("passenger-driver-name")).to_have_text(self.expected_driver["full_name"])
+        self.expect(self.passenger_page.get_by_test_id("passenger-driver-phone")).to_contain_text(self.expected_driver["phone_number"])
+        actual = self.expected(api_request(self.args.api_url, "/orders/" + self.order_id + "/driver", token=self.passenger_token), 200, "Assigned passenger reads minimal driver contact")
+        require(actual == {"driver": self.expected_driver}, "Contact response must contain only the actual assigned driver fields")
+        self.expected(api_request(self.args.api_url, "/orders/" + self.order_id + "/driver", token=self.driver_token), 403, "Driver role cannot call the passenger contact endpoint")
         self.queue("accepted-no-second-charge", 2, "collecting")
         self.progress("arrived_at_c")
         self.passenger_status("Водитель прибыл")
@@ -290,6 +299,7 @@ class LineRideQA(shared.DriverRouteQA):
             card.get_by_test_id("driver-line-board").click()
         require(pending.value.status == 200 and pending.value.json()["order"]["status"] == "boarded_waiting", "Actual boarding must persist boarded_waiting")
         self.passenger_status("Ты в машине. Ожидаем отправления водителя")
+        self.expect(self.passenger_page.get_by_test_id("passenger-driver-name")).to_have_text(self.expected_driver["full_name"])
         self.queue("boarded-no-release", 2, "collecting")
         before = len([item for item in self.requests if item["path"] == "/api/queue/depart" and item["method"] == "POST"])
         self.control("driver-line-depart").click()
@@ -311,6 +321,7 @@ class LineRideQA(shared.DriverRouteQA):
         orders = response.json().get("orders", [])
         require(any(order["id"] == self.order_id and order["status"] == "in_transit" for order in orders), "Departure must transition the boarded passenger")
         self.passenger_status("Поездка началась")
+        self.expect(self.passenger_page.get_by_test_id("passenger-driver-phone")).to_contain_text(self.expected_driver["phone_number"])
         self.expect(self.control("driver-trip-" + self.order_id)).to_contain_text("Поездка началась")
         snapshot = self.queue("departed-no-release", 2, "departed")
         require(snapshot.get("your_position") is None, "Departed line must leave FIFO without deleting its enrollment")
@@ -326,6 +337,8 @@ class LineRideQA(shared.DriverRouteQA):
         self.expect(self.control("driver-trip-" + self.order_id)).to_have_count(0)
         self.expect(self.passenger_page.get_by_test_id("passenger-trip-" + self.order_id)).to_have_count(0)
         self.expect(self.passenger_page.get_by_text(re.compile(r"QA линия A.*QA линия B: Поездка завершена"))).to_be_visible()
+        self.expect(self.passenger_page.get_by_test_id("passenger-driver-card")).to_have_count(0)
+        self.expected(api_request(self.args.api_url, "/orders/" + self.order_id + "/driver", token=self.passenger_token), 404, "Completed ride no longer exposes driver contact")
         snapshot = self.queue("completed-capacity-restored", 3, "departed")
         entry = snapshot["your_entry"]
         require(not entry.get("activeOrderIds") and not entry.get("currentOrderId") and not entry.get("pendingOfferOrderId"),
