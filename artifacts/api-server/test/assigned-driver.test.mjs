@@ -193,13 +193,26 @@ test("HTTP: unauthenticated, driver, admin and revoked passenger sessions cannot
 
 test("HTTP: all accepted active trip stages allow contact; completion removes access", async t => {
   const { driver, passenger, order, contact } = await assignedFixture(t);
-  for (const status of ["en_route_to_c", "arrived_at_c", "boarded_waiting", "in_transit"]) {
-    await store.updateOrder(order.id, { status });
+  const assertContact = async status => {
+    const snapshot = await request(`/orders/${order.id}`, { token: passenger.token });
+    assert.equal(snapshot.body.order.status, status);
     const result = await request(contact, { token: passenger.token });
     assert.equal(result.status, 200, status);
     assert.equal(result.body.driver.id, driver.user.id);
-  }
-  await store.updateOrder(order.id, { status: "completed" });
+  };
+  await assertContact("en_route_to_c");
+  const arrived = await request(`/orders/${order.id}/status`, { token: driver.token, method: "PATCH", body: { status: "arrived_at_c" } });
+  assert.equal(arrived.status, 200);
+  await assertContact("arrived_at_c");
+  const boarded = await request(`/orders/${order.id}/board`, { token: driver.token, method: "POST", body: {} });
+  assert.equal(boarded.status, 200);
+  await assertContact("boarded_waiting");
+  const entry = await store.getQueueEntry(driver.user.id);
+  const departed = await request("/queue/depart", { token: driver.token, method: "POST", body: { expected_enrollment_id: entry.collectionState.enrollmentId } });
+  assert.equal(departed.status, 200);
+  await assertContact("in_transit");
+  const completed = await request(`/orders/${order.id}/status`, { token: driver.token, method: "PATCH", body: { status: "completed" } });
+  assert.equal(completed.status, 200);
   assertError(await request(contact, { token: passenger.token }), 404, "DRIVER_CONTACT_UNAVAILABLE");
 });
 
@@ -209,6 +222,6 @@ test("HTTP: cancelled rides and deleted driver accounts cannot disclose cached c
   assert.equal(cancelled.status, 200);
   assertError(await request(contact, { token: passenger.token }), 404, "DRIVER_CONTACT_UNAVAILABLE");
   const missing = await assignedFixture(t);
-  await store.updateOrder(missing.order.id, { driverId: randomUUID() });
+  await database.query("DELETE FROM tezjet_users WHERE id = $1", [missing.driver.user.id]);
   assertError(await request(missing.contact, { token: missing.passenger.token }), 404, "DRIVER_CONTACT_UNAVAILABLE");
 });
