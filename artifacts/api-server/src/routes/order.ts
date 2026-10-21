@@ -9,6 +9,7 @@ import {
   createOrder,
   createRouteOrder,
   getOrder,
+  getAssignedDriver,
   getOrderAvailability,
   getRouteOrderAvailability,
   getRouteOrderRequest,
@@ -49,6 +50,7 @@ router.post(
   createOrder,
 );
 router.get("/orders/:orderId", authenticate, getOrder);
+router.get("/orders/:orderId/driver", authenticate, requireRole("passenger"), getAssignedDriver);
 router.post(
   "/orders/:orderId/accept",
   authenticate,

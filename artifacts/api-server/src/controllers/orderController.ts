@@ -327,6 +327,27 @@ export async function getOrder(request: Request, response: Response): Promise<vo
   });
 }
 
+/** Contact details are scoped to this passenger's current accepted ride.
+ * Never serialize the driver's full account or publish contact data to rooms. */
+export async function getAssignedDriver(request: Request, response: Response): Promise<void> {
+  response.setHeader("Cache-Control", "no-store");
+  const order = await store.getOrder(String(request.params["orderId"]));
+  if (!order || order.passengerId !== request.auth?.userId) {
+    throw new AppError(404, "Order not found", "ORDER_NOT_FOUND");
+  }
+  const active = (value: Order) => value.passengerId === request.auth?.userId &&
+    !!value.driverId && ["en_route_to_c", "arrived_at_c", "boarded_waiting", "in_transit"].includes(value.status);
+  if (!active(order)) throw new AppError(404, "Driver contact is unavailable", "DRIVER_CONTACT_UNAVAILABLE");
+  const driver = await store.getUser(order.driverId!);
+  // Recheck after the account read: a cancellation or reassignment must not
+  // turn an earlier assignment into permission to disclose contact details.
+  const current = await store.getOrder(order.id);
+  if (!driver || !driver.roles.includes("driver") || !current || !active(current) || current.driverId !== driver.id) {
+    throw new AppError(404, "Driver contact is unavailable", "DRIVER_CONTACT_UNAVAILABLE");
+  }
+  response.json({ driver: { id: driver.id, full_name: driver.fullName, phone_number: driver.phoneNumber } });
+}
+
 export async function acceptOrder(request: Request, response: Response): Promise<void> {
   const driverId = assertDriver(request);
   const order = await store.getOrder(String(request.params["orderId"]));
