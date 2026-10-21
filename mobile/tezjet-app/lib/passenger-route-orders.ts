@@ -37,6 +37,17 @@ export function routeBookingOutcomeUncertain(error: { status?: number; code?: st
       error.status >= 200 && error.status < 300);
 }
 
+/** Only known rejections from before the order transaction may unlock a new
+ * booking. A generic conflict or server/proxy failure needs reconciliation. */
+export function routeBookingDefinitivelyRejected(error: { status?: number; code?: string }): boolean {
+  return error.status !== undefined && error.status >= 400 && error.status < 500 && [
+    "NO_DRIVERS", "ROUTE_CHANGED", "ROUTE_NOT_FOUND", "ROUTE_INACTIVE", "ROUTE_STOP_NOT_FOUND",
+    "INVALID_ROUTE_SEGMENT", "ROUTE_NOT_CONFIGURED", "ROUTE_STOP_NOT_CONFIGURED", "OUTSIDE_PICKUP_GEOFENCE",
+    "MOCKED_GPS", "GPS_SPEED_LIMIT", "INVALID_COORDINATES", "VALIDATION_ERROR", "INVALID_IDEMPOTENCY_KEY",
+    "UNAUTHORIZED", "FORBIDDEN",
+  ].includes(error.code ?? "");
+}
+
 /** A displayed quote must still be fresh when the GPS lookup finishes.
  * This is a client UX guard; the server remains the booking authority. */
 export function isFreshPassengerRouteQuote(
@@ -82,7 +93,32 @@ export function createPassengerRouteSubmissionGuard() {
 export type RouteBookingRecovery = {
   status: "in_flight" | "confirmed" | "uncertain";
   orderId: string | null;
+  requestKey?: string;
 };
+
+export function routeBookingRequestKey(value: unknown): string {
+  if (typeof value !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+    throw new Error("Сервер не подтвердил ключ заказа. Повторное оформление заблокировано.");
+  }
+  return value.toLowerCase();
+}
+
+/** A 404 is not proof that the earlier POST cannot still commit. Never clear
+ * the record or create another booking merely because lookup found no order. */
+export async function reconcileRouteBookingRequest(
+  record: RouteBookingRecovery,
+  lookup: (path: string) => Promise<unknown>,
+): Promise<RouteBookingRecovery> {
+  if (record.status === "confirmed" || !record.requestKey) return record;
+  const key = routeBookingRequestKey(record.requestKey);
+  const response = await lookup("/api/orders/route/requests/" + encodeURIComponent(key));
+  const order = response && typeof response === "object" ? (response as {order?: {id?: unknown}}).order : undefined;
+  if (!order || typeof order.id !== "string" || !/^[a-z0-9-]{1,128}$/i.test(order.id)) {
+    throw new Error("Не удалось подтвердить конкретный заказ. Повтори проверку статуса.");
+  }
+  return { status: "confirmed", orderId: order.id, requestKey: key };
+}
 export type RouteBookingStorage = {
   getItem(key: string): Promise<string | null>;
   setItem(key: string, value: string): Promise<unknown>;
@@ -103,12 +139,13 @@ export async function readRouteBookingRecovery(storage: RouteBookingStorage, key
     const parsed: unknown = JSON.parse(value);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       const data = parsed as Record<string, unknown>;
+      const requestKey = data.requestKey === undefined ? {} : { requestKey: routeBookingRequestKey(data.requestKey) };
       if (data.status === "confirmed" && typeof data.orderId === "string" &&
           /^[a-z0-9-]{1,128}$/i.test(data.orderId)) {
-        return { status: "confirmed", orderId: data.orderId };
+        return { status: "confirmed", orderId: data.orderId, ...requestKey };
       }
       if (data.status === "in_flight" || data.status === "uncertain") {
-        return { status: data.status, orderId: null };
+        return { status: data.status, orderId: null, ...requestKey };
       }
     }
   } catch { /* Fail closed on truncated or legacy records. */ }
@@ -119,11 +156,21 @@ export async function saveRouteBookingRecovery(
   storage: RouteBookingStorage, key: string, state: RouteBookingRecovery,
 ): Promise<void> {
   if (state.status === "confirmed" && !state.orderId) throw new Error("Confirmed bookings require a server order id.");
-  await storage.setItem(key, JSON.stringify(state));
+  await storage.setItem(key, JSON.stringify({ status: state.status, orderId: state.orderId,
+    ...(state.requestKey === undefined ? {} : { requestKey: routeBookingRequestKey(state.requestKey) }),
+  }));
 }
 
 export async function clearRouteBookingRecovery(storage: RouteBookingStorage, key: string): Promise<void> {
   await storage.removeItem(key);
+}
+
+/** Safe only when the caller knows it has not started the POST. */
+export async function discardUnsentRouteBooking(storage: RouteBookingStorage, key: string, requestKey: string): Promise<void> {
+  const record = await readRouteBookingRecovery(storage, key);
+  if (record?.status === "in_flight" && record.requestKey === requestKey) {
+    await clearRouteBookingRecovery(storage, key);
+  }
 }
 
 /** A successful orders GET is not enough: the exact confirmed order must be

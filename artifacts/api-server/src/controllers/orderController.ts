@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import { randomUUID } from "node:crypto";
 import type { Server } from "socket.io";
 import { store } from "../store";
 import { statusTransitions } from "../store/orderLifecycle";
@@ -16,6 +17,7 @@ import type { RouteOrderSelectionInput } from "../store/storeContract";
 import { driverRouteOption, readDriverRouteChoiceInput } from "../utils/driverRoute";
 import { isValidCoordinates } from "../utils/geo";
 import { validateRouteOrderSelectionInput } from "../utils/routeOrder";
+import { assertRouteOrderRequestHash, requireRouteOrderRequestKey, routeOrderRequestHash } from "../utils/routeOrderRequest";
 import { logger } from "../lib/logger";
 
 function getSocket(request: Request): Server | undefined {
@@ -119,7 +121,49 @@ function readRouteOrderBody(request: Request) {
 /** Validate the new contract before GPS middleware reads or persists any location. */
 export function validateRouteOrderRequest(request: Request, _response: Response, next: NextFunction): void {
   readRouteOrderBody(request);
+  if (request.headers["idempotency-key"] !== undefined) requireRouteOrderRequestKey(request.headers["idempotency-key"]);
   next();
+}
+
+async function sendRouteOrder(response: Response, order: Order, replayed?: boolean): Promise<void> {
+  response.set("Cache-Control", "no-store").status(replayed === true ? 200 : 201).json({
+    order: serializeOrder(order),
+    offer: order.offeredDriverId ? {
+      driver_id: order.offeredDriverId,
+      queue_position: await store.getQueuePosition(order.offeredDriverId),
+      smart_pooling: false,
+      expires_at: order.offerExpiresAt,
+    } : null,
+    ...(replayed === undefined ? {} : { replayed }),
+  });
+}
+
+/** Recover before GPS middleware: reading an existing order must not move the user. */
+export async function replayRouteOrderRequest(request: Request, response: Response, next: NextFunction): Promise<void> {
+  const header = request.headers["idempotency-key"];
+  if (header === undefined) { next(); return; }
+  const passengerId = assertPassenger(request);
+  const { selection, seats } = readRouteOrderBody(request);
+  const receipt = await store.getRouteOrderRequest(passengerId, requireRouteOrderRequestKey(header), request.auth?.user.sessionVersion);
+  if (!receipt) { next(); return; }
+  assertRouteOrderRequestHash(receipt.requestHash, routeOrderRequestHash(selection, seats));
+  await sendRouteOrder(response, receipt.order, true);
+}
+
+export async function getRouteOrderRequest(request: Request, response: Response): Promise<void> {
+  response.set("Cache-Control", "no-store");
+  const passengerId = assertPassenger(request);
+  const receipt = await store.getRouteOrderRequest(passengerId,
+    requireRouteOrderRequestKey(request.params["requestKey"]), request.auth?.user.sessionVersion);
+  if (!receipt) throw new AppError(404, "Booking request was not found", "ORDER_REQUEST_NOT_FOUND");
+  // Absence is only a snapshot: an earlier POST may still be in flight.
+  response.json({ order: serializeOrder(receipt.order) });
+}
+
+/** Mint an unreserved intent ID without requiring a native random-number dependency. */
+export function newRouteOrderRequestKey(request: Request, response: Response): void {
+  assertPassenger(request);
+  response.set("Cache-Control", "no-store").json({ request_key: randomUUID() });
 }
 
 export async function listOrderRoutes(request: Request, response: Response): Promise<void> {
@@ -158,25 +202,24 @@ export async function getRouteOrderAvailability(request: Request, response: Resp
 export async function createRouteOrder(request: Request, response: Response): Promise<void> {
   const passengerId = assertPassenger(request);
   const { selection, pickupLocation, seats } = readRouteOrderBody(request);
-  const order = await store.createRouteOrderWithOffer({
+  const input = {
     passengerId,
     passengerPhone: request.auth?.user.phoneNumber ?? "",
     pickupLocation,
     seats,
-  }, selection, request.auth?.user.sessionVersion);
+  };
+  const header = request.headers["idempotency-key"];
+  const result = header === undefined
+    ? undefined
+    : await store.createRouteOrderOnce(input, selection, requireRouteOrderRequestKey(header), request.auth?.user.sessionVersion);
+  const order = header === undefined
+    ? await store.createRouteOrderWithOffer(input, selection, request.auth?.user.sessionVersion)
+    : result?.order;
   if (!order) {
     throw new AppError(409, "Водителей пока нет", "NO_DRIVERS");
   }
-  await publishOrderOfferChanges(getSocket(request), [{ order }]);
-  response.status(201).json({
-    order: serializeOrder(order),
-    offer: order.offeredDriverId ? {
-      driver_id: order.offeredDriverId,
-      queue_position: await store.getQueuePosition(order.offeredDriverId),
-      smart_pooling: false,
-      expires_at: order.offerExpiresAt,
-    } : null,
-  });
+  if (header === undefined || result?.created) await publishOrderOfferChanges(getSocket(request), [{ order }]);
+  await sendRouteOrder(response, order, header === undefined ? undefined : !result?.created);
 }
 
 async function getOrderForActor(request: Request, orderId: string): Promise<Order> {

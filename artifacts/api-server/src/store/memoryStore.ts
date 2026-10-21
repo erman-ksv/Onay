@@ -11,6 +11,7 @@ import { AppError } from "../utils/errors";
 import { assertRouteQueueLocation, assertRouteQueueTelemetry, resolveRouteQueue, routeQueueSnapshot, sameQueueLane } from "../utils/routeQueue";
 import { acceptQueueOffer, assertLegacyOrderInput, assertOrderOfferPatch, assertQueueOfferPatch, compareOfferDrivers, hasLiveOrderOffer, orderedOfferCandidates, releaseQueueOffer, reserveQueueOffer } from "./orderOffers";
 import { buildRouteOrder, validateRouteOrderSelectionInput } from "../utils/routeOrder";
+import { assertRouteOrderRequestHash, requireRouteOrderRequestKey, routeOrderRequestHash } from "../utils/routeOrderRequest";
 import { boundedInteger } from "../utils/validation";
 import { assertLineOrderTransition, createLineCollectionState, isCollecting, lineOrderIds, prepareLineDeparture } from "./lineCollection";
 import { assertExternalQuoteCurrent, buildConfirmedExternalOrder, buildExternalPickupDetails, eligibleExternalCandidate, externalPickupLeaseMs, liveExternalOfferValid, nextOrderUpdatedAt, normalizeExternalPickupSettings, repriceExternalOrder, validateExternalPickupSelectionInput } from "./externalPickup";
@@ -44,6 +45,7 @@ class MemoryStore implements Store {
   private otpChallengeCleanupIterator?: IterableIterator<[string, OtpChallenge]>;
   private readonly queueEntries = new Map<string, QueueEntry>();
   private readonly orders = new Map<string, Order>();
+  private readonly routeOrderRequests = new Map<string, { requestHash: string; orderId: string }>();
   private readonly deviceRegistrations = new Map<string, DeviceRegistration>();
   private readonly routes = new Map<string, RouteDefinition>();
 
@@ -531,6 +533,33 @@ class MemoryStore implements Store {
       pickupLocation: input.pickupLocation, seats: boundedInteger(input.seats, "seats", 1, 8),
       ...details, status: "searching",
     }, expectedSessionVersion, route);
+  }
+
+  getRouteOrderRequest(passengerId: string, requestKey: string, expectedSessionVersion?: number) {
+    const key = requireRouteOrderRequestKey(requestKey);
+    this.requireCurrentRole(passengerId, "passenger", expectedSessionVersion);
+    const receipt = this.routeOrderRequests.get(JSON.stringify([passengerId, key]));
+    if (!receipt) return undefined;
+    const order = this.orders.get(receipt.orderId);
+    if (!order || order.passengerId !== passengerId) {
+      throw new AppError(409, "Booking requires recovery; do not create another request", "ORDER_RECOVERY_REQUIRED");
+    }
+    return { order: structuredClone(order), requestHash: receipt.requestHash };
+  }
+
+  createRouteOrderOnce(input: RouteOrderInput, selection: RouteOrderSelectionInput, requestKey: string, expectedSessionVersion?: number) {
+    const key = requireRouteOrderRequestKey(requestKey);
+    const requestHash = routeOrderRequestHash(selection, input.seats);
+    const receipt = this.getRouteOrderRequest(input.passengerId, key, expectedSessionVersion);
+    if (receipt) {
+      assertRouteOrderRequestHash(receipt.requestHash, requestHash);
+      return { order: receipt.order, created: false };
+    }
+    // The memory adapter is synchronous; no other allocator can interleave here.
+    const order = this.createRouteOrderWithOffer(input, selection, expectedSessionVersion);
+    if (!order) return undefined;
+    this.routeOrderRequests.set(JSON.stringify([input.passengerId, key]), { requestHash, orderId: order.id });
+    return { order, created: true };
   }
 
   private reserveNewOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number, liveRoute?: RouteDefinition): Order | undefined {
