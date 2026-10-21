@@ -8,6 +8,7 @@ on:
       - "mobile/tezjet-app/**"
       - "scripts/driver-route-browser-qa.py"
       - "scripts/passenger-route-stops-browser-qa.py"
+      - "scripts/line-ride-browser-qa.py"
       - ".github/workflows/driver-route-qa.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -23,6 +24,7 @@ on:
       - "mobile/tezjet-app/**"
       - "scripts/driver-route-browser-qa.py"
       - "scripts/passenger-route-stops-browser-qa.py"
+      - "scripts/line-ride-browser-qa.py"
       - ".github/workflows/driver-route-qa.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -187,6 +189,14 @@ jobs:
             --api-url http://127.0.0.1:5000 \
             --output-dir artifacts/driver-route-qa/passenger-stops \
             2>&1 | tee artifacts/driver-route-qa/passenger-stops-qa.log
+
+      - name: Run line ride and next departure browser QA
+        run: |
+          python scripts/line-ride-browser-qa.py \
+            --base-url http://127.0.0.1:4174 \
+            --api-url http://127.0.0.1:5000 \
+            --output-dir artifacts/driver-route-qa/line-ride \
+            2>&1 | tee artifacts/driver-route-qa/line-ride-qa.log
 
       - name: Stop saved server processes
         if: always()
