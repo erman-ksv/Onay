@@ -1,3 +1,4 @@
+import { assertVehicleQueueCapacity, assertVehicleReview, createDriverVehicle } from "../utils/driverVehicle";
 import { createHmac, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { DriverRouteChoiceInput, ExternalPickupSelectionInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderReceipt, RouteOrderSelectionInput, Store } from "./storeContract";
@@ -15,6 +16,7 @@ import type {
   Coordinates,
   DeviceRegistration,
   DriverApprovalStatus,
+  DriverVehicleInput,
   DriverRouteChoice,
   ExternalPickupQuote,
   ExternalPickupSettings,
@@ -61,6 +63,7 @@ function asUser(row: Record<string, unknown>): User {
     ...(row.driverRouteChoice == null ? {} : {
       driverRouteChoice: structuredClone(row.driverRouteChoice) as DriverRouteChoice,
     }),
+    ...(row.driverVehicle == null ? {} : { driverVehicle: structuredClone(row.driverVehicle) as User["driverVehicle"] }),
     lastLocation: (row.lastLocation ?? undefined) as Coordinates | undefined,
     createdAt: String(row.createdAt),
   };
@@ -495,6 +498,30 @@ export class PostgresStore implements Store {
     });
   }
 
+  async setDriverVehicle(userId: string, input: DriverVehicleInput, expectedSessionVersion: number): Promise<User> {
+    const { db, usersTable, driverQueueTable, ordersTable } = await this.database();
+    return db.transaction(async tx => {
+      // Match route/offer lock order: queue first, then user. No later locking
+      // order/queue reads while holding the user lock.
+      const [queued] = await tx.select({ id: driverQueueTable.driverId }).from(driverQueueTable)
+        .where(eq(driverQueueTable.driverId, userId)).for("update").limit(1);
+      const [row] = await tx.select().from(usersTable).where(eq(usersTable.id, userId)).for("update").limit(1);
+      if (!row || row.sessionVersion !== expectedSessionVersion) throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+      if (row.role !== "driver") throw new AppError(403, "driver mode is required", "FORBIDDEN");
+      const [newQueue] = queued ? [queued] : await tx.select({ id: driverQueueTable.driverId }).from(driverQueueTable)
+        .where(eq(driverQueueTable.driverId, userId)).limit(1);
+      const [active] = await tx.select({ id: ordersTable.id }).from(ordersTable).where(and(
+        sql`${ordersTable.status} NOT IN ('completed', 'cancelled')`,
+        or(eq(ordersTable.passengerId, userId), eq(ordersTable.driverId, userId), eq(ordersTable.offeredDriverId, userId)),
+      )).limit(1);
+      if (newQueue || active) throw new AppError(409, "Finish active orders and leave the queue before changing the vehicle", "DRIVER_VEHICLE_BUSY");
+      const vehicle = createDriverVehicle(input, asUser(row as unknown as Record<string, unknown>).driverVehicle);
+      const [updated] = await tx.update(usersTable).set({ driverVehicle: vehicle as unknown as Record<string, unknown>, driverApprovalStatus: "pending" })
+        .where(eq(usersTable.id, userId)).returning();
+      return asUser(updated as unknown as Record<string, unknown>);
+    });
+  }
+
   async setDriverRouteChoice(userId: string, input: DriverRouteChoiceInput | null, expectedSessionVersion: number): Promise<DriverRouteChoice | null> {
     const value = input === null ? null : validateDriverRouteChoiceInput(input);
     const { db, usersTable, driverQueueTable, ordersTable, routesTable } = await this.database();
@@ -617,6 +644,7 @@ export class PostgresStore implements Store {
       if (user.driverRouteChoice && REQUIRE_DRIVER_APPROVAL && user.driverApprovalStatus !== "approved") {
         throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");
       }
+      assertVehicleQueueCapacity(asUser(user as unknown as Record<string, unknown>), entry.availableSeats);
       const choice = user.driverRouteChoice as DriverRouteChoice | null;
       const [routeRow] = choice ? await tx.select().from(routesTable).where(eq(routesTable.id, choice.routeId)).for("share").limit(1) : [];
       const routeContext = resolveRouteQueue(choice ?? undefined,
@@ -1581,11 +1609,15 @@ export class PostgresStore implements Store {
     return rows.map((row) => asUser(row as unknown as Record<string, unknown>));
   }
 
-  async setDriverApproval(userId: string, status: DriverApprovalStatus): Promise<User | undefined> {
+  async setDriverApproval(userId: string, status: DriverApprovalStatus, expectedVehicleRevision?: string | null): Promise<User | undefined> {
     const { db, usersTable } = await this.database();
-    const [row] = await db.update(usersTable).set({ driverApprovalStatus: status })
-      .where(and(eq(usersTable.id, userId), sql`${usersTable.roles} ? 'driver'`)).returning();
-    return row ? asUser(row as unknown as Record<string, unknown>) : undefined;
+    return db.transaction(async tx => {
+      const [row] = await tx.select().from(usersTable).where(eq(usersTable.id, userId)).for("update").limit(1);
+      if (!row || !(row.roles as string[]).includes("driver")) return undefined;
+      assertVehicleReview(asUser(row as unknown as Record<string, unknown>), expectedVehicleRevision);
+      const [updated] = await tx.update(usersTable).set({ driverApprovalStatus: status }).where(eq(usersTable.id, userId)).returning();
+      return asUser(updated as unknown as Record<string, unknown>);
+    });
   }
 
   async listRoutes(): Promise<RouteDefinition[]> {

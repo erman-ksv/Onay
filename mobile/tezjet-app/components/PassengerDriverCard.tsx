@@ -47,7 +47,7 @@ export default function PassengerDriverCard({ endpoint, token, order }: Props) {
       <Pressable accessibilityRole="link" testID="passenger-driver-phone" onPress={() => {
         void Linking.openURL(`tel:${driver.phoneNumber}`).catch(() => setError("Не удалось открыть звонок. Набери номер вручную."));
       }}><Text style={s.phone}>Позвонить: {driver.phoneNumber}</Text></Pressable>
-      <Text style={s.text}>Данные автомобиля пока не указаны.</Text></> : null}
+      {driver.vehicle ? <View testID="passenger-driver-vehicle"><Text style={s.text}>{driver.vehicle.make} {driver.vehicle.model}</Text><Text style={s.text}>Госномер: {driver.vehicle.plateNumber}</Text><Text style={s.text}>Пассажирских мест: {driver.vehicle.seatCapacity}</Text></View> : <Text style={s.text}>Данные автомобиля пока не указаны.</Text>}</> : null}
     {error ? <><Text style={s.text} testID="passenger-driver-error">{error}</Text><Pressable accessibilityRole="button" testID="passenger-driver-retry" onPress={() => setRetry(value => value + 1)}><Text style={s.phone}>Повторить получение данных</Text></Pressable></> : null}
   </View>;
 }

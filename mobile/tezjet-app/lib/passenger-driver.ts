@@ -1,4 +1,4 @@
-export type PassengerDriver = { id: string; fullName: string; phoneNumber: string };
+export type PassengerDriver = { id: string; fullName: string; phoneNumber: string; vehicle?: { make: string; model: string; plateNumber: string; seatCapacity: number } };
 const contactStatuses = new Set(["en_route_to_c", "arrived_at_c", "boarded_waiting", "in_transit"]);
 
 export function canReadDriverContact(order: { status: string; driver_id?: string }): boolean {
@@ -15,7 +15,16 @@ export function parsePassengerDriver(value: unknown, expectedDriverId: string): 
   if (!expectedDriverId || driver.id !== expectedDriverId || typeof driver.full_name !== "string" ||
       driver.full_name.trim().length > 200 || typeof driver.phone_number !== "string" ||
       !/^\+[1-9]\d{7,14}$/.test(driver.phone_number)) throw invalid();
-  return { id: expectedDriverId, fullName: driver.full_name.trim(), phoneNumber: driver.phone_number };
+  let vehicle: PassengerDriver["vehicle"];
+  if (driver.vehicle !== undefined) {
+    if (!driver.vehicle || typeof driver.vehicle !== "object" || Array.isArray(driver.vehicle)) throw invalid();
+    const car = driver.vehicle as Record<string, unknown>;
+    if (typeof car.make !== "string" || !car.make.trim() || typeof car.model !== "string" || !car.model.trim() ||
+        typeof car.plate_number !== "string" || !car.plate_number.trim() || typeof car.seat_capacity !== "number" ||
+        !Number.isSafeInteger(car.seat_capacity) || car.seat_capacity < 1 || car.seat_capacity > 8) throw invalid();
+    vehicle = { make: car.make, model: car.model, plateNumber: car.plate_number, seatCapacity: car.seat_capacity };
+  }
+  return { id: expectedDriverId, fullName: driver.full_name.trim(), phoneNumber: driver.phone_number, ...(vehicle ? { vehicle } : {}) };
 }
 
 /** Capture the selected endpoint and session before asynchronous work. */

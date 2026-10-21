@@ -12,6 +12,7 @@ export type AdminRecord = {
   full_name: string;
   phone_number: string;
   driver_approval_status?: "pending" | "approved" | "rejected";
+  driver_vehicle?: { revision: string; make: string; model: string; plate_number: string; seat_capacity: number; updated_at: string };
   created_at: string;
 };
 
@@ -37,7 +38,7 @@ export class AdminApiError extends Error {
 }
 
 type Options = {
-  method?: "GET" | "POST" | "PUT";
+  method?: "GET" | "POST" | "PUT" | "PATCH";
   token?: string;
   body?: unknown;
   signal?: AbortSignal;
@@ -106,6 +107,16 @@ export async function loadDirectories(token: string, signal?: AbortSignal): Prom
 
 export async function closeAdminSession(token: string): Promise<void> {
   await adminRequest<void>("/auth/logout", { token, method: "POST" });
+}
+
+export async function reviewDriverVehicle(token: string, driverId: string, status: "approved" | "rejected", revision: string): Promise<AdminRecord> {
+  const result = await adminRequest<{ driver: AdminRecord }>(`/admin/drivers/${encodeURIComponent(driverId)}/approval`, {
+    token, method: "PATCH", body: { status, expected_vehicle_revision: revision },
+  });
+  if (!result.driver || result.driver.id !== driverId || result.driver.driver_vehicle?.revision !== revision || result.driver.driver_approval_status !== status) {
+    throw new AdminApiError(502, "Не удалось подтвердить результат проверки автомобиля.");
+  }
+  return result.driver;
 }
 
 export type AdminRouteStop = {

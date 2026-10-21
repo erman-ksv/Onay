@@ -74,6 +74,8 @@ class AdminLayoutQA:
         self.expected_coordinates = {"A": (42.9, 71.3), "C": (42.91, 71.34), "B": (42.94, 71.43)}
         self.expected_conflict_path = None
         self.conflict_observed = False
+        self.vehicle_conflict_path = None
+        self.vehicle_conflict_observed = False
         self.token = None
         self.route_id = None
         self.last_otp_accepted_at = None
@@ -283,6 +285,51 @@ class AdminLayoutQA:
         self.expect(self.page.get_by_label("Питак B", exact=True)).to_have_value(route["stops"][-1]["id"])
         self.expect(self.page.get_by_label("Радиус питака, м", exact=True)).to_have_value("175")
 
+    def vehicle_review(self):
+        phone = "+77775" + str(uuid.uuid4().int % 1_000_000).zfill(6)
+        challenge = expect_status(api_request(self.args.api_url, "/auth/request-otp", "POST", {"phone_number": phone, "full_name": "CI vehicle review driver", "role": "driver", "locale": "ru"}), 202, "Driver fixture OTP")
+        session = expect_status(api_request(self.args.api_url, "/auth/verify-otp", "POST", {"phone_number": phone, "code": challenge["demo_code"]}), 200, "Real driver fixture authentication")
+        driver, driver_token = session["user"], session["access_token"]
+        body = {"make": "Chevrolet", "model": "QA Cobalt", "plate_number": "01 T123 QA", "seat_capacity": 4, "expected_revision": None}
+        first = expect_status(api_request(self.args.api_url, "/driver/vehicle", "PUT", body, driver_token), 200, "Driver submits a real vehicle")["driver_vehicle"]
+        self.page.set_viewport_size({"width": 1440, "height": 1000})
+        self.page.get_by_role("button", name="Пользователи", exact=True).click()
+        self.page.get_by_role("tab", name="Водители", exact=True).click()
+        with self.response_for("/admin/drivers", "GET"):
+            self.page.get_by_role("button", name="Обновить", exact=True).click()
+        card = self.page.get_by_test_id("driver-vehicle-review-" + driver["id"])
+        self.expect(card).to_contain_text("QA Cobalt")
+        self.expect(card).to_contain_text("01 T123 QA")
+        approval_path = "/admin/drivers/" + driver["id"] + "/approval"
+        approve = self.page.get_by_test_id("driver-vehicle-approve-" + driver["id"])
+        with self.response_for(approval_path, "PATCH") as pending:
+            approve.click()
+        require(pending.value.status == 200 and pending.value.request.post_data_json["expected_vehicle_revision"] == first["revision"], "Actual administrator must approve the displayed vehicle revision")
+        self.expect(self.page.locator("tr").filter(has=card)).to_contain_text("Одобрен")
+        changed = expect_status(api_request(self.args.api_url, "/driver/vehicle", "PUT", {**body, "model": "QA Nexia", "expected_revision": first["revision"]}, driver_token), 200, "Driver changes vehicle before old review")
+        require(changed["approval_status"] == "pending", "Edited vehicle must lose prior approval")
+        with self.response_for(approval_path, "PATCH") as pending:
+            approve.click()
+        require(pending.value.status == 409 and pending.value.json().get("error", {}).get("code") == "VEHICLE_REVIEW_CHANGED", "Stale actual review must fail with the exact conflict code")
+        self.vehicle_conflict_path, self.vehicle_conflict_observed = "/api" + approval_path, True
+        self.expect(card.get_by_role("alert")).to_contain_text("Автомобиль изменился")
+        with self.response_for("/admin/drivers", "GET"):
+            self.page.get_by_role("button", name="Обновить", exact=True).click()
+        self.expect(card).to_contain_text("QA Nexia")
+        self.expect(card.get_by_role("alert")).to_have_count(0)
+        with self.response_for(approval_path, "PATCH") as pending:
+            self.page.get_by_test_id("driver-vehicle-reject-" + driver["id"]).click()
+        require(pending.value.status == 200 and pending.value.json()["driver"]["driver_approval_status"] == "rejected", "Actual administrator rejection must persist")
+        self.expect(self.page.locator("tr").filter(has=card)).to_contain_text("Отклонён")
+        with self.response_for(approval_path, "PATCH") as pending:
+            approve.click()
+        require(pending.value.status == 200 and pending.value.request.post_data_json["expected_vehicle_revision"] == changed["driver_vehicle"]["revision"], "Explicit fresh approval must bind the new vehicle")
+        self.expect(self.page.locator("tr").filter(has=card)).to_contain_text("Одобрен")
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        require(self.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "Driver review must not overflow the 390px admin page")
+        self.screenshot("mobile-390-reviewed-vehicle")
+        self.passed("Actual administrator reviews persisted car, rejects stale vehicle revision, and explicitly approves updated data")
+
     def run(self):
         expect_status(api_request(self.args.api_url, "/healthz"), 200, "Actual API health")
         expect_status(api_request(self.args.base_url, "/healthz"), 200, "Vite development API proxy health")
@@ -415,6 +462,8 @@ class AdminLayoutQA:
         require(self.route() == changed, "Passenger request must not mutate the route")
         self.passed("Real passenger tokens cannot read or write admin routes")
 
+        self.vehicle_review()
+
         with self.response_for("/auth/logout", "POST") as pending:
             self.page.get_by_role("button", name="Выйти", exact=True).click()
         require(pending.value.status == 204, "UI logout must invalidate the real backend session")
@@ -434,7 +483,8 @@ class AdminLayoutQA:
             # resource error. Allow only that exact endpoint/status after its
             # real 409 response was verified; application errors still fail.
             expected = self.conflict_observed and urlparse(entry["url"]).path == self.expected_conflict_path and bool(re.fullmatch(r"Failed to load resource: the server responded with a status of 409 \(Conflict\)", entry["text"]))
-            if not expected:
+            expected_vehicle = self.vehicle_conflict_observed and urlparse(entry["url"]).path == self.vehicle_conflict_path and bool(re.fullmatch(r"Failed to load resource: the server responded with a status of 409 \(Conflict\)", entry["text"]))
+            if not expected and not expected_vehicle:
                 errors.append(entry)
         require(not errors and not self.page_errors, f"Browser errors: {redact(errors)}; page errors: {self.page_errors}")
 

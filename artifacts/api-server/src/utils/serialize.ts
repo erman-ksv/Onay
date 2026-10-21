@@ -12,6 +12,10 @@ export function serializeUser(user: User) {
     locale: user.locale,
     profile_locked: user.profileLocked,
     driver_approval_status: user.driverApprovalStatus,
+    ...(user.driverVehicle ? { driver_vehicle: {
+      revision: user.driverVehicle.revision, make: user.driverVehicle.make, model: user.driverVehicle.model,
+      plate_number: user.driverVehicle.plateNumber, seat_capacity: user.driverVehicle.seatCapacity, updated_at: user.driverVehicle.updatedAt,
+    } } : {}),
     created_at: user.createdAt,
   };
 }

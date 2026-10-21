@@ -174,6 +174,24 @@ export interface FareQuote {
   calculatedAt: string;
 }
 
+export interface DriverVehicle {
+  version: 1;
+  revision: string;
+  make: string;
+  model: string;
+  plateNumber: string;
+  seatCapacity: number;
+  updatedAt: string;
+}
+
+export interface DriverVehicleInput {
+  make: string;
+  model: string;
+  plateNumber: string;
+  seatCapacity: number;
+  expectedRevision: string | null;
+}
+
 export interface User {
   id: string;
   role: UserRole;
@@ -185,6 +203,7 @@ export interface User {
   profileLocked: boolean;
   sessionVersion: number;
   driverApprovalStatus?: DriverApprovalStatus;
+  driverVehicle?: DriverVehicle;
   /** Exposed only through the authenticated driver's route endpoint. */
   driverRouteChoice?: DriverRouteChoice;
   lastLocation?: Coordinates;

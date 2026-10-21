@@ -1,3 +1,4 @@
+import { publicDriverVehicle } from "../utils/driverVehicle";
 import type { NextFunction, Request, Response } from "express";
 import { randomUUID } from "node:crypto";
 import type { Server } from "socket.io";
@@ -345,7 +346,9 @@ export async function getAssignedDriver(request: Request, response: Response): P
   if (!driver || !driver.roles.includes("driver") || !current || !active(current) || current.driverId !== driver.id) {
     throw new AppError(404, "Driver contact is unavailable", "DRIVER_CONTACT_UNAVAILABLE");
   }
-  response.json({ driver: { id: driver.id, full_name: driver.fullName, phone_number: driver.phoneNumber } });
+  response.json({ driver: { id: driver.id, full_name: driver.fullName, phone_number: driver.phoneNumber,
+    ...(driver.driverVehicle && driver.driverApprovalStatus === "approved" ? { vehicle: publicDriverVehicle(driver.driverVehicle) } : {}),
+  } });
 }
 
 export async function acceptOrder(request: Request, response: Response): Promise<void> {
