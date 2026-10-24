@@ -22,7 +22,7 @@ jobs:
         with:
           node-version: 22
       - name: Validate staging configuration guards
-        run: node --test deploy/onay/verify-env.test.mjs
+        run: node --test deploy/onay/verify-env.test.mjs deploy/onay/backup.test.mjs
       - name: Build and verify isolated API/PostgreSQL runtime
         run: node deploy/onay/smoke.mjs
       - name: Preserve source-free staging verification report

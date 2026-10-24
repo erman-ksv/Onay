@@ -1,11 +1,12 @@
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createBackup, verifyBackup } from './backup.mjs';
 
-export function runStagingSmoke(env = process.env) {
+export async function runStagingSmoke(env = process.env) {
   if (env.CI !== 'true' || env.GITHUB_ACTIONS !== 'true') throw new Error('ONAY_SMOKE_REQUIRES_ISOLATED_GITHUB_RUNNER');
   const temporary = mkdtempSync(join(tmpdir(), 'onay-staging-'));
   const identifier = randomBytes(6).toString('hex'), project = `onay-smoke-${identifier}`;
@@ -26,6 +27,7 @@ export function runStagingSmoke(env = process.env) {
     return result.stdout;
   }
   function check(name, run) { console.log(JSON.stringify({ event: 'staging_check', name, status: 'running' })); run(); report.checks.push({ name, status: 'passed' }); save(); }
+  async function checkAsync(name, run) { console.log(JSON.stringify({ event: 'staging_check', name, status: 'running' })); await run(); report.checks.push({ name, status: 'passed' }); save(); }
   const requestWithToken = `let token='';for await(const c of process.stdin)token+=c;
     const r=await fetch('http://127.0.0.1:8080/api/orders/routes',{headers:{authorization:'Bearer '+token},redirect:'error',signal:AbortSignal.timeout(5000)});
     if(r.status!==200||!Array.isArray((await r.json()).routes))process.exit(1);`;
@@ -48,6 +50,39 @@ export function runStagingSmoke(env = process.env) {
       `const r=await fetch('http://127.0.0.1:8080/api/auth/request-otp',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({phone_number:'+15555550102',full_name:'Staging smoke',role:'passenger',locale:'ru'}),signal:AbortSignal.timeout(5000)});const b=await r.json();if(r.status!==202||Object.hasOwn(b,'demo_code')||Object.hasOwn(b,'code')){console.error('STAGING_OTP_STATUS_'+r.status);process.exit(1);}`]));
     check('same-session-survives-api-restart', () => { command(['restart', 'api']); command(['up', '-d', '--wait', '--wait-timeout', '120', 'api']); command(['exec', '-T', 'api', 'node', '--input-type=module', '-e', requestWithToken], { input: token }); });
     check('same-session-survives-postgres-restart', () => { command(['restart', 'db']); command(['up', '-d', '--wait', '--wait-timeout', '120', 'db', 'api']); command(['exec', '-T', 'api', 'node', '--input-type=module', '-e', requestWithToken], { input: token }); });
+    const backup = join(temporary, 'onay.dump');
+    await checkAsync('create-private-postgres-custom-backup', async () => {
+      const result = await createBackup(args, backup);
+      if (result.bytes < 5 || !/^[0-9a-f]{64}$/.test(result.sha256)) throw new Error('BACKUP_METADATA_INVALID');
+      if ((statSync(backup).mode & 0o777) !== 0o600) throw new Error('BACKUP_PERMISSIONS_INVALID');
+      let refused = false;
+      try { await createBackup(args, backup); } catch (error) { refused = error.code === 'EEXIST'; }
+      if (!refused || statSync(backup).size !== result.bytes) throw new Error('BACKUP_OVERWRITE_NOT_REFUSED');
+    });
+    // Add a row after the snapshot to distinguish an actual restore from reading the live DB.
+    const laterId = '22222222-2222-4222-8222-222222222222';
+    command(['exec', '-T', 'db', 'psql', '-U', 'onay', '-d', 'onay', '-v', 'ON_ERROR_STOP=1', '-tAc',
+      `INSERT INTO tezjet_users (id, role, roles, full_name, phone_number, locale, profile_locked, session_version, created_at) VALUES ('${laterId}', 'passenger', '["passenger"]'::jsonb, 'After snapshot', '+15555550103', 'ru', true, 0, '2026-10-24T00:00:00.000Z')`]);
+    await checkAsync('restore-snapshot-into-separate-database', async () => {
+      const result = await verifyBackup(args, backup, { onRestored: async database => {
+        command(['exec', '-T', 'db', 'psql', '-U', 'onay', '-d', database, '-v', 'ON_ERROR_STOP=1', '-tAc',
+          `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM tezjet_users WHERE id='${id}' AND session_version=0 AND full_name='Staging smoke') OR EXISTS (SELECT 1 FROM tezjet_users WHERE id='${laterId}') THEN RAISE EXCEPTION 'SNAPSHOT_DATA_MISMATCH'; END IF; END $$;`]);
+      } });
+      if (!result.restored || !result.isolatedDatabase) throw new Error('RESTORE_RESULT_INVALID');
+    });
+    await checkAsync('corrupt-archive-fails-and-cleans-scratch-database', async () => {
+      const corrupt = join(temporary, 'corrupt.dump'); writeFileSync(corrupt, 'PGDMPcorrupted-archive', { mode: 0o600 });
+      let failed = false;
+      try { await verifyBackup(args, corrupt); } catch { failed = true; }
+      if (!failed) throw new Error('CORRUPT_BACKUP_ACCEPTED');
+      command(['exec', '-T', 'db', 'psql', '-U', 'onay', '-d', 'onay', '-v', 'ON_ERROR_STOP=1', '-tAc',
+        `DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_database WHERE datname LIKE 'onay_restore_%') THEN RAISE EXCEPTION 'RESTORE_DATABASE_LEAKED'; END IF; END $$;`]);
+    });
+    check('live-database-and-session-unchanged-after-restore-drill', () => {
+      command(['exec', '-T', 'db', 'psql', '-U', 'onay', '-d', 'onay', '-v', 'ON_ERROR_STOP=1', '-tAc',
+        `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM tezjet_users WHERE id='${laterId}') THEN RAISE EXCEPTION 'LIVE_DATABASE_CHANGED'; END IF; END $$;`]);
+      command(['exec', '-T', 'api', 'node', '--input-type=module', '-e', requestWithToken], { input: token });
+    });
     check('https-proxy-configuration-valid', () => command(['run', '--rm', '--no-deps', 'edge', 'caddy', 'validate', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile']));
     report.status = 'passed';
   } catch (error) { report.status = 'failed'; report.reasonCode = 'STAGING_RUNTIME_CHECK_FAILED'; throw new Error('ONAY_STAGING_RUNTIME_CHECK_FAILED'); }
@@ -60,5 +95,5 @@ export function runStagingSmoke(env = process.env) {
   console.log(JSON.stringify({ status: report.status, checksPassed: report.checks.length, realServerDeployed: false, publicHttpsVerified: false, smsDeliveryVerified: false }));
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try { runStagingSmoke(); } catch (error) { console.error(error.message); process.exitCode = 1; }
+  try { await runStagingSmoke(); } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

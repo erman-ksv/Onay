@@ -14,3 +14,4 @@ artifacts/*-qa
 **/.DS_Store
 
 artifacts/staging-runtime
+**/*.dump

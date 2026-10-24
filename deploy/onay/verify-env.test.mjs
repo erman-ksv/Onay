@@ -42,5 +42,5 @@ test('entrypoint refuses invalid configuration without executing its command or 
 test('destructive smoke cleanup is unreachable outside an isolated CI runner', async () => {
   const { runStagingSmoke } = await import('./smoke.mjs');
   for (const env of [{}, { CI: 'true' }, { GITHUB_ACTIONS: 'true' }, { CI: 'false', GITHUB_ACTIONS: 'true' }])
-    assert.throws(() => runStagingSmoke(env), { message: 'ONAY_SMOKE_REQUIRES_ISOLATED_GITHUB_RUNNER' });
+    await assert.rejects(runStagingSmoke(env), { message: 'ONAY_SMOKE_REQUIRES_ISOLATED_GITHUB_RUNNER' });
 });
