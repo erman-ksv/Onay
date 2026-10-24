@@ -1,0 +1,19 @@
+[Unit]
+Description=Onay PostgreSQL backup with isolated restore verification
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=onay-backup
+SupplementaryGroups=docker
+WorkingDirectory=/opt/onay
+EnvironmentFile=/etc/onay/backup.env
+ExecStart=/usr/bin/node deploy/onay/backup-schedule.mjs run
+TimeoutStartSec=1h
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/srv/onay-backups
