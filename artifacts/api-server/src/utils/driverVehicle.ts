@@ -61,3 +61,12 @@ export function assertVehicleQueueCapacity(user: User, seats: number): void {
 export function publicDriverVehicle(vehicle: DriverVehicle) {
   return { make: vehicle.make, model: vehicle.model, plate_number: vehicle.plateNumber, seat_capacity: vehicle.seatCapacity };
 }
+
+/** Development approval bypass applies only to accounts without a saved car.
+ * A submitted car always requires current approval, including after revocation. */
+export function hasRequiredDriverApproval(
+  user: { driverApprovalStatus?: unknown; driverVehicle?: unknown } | null | undefined,
+  requireLegacyApproval: boolean,
+): boolean {
+  return !!user && (user.driverApprovalStatus === "approved" || (!requireLegacyApproval && !user.driverVehicle));
+}

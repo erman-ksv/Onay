@@ -1,4 +1,4 @@
-import { assertVehicleQueueCapacity, assertVehicleReview, createDriverVehicle } from "../utils/driverVehicle";
+import { assertVehicleQueueCapacity, assertVehicleReview, createDriverVehicle, hasRequiredDriverApproval } from "../utils/driverVehicle";
 import { randomUUID } from "node:crypto";
 import { OFFER_TIMEOUT_MS, OTP_TTL_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
 import { normalizePhone } from "../utils/phone";
@@ -265,7 +265,7 @@ class MemoryStore implements Store {
     }
     this.requireCurrentRole(userId, "driver", expectedSessionVersion);
     const user = this.users.get(userId)!;
-    if (REQUIRE_DRIVER_APPROVAL && user.driverApprovalStatus !== "approved") {
+    if (!hasRequiredDriverApproval(user, REQUIRE_DRIVER_APPROVAL)) {
       throw new AppError(403, "Driver approval is required", "DRIVER_APPROVAL_REQUIRED");
     }
     if (this.queueEntries.has(userId) || [...this.orders.values()].some(order =>
@@ -321,7 +321,7 @@ class MemoryStore implements Store {
     if (entry.routeContext || entry.collectionState !== undefined) throw new AppError(400, "Queue context is server-owned", "VALIDATION_ERROR");
     const user = this.users.get(entry.driverId)!;
     assertVehicleQueueCapacity(user, entry.availableSeats);
-    if (user.driverRouteChoice && REQUIRE_DRIVER_APPROVAL && user.driverApprovalStatus !== "approved") {
+    if (user.driverRouteChoice && !hasRequiredDriverApproval(user, REQUIRE_DRIVER_APPROVAL)) {
       throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");
     }
     const current = this.queueEntries.get(entry.driverId);
@@ -386,7 +386,7 @@ class MemoryStore implements Store {
 
   departQueue(driverId: string, expectedEnrollmentId: string, expectedSessionVersion?: number): { entry: QueueEntry; orders: Order[]; changed: boolean } {
     this.requireCurrentRole(driverId, "driver", expectedSessionVersion);
-    if (REQUIRE_DRIVER_APPROVAL && this.users.get(driverId)?.driverApprovalStatus !== "approved") {
+    if (!hasRequiredDriverApproval(this.users.get(driverId), REQUIRE_DRIVER_APPROVAL)) {
       throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");
     }
     const entry = this.queueEntries.get(driverId);
@@ -433,7 +433,7 @@ class MemoryStore implements Store {
   private eligibleOfferEntries(): QueueEntry[] {
     return [...this.queueEntries.values()].filter(entry =>
       this.users.get(entry.driverId)?.role === "driver" &&
-      (!REQUIRE_DRIVER_APPROVAL || this.users.get(entry.driverId)?.driverApprovalStatus === "approved"),
+      hasRequiredDriverApproval(this.users.get(entry.driverId), REQUIRE_DRIVER_APPROVAL),
     );
   }
 
@@ -499,7 +499,7 @@ class MemoryStore implements Store {
     }
     const passenger = this.users.get(passengerId)!;
     const driver = this.users.get(quote.driverId);
-    if (!driver || driver.role !== "driver" || (REQUIRE_DRIVER_APPROVAL && driver.driverApprovalStatus !== "approved")) {
+    if (!driver || driver.role !== "driver" || !hasRequiredDriverApproval(driver, REQUIRE_DRIVER_APPROVAL)) {
       throw new AppError(409, "Selected driver is no longer available", "QUOTE_CHANGED");
     }
     const entry = this.queueEntries.get(quote.driverId);
@@ -627,7 +627,7 @@ class MemoryStore implements Store {
     const entry = order.offeredDriverId ? this.queueEntries.get(order.offeredDriverId) : undefined;
     if (!entry || entry.pendingOfferOrderId !== order.id || entry.availableSeats < 0) return false;
     if (this.users.get(entry.driverId)?.role !== "driver") return false;
-    if (REQUIRE_DRIVER_APPROVAL && this.users.get(entry.driverId)?.driverApprovalStatus !== "approved") return false;
+    if (!hasRequiredDriverApproval(this.users.get(entry.driverId), REQUIRE_DRIVER_APPROVAL)) return false;
     if (order.externalPickup) {
       return liveExternalOfferValid(order, entry,
         order.routeContext ? this.routes.get(order.routeContext.routeId) : undefined, now);
@@ -680,7 +680,7 @@ class MemoryStore implements Store {
   rejectOrderOffer(orderId: string, driverId: string, now = Date.now(), expectedSessionVersion?: number): OrderOfferChange | undefined {
     if (expectedSessionVersion !== undefined) {
       this.requireCurrentRole(driverId, "driver", expectedSessionVersion);
-      if (REQUIRE_DRIVER_APPROVAL && this.users.get(driverId)?.driverApprovalStatus !== "approved") return undefined;
+      if (!hasRequiredDriverApproval(this.users.get(driverId), REQUIRE_DRIVER_APPROVAL)) return undefined;
     }
     const order = this.orders.get(orderId);
     if (!order || order.offeredDriverId !== driverId || !hasLiveOrderOffer(order, now) ||
@@ -737,7 +737,7 @@ class MemoryStore implements Store {
     if (expectedSessionVersion !== undefined || nextStatus === "boarded_waiting") {
       const role = actorId === order.passengerId ? "passenger" : "driver";
       this.requireCurrentRole(actorId, role, expectedSessionVersion);
-      if (role === "driver" && REQUIRE_DRIVER_APPROVAL && this.users.get(actorId)?.driverApprovalStatus !== "approved") {
+      if (role === "driver" && !hasRequiredDriverApproval(this.users.get(actorId), REQUIRE_DRIVER_APPROVAL)) {
         throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");
       }
     }

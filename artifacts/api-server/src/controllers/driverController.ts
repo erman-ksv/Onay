@@ -1,4 +1,4 @@
-import { readDriverVehicleInput } from "../utils/driverVehicle";
+import { hasRequiredDriverApproval, readDriverVehicleInput } from "../utils/driverVehicle";
 import { serializeUser } from "../utils/serialize";
 import type { Request, Response } from "express";
 import { store } from "../store";
@@ -15,7 +15,7 @@ async function currentDriver(request: Request): Promise<User> {
     throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
   }
   if (user.role !== "driver") throw new AppError(403, "driver mode is required", "FORBIDDEN");
-  if (REQUIRE_DRIVER_APPROVAL && user.driverApprovalStatus !== "approved") {
+  if (!hasRequiredDriverApproval(user, REQUIRE_DRIVER_APPROVAL)) {
     throw new AppError(403, "Driver approval is required", "DRIVER_APPROVAL_REQUIRED");
   }
   return user;
