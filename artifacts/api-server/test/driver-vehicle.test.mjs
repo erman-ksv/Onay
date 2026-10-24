@@ -280,6 +280,8 @@ test("development approval bypass never authorizes a pending or revoked submitte
   const f = await fixture(t), driver = await f.createUser(), legacy = await f.createUser("driver", "pending");
   const saved = await store.setDriverVehicle(driver.user.id, input(), driver.user.sessionVersion);
   const get = async actor => { const response = await fetch(endpoint, { headers: { authorization: `Bearer ${actor.token}` } }); return { status: response.status, body: await response.json() }; };
+  const previous = process.env.REQUIRE_DRIVER_APPROVAL;
+  process.env.REQUIRE_DRIVER_APPROVAL = "false";
   try {
     assert.equal((await get(legacy)).status, 200, "Legacy account compatibility stays available");
     assertError(await get(driver), 403, "DRIVER_APPROVAL_REQUIRED");
@@ -287,7 +289,11 @@ test("development approval bypass never authorizes a pending or revoked submitte
     assert.equal((await get(driver)).status, 200);
     await store.setDriverApproval(driver.user.id, "rejected", saved.driverVehicle.revision);
     assertError(await get(driver), 403, "DRIVER_APPROVAL_REQUIRED");
-  } finally { await new Promise((resolve, reject) => listener.close(error => error ? reject(error) : resolve())); }
+  } finally {
+    if (previous === undefined) delete process.env.REQUIRE_DRIVER_APPROVAL;
+    else process.env.REQUIRE_DRIVER_APPROVAL = previous;
+    await new Promise((resolve, reject) => listener.close(error => error ? reject(error) : resolve()));
+  }
 });
 
 test("revoked vehicles disappear from configured availability and dispatch despite the legacy bypass", async t => {
