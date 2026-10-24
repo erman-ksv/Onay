@@ -244,3 +244,121 @@ test("MemoryStore enforces the same vehicle revision, approval, capacity and bus
   adapter.joinQueue({ ...entry, availableSeats: 3 }, user.sessionVersion);
   assert.throws(() => adapter.setDriverVehicle(user.id, input({ ...car, expected_revision: saved.driverVehicle.revision }), user.sessionVersion), error => error.code === "DRIVER_VEHICLE_BUSY");
 });
+
+async function storesWithLegacyApprovalBypass(t) {
+  const outfile = path.join(moduleDirectory, `legacy-approval-${randomUUID()}.mjs`);
+  await build({
+    stdin: { contents: [
+      'export { default as app } from "./src/app";',
+      'export { createRealtimeServer } from "./src/socket";',
+      'export { store as runtimeStore } from "./src/store";',
+      'export { PostgresStore } from "./src/store/postgresStore";',
+      'export { MemoryStore } from "./src/store/memoryStore";',
+      'export { pool } from "../../lib/db/src/index";',
+    ].join("\n"), resolveDir: apiRoot, loader: "ts" },
+    outfile, bundle: true, platform: "node", format: "esm", target: "node22", logLevel: "silent",
+    external: ["pg-native", "pino", "pino-http", "socket.io"],
+    banner: { js: 'import { createRequire as testCreateRequire } from "node:module"; const require = testCreateRequire(import.meta.url);' },
+  });
+  const prior = process.env.REQUIRE_DRIVER_APPROVAL;
+  try {
+    process.env.REQUIRE_DRIVER_APPROVAL = "false";
+    const module = await import(pathToFileURL(outfile).href);
+    t.after(() => module.pool.end());
+    return module;
+  } finally {
+    if (prior === undefined) delete process.env.REQUIRE_DRIVER_APPROVAL;
+    else process.env.REQUIRE_DRIVER_APPROVAL = prior;
+  }
+}
+
+test("development approval bypass never authorizes a pending or revoked submitted vehicle over HTTP", async t => {
+  const module = await storesWithLegacyApprovalBypass(t);
+  await module.runtimeStore.initialize();
+  const listener = await new Promise(resolve => { const server = module.app.listen(0, "127.0.0.1", () => resolve(server)); });
+  const endpoint = `http://127.0.0.1:${listener.address().port}/api/driver/routes`;
+  const f = await fixture(t), driver = await f.createUser(), legacy = await f.createUser("driver", "pending");
+  const saved = await store.setDriverVehicle(driver.user.id, input(), driver.user.sessionVersion);
+  const get = async actor => { const response = await fetch(endpoint, { headers: { authorization: `Bearer ${actor.token}` } }); return { status: response.status, body: await response.json() }; };
+  try {
+    assert.equal((await get(legacy)).status, 200, "Legacy account compatibility stays available");
+    assertError(await get(driver), 403, "DRIVER_APPROVAL_REQUIRED");
+    await store.setDriverApproval(driver.user.id, "approved", saved.driverVehicle.revision);
+    assert.equal((await get(driver)).status, 200);
+    await store.setDriverApproval(driver.user.id, "rejected", saved.driverVehicle.revision);
+    assertError(await get(driver), 403, "DRIVER_APPROVAL_REQUIRED");
+  } finally { await new Promise((resolve, reject) => listener.close(error => error ? reject(error) : resolve())); }
+});
+
+test("revoked vehicles disappear from configured availability and dispatch despite the legacy bypass", async t => {
+  const module = await storesWithLegacyApprovalBypass(t);
+  for (const [name, adapter] of [["PostgreSQL", new module.PostgresStore()], ["MemoryStore", new module.MemoryStore()]]) await t.test(name, async context => {
+    const f = await fixture(context, adapter), route = await f.configured(), driver = await f.planned(route);
+    const saved = await adapter.setDriverVehicle(driver.user.id, input(), driver.user.sessionVersion);
+    await adapter.setDriverApproval(driver.user.id, "approved", saved.driverVehicle.revision);
+    await f.storedJoin(driver, route, 3);
+    assert.equal((await adapter.getRouteOrderAvailability(choice(route), 1)).available, true);
+    await adapter.setDriverApproval(driver.user.id, "rejected", saved.driverVehicle.revision);
+    assert.equal((await adapter.getRouteOrderAvailability(choice(route), 1)).available, false);
+    const passenger = await f.createUser("passenger");
+    assert.equal(await f.storedOrder(passenger, route), undefined, "Rejected car cannot reserve a new order");
+    const legacy = await f.planned(route);
+    await adapter.setDriverApproval(legacy.user.id, "pending");
+    await f.storedJoin(legacy, route, 2);
+    assert.equal((await adapter.getRouteOrderAvailability(choice(route), 1)).available, true);
+    const order = await f.storedOrder(passenger, route);
+    assert.equal(order.offeredDriverId, legacy.user.id, "Dispatch preserves legacy compatibility and skips the revoked car");
+    const revokedEntry = await adapter.getQueueEntry(driver.user.id);
+    assert.equal(revokedEntry.availableSeats, 3); assert.equal(revokedEntry.pendingOfferOrderId, undefined);
+  });
+});
+
+test("revocation invalidates an existing offer and releases its seats exactly once with the bypass enabled", async t => {
+  const module = await storesWithLegacyApprovalBypass(t);
+  for (const [name, adapter] of [["PostgreSQL", new module.PostgresStore()], ["MemoryStore", new module.MemoryStore()]]) await t.test(name, async context => {
+    const f = await fixture(context, adapter), route = await f.configured(), driver = await f.planned(route);
+    const saved = await adapter.setDriverVehicle(driver.user.id, input(), driver.user.sessionVersion);
+    await adapter.setDriverApproval(driver.user.id, "approved", saved.driverVehicle.revision);
+    await f.storedJoin(driver, route, 3);
+    const passenger = await f.createUser("passenger"), order = await f.storedOrder(passenger, route, 2);
+    assert.equal(order.offeredDriverId, driver.user.id);
+    assert.equal((await adapter.getQueueEntry(driver.user.id)).availableSeats, 1);
+    await adapter.setDriverApproval(driver.user.id, "rejected", saved.driverVehicle.revision);
+    assert.equal(await adapter.acceptOrderOffer(order.id, driver.user.id, Date.now(), driver.user.sessionVersion), undefined);
+    await adapter.processOrderOffers();
+    const released = await adapter.getQueueEntry(driver.user.id), current = await adapter.getOrder(order.id);
+    assert.equal(released.availableSeats, 3); assert.equal(released.pendingOfferOrderId, undefined);
+    assert.equal(current.driverId, undefined); assert.equal(current.offeredDriverId, undefined);
+    assert.equal(current.status, "searching");
+    await adapter.processOrderOffers();
+    assert.equal((await adapter.getQueueEntry(driver.user.id)).availableSeats, 3);
+  });
+});
+
+test("socket authentication keeps submitted-car review mandatory while retaining legacy development access", async t => {
+  const module = await storesWithLegacyApprovalBypass(t);
+  const { createServer } = await import("node:http");
+  const { io: connect } = await import("socket.io-client");
+  await module.runtimeStore.initialize();
+  const listener = createServer(), realtime = module.createRealtimeServer(listener);
+  await new Promise(resolve => listener.listen(0, "127.0.0.1", resolve));
+  const endpoint = `http://127.0.0.1:${listener.address().port}`;
+  const f = await fixture(t), driver = await f.createUser(), legacy = await f.createUser("driver", "pending");
+  const saved = await store.setDriverVehicle(driver.user.id, input(), driver.user.sessionVersion);
+  const handshake = token => new Promise((resolve, reject) => {
+    const client = connect(endpoint, { path: "/api/socket.io", auth: { token }, transports: ["websocket"], reconnection: false, autoConnect: false });
+    const timer = setTimeout(() => { client.close(); reject(new Error("Socket authentication did not settle")); }, 3000);
+    const finish = result => { clearTimeout(timer); client.close(); resolve(result); };
+    client.once("connect", () => finish("connected"));
+    client.once("connect_error", error => finish(error.message));
+    client.connect();
+  });
+  try {
+    assert.equal(await handshake(legacy.token), "connected");
+    assert.equal(await handshake(driver.token), "Driver approval required");
+    await store.setDriverApproval(driver.user.id, "approved", saved.driverVehicle.revision);
+    assert.equal(await handshake(driver.token), "connected");
+    await store.setDriverApproval(driver.user.id, "rejected", saved.driverVehicle.revision);
+    assert.equal(await handshake(driver.token), "Driver approval required");
+  } finally { await new Promise(resolve => realtime.close(resolve)); }
+});

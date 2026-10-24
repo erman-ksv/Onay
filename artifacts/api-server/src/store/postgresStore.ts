@@ -1,4 +1,4 @@
-import { assertVehicleQueueCapacity, assertVehicleReview, createDriverVehicle } from "../utils/driverVehicle";
+import { assertVehicleQueueCapacity, assertVehicleReview, createDriverVehicle, hasRequiredDriverApproval } from "../utils/driverVehicle";
 import { createHmac, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { DriverRouteChoiceInput, ExternalPickupSelectionInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderReceipt, RouteOrderSelectionInput, Store } from "./storeContract";
@@ -536,7 +536,7 @@ export class PostgresStore implements Store {
         throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
       }
       if (userRow.role !== "driver") throw new AppError(403, "driver mode is required", "FORBIDDEN");
-      if (REQUIRE_DRIVER_APPROVAL && userRow.driverApprovalStatus !== "approved") {
+      if (!hasRequiredDriverApproval(userRow, REQUIRE_DRIVER_APPROVAL)) {
         throw new AppError(403, "Driver approval is required", "DRIVER_APPROVAL_REQUIRED");
       }
       // A join that acquired the user SHARE lock first has committed by now.
@@ -641,7 +641,7 @@ export class PostgresStore implements Store {
         throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
       }
       if (user.role !== "driver") throw new AppError(403, "driver mode is required", "FORBIDDEN");
-      if (user.driverRouteChoice && REQUIRE_DRIVER_APPROVAL && user.driverApprovalStatus !== "approved") {
+      if (user.driverRouteChoice && !hasRequiredDriverApproval(user, REQUIRE_DRIVER_APPROVAL)) {
         throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");
       }
       assertVehicleQueueCapacity(asUser(user as unknown as Record<string, unknown>), entry.availableSeats);
@@ -757,7 +757,7 @@ export class PostgresStore implements Store {
             throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
           }
           if (driver.role !== "driver") throw new AppError(403, "driver mode is required", "FORBIDDEN");
-          if (REQUIRE_DRIVER_APPROVAL && driver.driverApprovalStatus !== "approved") {
+          if (!hasRequiredDriverApproval(driver, REQUIRE_DRIVER_APPROVAL)) {
             throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");
           }
           const activeIds = new Set(lineOrderIds(entry));
@@ -836,7 +836,8 @@ export class PostgresStore implements Store {
         isNull(driverQueueTable.pendingOfferOrderId),
         pickupPoint === "D" ? eq(driverQueueTable.status, "in_transit") : eq(driverQueueTable.inFifo, true),
         eq(usersTable.role, "driver"),
-        REQUIRE_DRIVER_APPROVAL ? eq(usersTable.driverApprovalStatus, "approved") : undefined,
+        REQUIRE_DRIVER_APPROVAL ? eq(usersTable.driverApprovalStatus, "approved") :
+          or(isNull(usersTable.driverVehicle), eq(usersTable.driverApprovalStatus, "approved")),
       ));
     const eligibleDriverCount = orderedOfferCandidates(
       { pickupPoint, seats, attemptedDriverIds: [] },
@@ -863,7 +864,8 @@ export class PostgresStore implements Store {
           eq(driverQueueTable.inFifo, true), configuredOfferPhase(driverQueueTable),
           sql`${driverQueueTable.routeContext}->>'routeId' = ${choice.routeId} AND ${driverQueueTable.routeContext}->>'direction' = ${choice.direction} AND ${driverQueueTable.routeContext}->>'routeUpdatedAt' = ${choice.expectedUpdatedAt} AND ${driverQueueTable.routeContext}->>'pitak' = ${choice.direction === "a_to_b" ? "A" : "B"}`,
           eq(usersTable.role, "driver"),
-          REQUIRE_DRIVER_APPROVAL ? eq(usersTable.driverApprovalStatus, "approved") : undefined,
+          REQUIRE_DRIVER_APPROVAL ? eq(usersTable.driverApprovalStatus, "approved") :
+          or(isNull(usersTable.driverVehicle), eq(usersTable.driverApprovalStatus, "approved")),
         ));
       const eligibleDriverCount = orderedOfferCandidates(
         { ...details, seats }, rows.map(row => asQueueEntry(row.queue as unknown as Record<string, unknown>)), Date.now(), route,
@@ -895,7 +897,8 @@ export class PostgresStore implements Store {
           sql`${driverQueueTable.collectionState}->>'phase' = 'collecting'`,
           sql`${driverQueueTable.routeContext}->>'routeId' = ${choice.routeId} AND ${driverQueueTable.routeContext}->>'direction' = ${choice.direction} AND ${driverQueueTable.routeContext}->>'routeUpdatedAt' = ${choice.expectedUpdatedAt}`,
           eq(usersTable.role, "driver"),
-          REQUIRE_DRIVER_APPROVAL ? eq(usersTable.driverApprovalStatus, "approved") : undefined,
+          REQUIRE_DRIVER_APPROVAL ? eq(usersTable.driverApprovalStatus, "approved") :
+          or(isNull(usersTable.driverVehicle), eq(usersTable.driverApprovalStatus, "approved")),
         ));
       const now = Date.now();
       return {
@@ -963,7 +966,7 @@ export class PostgresStore implements Store {
       }
       if (passenger.role !== "passenger") throw new AppError(403, "passenger mode is required", "FORBIDDEN");
       const driver = users.find(user => user.id === quote.driverId);
-      if (!driver || driver.role !== "driver" || (REQUIRE_DRIVER_APPROVAL && driver.driverApprovalStatus !== "approved")) {
+      if (!driver || driver.role !== "driver" || !hasRequiredDriverApproval(driver, REQUIRE_DRIVER_APPROVAL)) {
         throw new AppError(409, "Selected driver is no longer available", "QUOTE_CHANGED");
       }
       const [routeRow] = await tx.select().from(routesTable)
@@ -1102,7 +1105,7 @@ export class PostgresStore implements Store {
         orderInput = { ...input, ...buildRouteOrder(liveRoute, selection, input.pickupLocation), status: "searching" };
       }
       const approvedIds = new Set(users.filter(user => user.role === "driver" &&
-        (!REQUIRE_DRIVER_APPROVAL || user.driverApprovalStatus === "approved")).map(user => user.id));
+        hasRequiredDriverApproval(user, REQUIRE_DRIVER_APPROVAL)).map(user => user.id));
       const now = Date.now();
       const candidate = orderedOfferCandidates(
         { ...orderInput, attemptedDriverIds: [] },
@@ -1235,7 +1238,7 @@ export class PostgresStore implements Store {
         const [driver] = previousDriverId ? await tx.select().from(usersTable)
           .where(eq(usersTable.id, previousDriverId)).for("share").limit(1) : [];
         const approved = Boolean(driver && driver.role === "driver" &&
-          (!REQUIRE_DRIVER_APPROVAL || driver.driverApprovalStatus === "approved"));
+          hasRequiredDriverApproval(driver, REQUIRE_DRIVER_APPROVAL));
         if (rejectingDriverId !== undefined && expectedSessionVersion !== undefined) {
           if (!driver || driver.id !== rejectingDriverId || driver.sessionVersion !== expectedSessionVersion) {
             throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
@@ -1287,7 +1290,7 @@ export class PostgresStore implements Store {
         ).orderBy(asc(usersTable.id)).for("share")
         : [];
       const approvedIds = new Set(liveDrivers.filter(driver => driver.role === "driver" &&
-        (!REQUIRE_DRIVER_APPROVAL || driver.driverApprovalStatus === "approved")).map(driver => driver.id));
+        hasRequiredDriverApproval(driver, REQUIRE_DRIVER_APPROVAL)).map(driver => driver.id));
       if (rejectingDriverId !== undefined && expectedSessionVersion !== undefined) {
         const actor = liveDrivers.find(driver => driver.id === rejectingDriverId);
         if (!actor || actor.sessionVersion !== expectedSessionVersion) {
@@ -1363,7 +1366,7 @@ export class PostgresStore implements Store {
       if (expectedSessionVersion !== undefined && (!driver || driver.sessionVersion !== expectedSessionVersion)) {
         throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
       }
-      if (!driver || driver.role !== "driver" || (REQUIRE_DRIVER_APPROVAL && driver.driverApprovalStatus !== "approved")) {
+      if (!driver || driver.role !== "driver" || !hasRequiredDriverApproval(driver, REQUIRE_DRIVER_APPROVAL)) {
         if (order.externalPickup) {
           if (entry) {
             const released = releaseQueueOffer(entry, order);
@@ -1474,7 +1477,7 @@ export class PostgresStore implements Store {
         }
         const role = actorId === order.passengerId ? "passenger" : "driver";
         if (actor.role !== role) throw new AppError(403, `${role} mode is required`, "FORBIDDEN");
-        if (role === "driver" && REQUIRE_DRIVER_APPROVAL && actor.driverApprovalStatus !== "approved") {
+        if (role === "driver" && !hasRequiredDriverApproval(actor, REQUIRE_DRIVER_APPROVAL)) {
           throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");
         }
       }

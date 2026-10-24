@@ -1,3 +1,4 @@
+import { hasRequiredDriverApproval } from "../utils/driverVehicle";
 import type { Request, Response } from "express";
 import { store } from "../store";
 import type { Coordinates, DriverQueueStatus } from "../types/domain";
@@ -36,8 +37,7 @@ function assertDriver(request: Request): string {
     );
   }
   if (
-    REQUIRE_DRIVER_APPROVAL &&
-    request.auth.user.driverApprovalStatus !== "approved"
+    !hasRequiredDriverApproval(request.auth.user, REQUIRE_DRIVER_APPROVAL)
   ) {
     throw new AppError(
       403,
