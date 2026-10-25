@@ -64,7 +64,7 @@ export async function createExternalPickupQuote(request: Request, response: Resp
     quote: {
       quote_id: quote.quoteId, order_id: quote.orderId ?? quote.quoteId, driver_id: quote.driverId,
       currency: "KZT", base_fare_kzt: quote.baseFareKzt,
-      pickup_surcharge_kzt: quote.pickupSurchargeKzt, total_kzt: quote.totalKzt,
+      pickup_surcharge_kzt: quote.pickupSurchargeKzt, total_kzt: quote.totalKzt, total: quote.totalKzt,
       road_distance_meters: quote.roadDistanceMeters, road_duration_seconds: quote.roadDurationSeconds,
       price_per_km_kzt: quote.settings.pricePerKmKzt, fare_rounding: quote.settings.fareRounding,
       expires_at: quote.expiresAt,

@@ -239,7 +239,7 @@ export function buildConfirmedExternalOrder(quote: ExternalPickupQuote, route: R
   return {
     ...details, id: existing?.id ?? verified.quoteId, passengerId: passenger.id, passengerPhone: passenger.phoneNumber,
     pickupLocation: structuredClone(verified.pickupLocation), seats: verified.seats, status: "searching",
-    fare: { ...details.fare, totalKzt: verified.totalKzt }, driverId: undefined,
+    fare: { ...details.fare, total: verified.totalKzt, totalKzt: verified.totalKzt }, driverId: undefined,
     offeredDriverId: verified.driverId, offerExpiresAt: now + OFFER_TIMEOUT_MS, seatLockExpiresAt: undefined,
     attemptedDriverIds: [...new Set([...(existing?.attemptedDriverIds ?? []), verified.driverId])],
     createdAt: existing?.createdAt ?? timestamp, updatedAt: existing ? nextOrderUpdatedAt(existing.updatedAt, now) : timestamp,

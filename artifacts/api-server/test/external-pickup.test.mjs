@@ -1203,3 +1203,83 @@ test("missing or unsafe routing configuration fails closed and never leaks the c
     }
   } finally { process.env.TEZJET_OSRM_URL = configured; }
 });
+
+
+function assertCanonicalExternalFare(fare, total = 1750) {
+  assert.equal(fare.currency, "KZT");
+  assert.equal(fare.totalKzt, total);
+  assert.equal(fare.total, total, "Canonical total must include the one-way pickup surcharge, not only the base fare.");
+  assert.equal(fare.pricePerStopKzt, 500);
+  assert.equal(fare.pricePerStop, 500);
+}
+
+test("canonical external totals include surcharge once and survive replay and the ride lifecycle in both adapters", async t => {
+  for (const adapter of [store, new production.MemoryStore()]) await t.test(adapter.constructor.name, async child => {
+    const f = await fixture(child, adapter), initial = await f.configured();
+    const settings = {
+      enabled: true, serviceRadiusMeters: policy.service_radius_meters, pricePerKmKzt: policy.price_per_km_kzt,
+      gpsMaxAgeSeconds: policy.gps_max_age_seconds, quoteTtlSeconds: policy.quote_ttl_seconds,
+      pickupGraceSeconds: policy.pickup_grace_seconds, maxPickupSeconds: policy.max_pickup_seconds, fareRounding: policy.fare_rounding,
+    };
+    const route = await adapter.updateExternalPickupSettings(initial.id, { expectedUpdatedAt: initial.updatedAt, settings });
+    const driver = await f.planned(route), passenger = await f.createUser("passenger");
+    const joined = await f.storedJoin(driver, route);
+    const quoted = await signedStoreQuote(adapter, driver, passenger, route, { seats: 2 });
+    assert.equal(quoted.baseFareKzt, 1500);
+    assert.equal(quoted.pickupSurchargeKzt, 250);
+    const first = await adapter.confirmExternalPickupQuote(quoted, passenger.user.id, passenger.user.sessionVersion);
+    assert.equal(first.created, true);
+    assertCanonicalExternalFare(first.order.fare);
+    const duplicate = await adapter.confirmExternalPickupQuote(quoted, passenger.user.id, passenger.user.sessionVersion);
+    assert.equal(duplicate.created, false);
+    assert.equal(duplicate.changed, false);
+    assert.equal(duplicate.order.id, first.order.id);
+    assert.deepEqual(duplicate.order.fare, first.order.fare);
+    const observer = adapter instanceof production.PostgresStore ? otherStore : adapter;
+    assertCanonicalExternalFare((await observer.getOrder(first.order.id)).fare);
+    assert.ok(await adapter.acceptOrderOffer(first.order.id, driver.user.id));
+    assert.ok(await adapter.transitionOrder(first.order.id, driver.user.id, "arrived_at_c"));
+    assert.ok(await adapter.transitionOrder(first.order.id, driver.user.id, "boarded_waiting"));
+    await adapter.departQueue(driver.user.id, joined.collectionState.enrollmentId, driver.user.sessionVersion);
+    assert.ok(await adapter.transitionOrder(first.order.id, driver.user.id, "completed"));
+    const historical = await observer.getOrder(first.order.id);
+    assert.equal(historical.status, "completed");
+    assert.deepEqual(historical.fare, first.order.fare);
+    assertCanonicalExternalFare(historical.fare);
+    assert.equal((await capacityInvariant(observer, driver, 4)).availableSeats, 4);
+  });
+});
+
+test("HTTP external quote and frozen order history expose identical canonical and legacy totals after policy edits", async t => {
+  const { f, route, driver, passenger } = await setup(t);
+  const quoted = await quote(passenger, route, { seats: 2 });
+  assert.equal(quoted.quote.base_fare_kzt, 1500);
+  assert.equal(quoted.quote.pickup_surcharge_kzt, 250);
+  assert.equal(quoted.quote.total_kzt, 1750);
+  assert.equal(quoted.quote.total, 1750);
+  assert.equal(quoted.quote.currency, "KZT");
+  const confirmed = await confirm(passenger, quoted);
+  assert.equal(confirmed.status, 201, JSON.stringify(confirmed.body));
+  const order = confirmed.body.order;
+  assertCanonicalExternalFare(order.fare);
+  await accept(driver, order);
+  const frozen = structuredClone((await otherStore.getOrder(order.id)).fare);
+  await configure(f, route, { price_per_km_kzt: 900, enabled: false });
+  const replay = await confirm(passenger, quoted);
+  assert.equal(replay.status, 200, JSON.stringify(replay.body));
+  assert.deepEqual(replay.body.order.fare, frozen);
+  await move(driver, externalTarget);
+  await arrive(driver, order); await board(driver, order);
+  assert.equal((await depart(driver)).status, 200);
+  const completed = await request(`/orders/${order.id}/status`, { token: driver.token, method: "PATCH", body: { status: "completed" } });
+  assert.equal(completed.status, 200, JSON.stringify(completed.body));
+  assertCanonicalExternalFare(completed.body.order.fare);
+  const historical = await request(`/orders/${order.id}`, { token: passenger.token });
+  assert.equal(historical.status, 200, JSON.stringify(historical.body));
+  assert.deepEqual(historical.body.order.fare, frozen);
+  const listed = await request("/orders", { token: passenger.token });
+  assert.equal(listed.status, 200, JSON.stringify(listed.body));
+  assert.deepEqual(listed.body.orders.find(value => value.id === order.id).fare, frozen);
+  assert.deepEqual((await otherStore.getOrder(order.id)).fare, frozen);
+  assert.equal((await capacityInvariant(otherStore, driver, 4)).availableSeats, 4);
+});

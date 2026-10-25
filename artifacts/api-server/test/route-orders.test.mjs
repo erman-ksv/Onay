@@ -44,6 +44,8 @@ before(async () => {
         'export { pool } from "../../lib/db/src/index";',
         'export { store as runtimeStore } from "./src/store";',
         'export { createAccessToken } from "./src/utils/token";',
+        'export { serializeOrder } from "./src/utils/serialize";',
+        'export { withCanonicalKztFare } from "./src/utils/fareMoney";',
       ].join("\n"),
       resolveDir: apiRoot, loader: "ts",
     },
@@ -1316,4 +1318,99 @@ test("real HTTP intermediate creation and acceptance recheck revoked sessions af
     await blocker.query("ROLLBACK"); blocker.release();
     if (pending) await pending;
   }
+});
+
+
+function assertCanonicalKztFare(fare, total = 1470, pricePerStop = 735) {
+  assert.equal(fare.currency, "KZT");
+  assert.equal(fare.total, total);
+  assert.equal(fare.totalKzt, total, "Legacy readers retain the identical KZT total.");
+  assert.equal(fare.pricePerStop, pricePerStop);
+  assert.equal(fare.pricePerStopKzt, pricePerStop, "Legacy tariff readers remain compatible.");
+}
+
+test("canonical KZT aliases reject contradictions and invalid amounts without changing a frozen fare", () => {
+  const legacy = Object.freeze({ currency: "KZT", totalKzt: 1470, pricePerStopKzt: 735 });
+  const enriched = production.withCanonicalKztFare(legacy);
+  assertCanonicalKztFare(enriched);
+  assert.notEqual(enriched, legacy);
+  assert.deepEqual(legacy, { currency: "KZT", totalKzt: 1470, pricePerStopKzt: 735 });
+  assert.deepEqual(production.withCanonicalKztFare(enriched), enriched);
+  for (const patch of [
+    { currency: "UZS" }, { currency: "USD" }, { total: 1471 }, { pricePerStop: 736 },
+    { total: null }, { pricePerStop: "735" },
+    ...[-1, 0.1, Number.MAX_SAFE_INTEGER + 1, NaN, Infinity, "1470"].map(totalKzt => ({ totalKzt })),
+    ...[-1, 0.1, Number.MAX_SAFE_INTEGER + 1, NaN, Infinity, "735"].map(pricePerStopKzt => ({ pricePerStopKzt })),
+  ]) assert.throws(() => production.withCanonicalKztFare({ ...legacy, ...patch }), error => error.code === "INVALID_FARE");
+  const zero = production.withCanonicalKztFare({ currency: "KZT", totalKzt: 0, pricePerStopKzt: 0 });
+  assertCanonicalKztFare(zero, 0, 0);
+});
+
+test("canonical KZT totals agree across legacy estimate, configured availability and persisted orders", async t => {
+  await t.test("HTTP legacy estimate", async child => {
+    const f = await fixture(child), route = await f.configured(), passenger = await f.createUser("passenger");
+    const result = await request("/fares/estimate", { token: passenger.token, method: "POST", body: {
+      route_id: route.id, pickup_stop: "A", destination_stop: "B",
+    } });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assertCanonicalKztFare(result.body.fare);
+    await f.enqueue(route);
+    const available = await availabilityHttp(passenger, route);
+    assert.equal(available.status, 200, JSON.stringify(available.body));
+    assertCanonicalKztFare(available.body.fare);
+    const created = await createHttp(passenger, route);
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    assertCanonicalKztFare(created.body.order.fare);
+    assertCanonicalKztFare((await otherStore.getOrder(created.body.order.id)).fare);
+  });
+  for (const adapter of [store, new production.MemoryStore()]) await t.test(adapter.constructor.name, async child => {
+    await adapter.initialize();
+    const f = await fixture(child, adapter), route = await f.configured(), passenger = await f.createUser("passenger");
+    await f.enqueue(route);
+    const available = await adapter.getRouteOrderAvailability(choiceInput(route), 2);
+    assert.equal(available.available, true);
+    assertCanonicalKztFare(available.fare);
+    const created = await createStored(f, passenger, route);
+    assert.ok(created);
+    assertCanonicalKztFare(created.fare);
+    const observer = adapter instanceof production.PostgresStore ? otherStore : adapter;
+    assert.deepEqual((await observer.getOrder(created.id)).fare, created.fare);
+  });
+});
+
+test("historical KZT reads add neutral aliases from the frozen fare without rewriting data or repricing", async t => {
+  for (const adapter of [store, new production.MemoryStore()]) await t.test(adapter.constructor.name, async child => {
+    await adapter.initialize();
+    const f = await fixture(child, adapter), route = await f.configured(), passenger = await f.createUser("passenger");
+    const pickupStop = route.stops[0], destinationStop = route.stops.at(-1);
+    const legacyFare = { currency: "KZT", routeId: route.id, pickupStop, destinationStop,
+      pickupPosition: pickupStop.position, destinationPosition: destinationStop.position,
+      distanceStops: 2, pricePerStopKzt: 735, minimumFareApplied: false,
+      stops: [pickupStop, destinationStop], totalKzt: 1470, calculatedAt: "2026-01-01T00:00:00.000Z" };
+    // Insert an actual legacy-shaped terminal row, as an older application did;
+    // do not mock SQL or use the current fare calculator to manufacture aliases.
+    const historical = await adapter.createOrder({ passengerId: passenger.user.id,
+      passengerPhone: passenger.user.phoneNumber, pickupPoint: "C", pickupLocation: legacyLocation,
+      routeStops: legacyFare.stops, fare: structuredClone(legacyFare), destination: destinationStop.name,
+      seats: 1, status: "completed" }, passenger.user.sessionVersion);
+    await adapter.updateRoute(route.id, { pricePerStopKzt: 9999 });
+    assert.equal((await adapter.getRoute(route.id)).pricePerStopKzt, 9999);
+    const observer = adapter instanceof production.PostgresStore ? otherStore : adapter;
+    const before = structuredClone(await observer.getOrder(historical.id));
+    const response = production.serializeOrder(before);
+    assertCanonicalKztFare(response.fare);
+    assert.equal(response.fare.calculatedAt, legacyFare.calculatedAt);
+    assert.deepEqual(before.fare, legacyFare, "Serialization must not mutate even a MemoryStore reference.");
+    assert.deepEqual((await observer.getOrder(historical.id)).fare, legacyFare);
+    if (adapter instanceof production.PostgresStore) {
+      const read = await request(`/orders/${historical.id}`, { token: passenger.token });
+      assert.equal(read.status, 200, JSON.stringify(read.body));
+      assertCanonicalKztFare(read.body.order.fare);
+      const listed = await request("/orders", { token: passenger.token });
+      assert.equal(listed.status, 200, JSON.stringify(listed.body));
+      assertCanonicalKztFare(listed.body.orders.find(order => order.id === historical.id).fare);
+      const { rows } = await database.query("SELECT payload->'fare' AS fare FROM tezjet_orders WHERE id=$1", [historical.id]);
+      assert.deepEqual(rows[0].fare, legacyFare, "HTTP reads must not silently migrate or reprice the stored JSON snapshot.");
+    }
+  });
 });

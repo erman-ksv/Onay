@@ -1,6 +1,7 @@
 import type { FareQuote, RouteDefinition, RouteStop } from "../types/domain";
 import { store } from "../store";
 import { AppError } from "./errors";
+import { withCanonicalKztFare } from "./fareMoney";
 
 export interface FareRequest {
   routeId?: unknown;
@@ -101,7 +102,7 @@ export async function calculateRouteFare(input: FareRequest = {}): Promise<FareQ
   const pickupStop = nearestStop(route, pickupPosition);
   const destinationStop = nearestStop(route, destinationPosition);
 
-  return {
+  return withCanonicalKztFare({
     currency: route.currency,
     routeId: route.id,
     pickupStop,
@@ -116,7 +117,7 @@ export async function calculateRouteFare(input: FareRequest = {}): Promise<FareQ
       : [pickupStop, destinationStop],
     totalKzt: distanceStops * route.pricePerStopKzt,
     calculatedAt: new Date().toISOString(),
-  };
+  });
 }
 
 export async function getRouteStops(routeId = "pyatak"): Promise<RouteStop[]> {
