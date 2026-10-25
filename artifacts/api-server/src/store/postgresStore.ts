@@ -1461,11 +1461,13 @@ export class PostgresStore implements Store {
     return this.transitionOrderInternal(orderId, adminId, "cancelled", expectedStatus, expectedSessionVersion, true);
   }
 
-  async listAdminAuditEvents(orderId?: string, limit = 50): Promise<AdminAuditEvent[]> {
+  async listAdminAuditEvents(orderId?: string, limit = 50, driverId?: string): Promise<AdminAuditEvent[]> {
     const count = boundedInteger(limit, "limit", 1, 100);
     const { db, adminAuditEventsTable: events } = await this.database();
-    return await db.select().from(events).where(orderId ? eq(events.orderId, orderId) : undefined)
-      .orderBy(desc(events.createdAt), desc(events.id)).limit(count) as AdminAuditEvent[];
+    const rows = await db.select().from(events).where(and(orderId ? eq(events.orderId, orderId) : undefined, driverId ? eq(events.driverId, driverId) : undefined))
+      .orderBy(desc(events.createdAt), desc(events.id)).limit(count);
+    return rows.map(({ orderId, driverId, vehicleRevision, ...event }) => ({ ...event,
+      ...(orderId ? { orderId } : {}), ...(driverId ? { driverId } : {}), ...(vehicleRevision ? { vehicleRevision } : {}) } as AdminAuditEvent));
   }
 
   private async transitionOrderInternal(
@@ -1637,12 +1639,34 @@ export class PostgresStore implements Store {
   }
 
   async setDriverApproval(userId: string, status: DriverApprovalStatus, expectedVehicleRevision?: string | null): Promise<User | undefined> {
-    const { db, usersTable } = await this.database();
+    return this.setDriverApprovalInternal(userId, status, expectedVehicleRevision);
+  }
+
+  async setDriverApprovalAsAdmin(userId: string, status: DriverApprovalStatus, expectedVehicleRevision: string | null | undefined, adminId: string, expectedSessionVersion: number): Promise<User | undefined> {
+    return this.setDriverApprovalInternal(userId, status, expectedVehicleRevision, { adminId, expectedSessionVersion });
+  }
+
+  private async setDriverApprovalInternal(userId: string, status: DriverApprovalStatus, expectedVehicleRevision?: string | null,
+    audit?: { adminId: string; expectedSessionVersion: number }): Promise<User | undefined> {
+    const { db, usersTable, adminAuditEventsTable } = await this.database();
     return db.transaction(async tx => {
-      const [row] = await tx.select().from(usersTable).where(eq(usersTable.id, userId)).for("update").limit(1);
+      // Canonical order prevents reciprocal account locks from deadlocking.
+      const rows = await tx.select().from(usersTable).where(inArray(usersTable.id, audit ? [userId, audit.adminId] : [userId]))
+        .orderBy(asc(usersTable.id)).for("update");
+      if (audit) {
+        const actor = rows.find(row => row.id === audit.adminId);
+        if (!actor || audit.expectedSessionVersion === undefined || actor.sessionVersion !== audit.expectedSessionVersion) throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+        if (actor.role !== "admin") throw new AppError(403, "Administrator role is required", "FORBIDDEN");
+      }
+      const row = rows.find(row => row.id === userId);
       if (!row || !(row.roles as string[]).includes("driver")) return undefined;
-      assertVehicleReview(asUser(row as unknown as Record<string, unknown>), expectedVehicleRevision);
+      const driver = asUser(row as unknown as Record<string, unknown>);
+      assertVehicleReview(driver, expectedVehicleRevision);
+      const previous = driver.driverApprovalStatus ?? "pending";
+      if (audit && previous === status) return driver;
       const [updated] = await tx.update(usersTable).set({ driverApprovalStatus: status }).where(eq(usersTable.id, userId)).returning();
+      if (audit) await tx.insert(adminAuditEventsTable).values({ id: randomUUID(), actorId: audit.adminId, action: "driver.approval_changed", driverId: userId,
+        vehicleRevision: driver.driverVehicle?.revision ?? null, fromStatus: previous, toStatus: status, createdAt: new Date().toISOString() });
       return asUser(updated as unknown as Record<string, unknown>);
     });
   }

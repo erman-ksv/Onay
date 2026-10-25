@@ -741,9 +741,9 @@ class MemoryStore implements Store {
     return this.transitionOrderInternal(orderId, adminId, "cancelled", expectedStatus, expectedSessionVersion, true);
   }
 
-  listAdminAuditEvents(orderId?: string, limit = 50): AdminAuditEvent[] {
+  listAdminAuditEvents(orderId?: string, limit = 50, driverId?: string): AdminAuditEvent[] {
     const count = boundedInteger(limit, "limit", 1, 100);
-    return structuredClone(this.adminAuditEvents.filter(event => !orderId || event.orderId === orderId)
+    return structuredClone(this.adminAuditEvents.filter(event => (!orderId || event.orderId === orderId) && (!driverId || event.driverId === driverId))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)).slice(0, count));
   }
 
@@ -850,6 +850,21 @@ class MemoryStore implements Store {
     }
     assertVehicleReview(user, expectedVehicleRevision);
     user.driverApprovalStatus = status;
+    return structuredClone(user);
+  }
+
+  setDriverApprovalAsAdmin(userId: string, status: DriverApprovalStatus, expectedVehicleRevision: string | null | undefined, adminId: string, expectedSessionVersion: number): User | undefined {
+    if (expectedSessionVersion === undefined) throw new AppError(401, "Session is required", "UNAUTHORIZED");
+    this.requireCurrentRole(adminId, "admin", expectedSessionVersion);
+    const user = this.users.get(userId);
+    if (!user || !user.roles.includes("driver")) return undefined;
+    assertVehicleReview(user, expectedVehicleRevision);
+    const previous = user.driverApprovalStatus ?? "pending";
+    if (previous !== status) {
+      const event: AdminAuditEvent = { id: randomUUID(), actorId: adminId, action: "driver.approval_changed", driverId: userId,
+        ...(user.driverVehicle ? { vehicleRevision: user.driverVehicle.revision } : {}), fromStatus: previous, toStatus: status, createdAt: new Date().toISOString() };
+      user.driverApprovalStatus = status; this.adminAuditEvents.push(event);
+    }
     return structuredClone(user);
   }
 

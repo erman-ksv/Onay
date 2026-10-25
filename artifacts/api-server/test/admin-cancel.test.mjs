@@ -61,6 +61,7 @@ before(async () => {
   }
   // Execute the actual migration in this schema, including append-only triggers.
   await database.query(await readFile(new URL('../../../lib/db/drizzle/0009_admin_audit_events.sql', import.meta.url), 'utf8'));
+  await database.query(await readFile(new URL('../../../lib/db/drizzle/0010_driver_approval_audit.sql', import.meta.url), 'utf8'));
   store = new production.PostgresStore();
   otherStore = new production.PostgresStore();
   assert.ok(production.runtimeStore instanceof production.PostgresStore, "The HTTP app must use the actual durable adapter.");
@@ -261,4 +262,68 @@ test('PostgreSQL migration prevents UPDATE DELETE and TRUNCATE of audit history'
     'TRUNCATE tezjet_admin_audit_events',
   ]) await assert.rejects(database.query(statement), error => error.code === '55000');
   assert.deepEqual(await store.listAdminAuditEvents(f.order.id), before);
+});
+
+test('HTTP driver approval writes one event per actual change and supports driver filtering', async t => {
+  const f = await fixture(t);
+  async function review(status, token = f.admin.token) {
+    const response = await fetch(`${baseUrl}/admin/drivers/${f.driver.id}/approval`, { method: 'PATCH',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ status }) });
+    return { status: response.status, body: await response.json() };
+  }
+  assert.equal((await review('rejected', f.passenger.token)).status, 403);
+  assert.equal((await review('rejected', f.driver.token)).status, 403);
+  assert.equal((await review('bad')).status, 400);
+  assert.equal((await review('rejected')).status, 200);
+  assert.equal((await review('rejected')).status, 200);
+  assert.equal((await review('approved')).status, 200);
+  const response = await fetch(`${baseUrl}/admin/audit-events?driver_id=${f.driver.id}`, { headers: { authorization: `Bearer ${f.admin.token}` } });
+  assert.equal(response.status, 200); const { events } = await response.json(); assert.equal(events.length, 2);
+  assert.ok(events.every(event => event.action === 'driver.approval_changed' && event.driverId === f.driver.id && event.actorId === f.admin.id));
+  assert.deepEqual(events.map(event => `${event.fromStatus}:${event.toStatus}`).sort(), ['approved:rejected', 'rejected:approved']);
+  assert.ok(events.every(event => !Object.hasOwn(event, 'orderId') && !Object.hasOwn(event, 'vehicleRevision')));
+  assert.equal((await store.listAdminAuditEvents(f.order.id)).length, 0);
+});
+
+for (const kind of ['PostgreSQL', 'Memory']) test(`${kind} audited approval rechecks authority and preserves revision-bound review`, async t => {
+  const adapter = kind === 'PostgreSQL' ? store : new production.MemoryStore(), f = await fixture(t, adapter);
+  await assert.rejects(Promise.resolve().then(() => adapter.setDriverApprovalAsAdmin(f.driver.id, 'rejected', undefined, f.passenger.id, f.passenger.sessionVersion)), error => error.code === 'FORBIDDEN');
+  await adapter.invalidateSessions(f.admin.id);
+  await assert.rejects(Promise.resolve().then(() => adapter.setDriverApprovalAsAdmin(f.driver.id, 'rejected', undefined, f.admin.id, f.admin.sessionVersion)), error => error.code === 'UNAUTHORIZED');
+  assert.equal((await adapter.getUser(f.driver.id)).driverApprovalStatus, 'approved');
+  assert.deepEqual(await adapter.listAdminAuditEvents(undefined, 50, f.driver.id), []);
+  const currentAdmin = await adapter.getUser(f.admin.id);
+  await adapter.transitionOrder(f.order.id, f.passenger.id, 'cancelled', 'searching', f.passenger.sessionVersion);
+  await adapter.leaveQueue(f.driver.id);
+  const vehicle = await adapter.setDriverVehicle(f.driver.id, { make: 'Chevrolet', model: 'Cobalt', plateNumber: '01A123BC', seatCapacity: 4, expectedRevision: null }, f.driver.sessionVersion);
+  const revision = vehicle.driverVehicle.revision;
+  await assert.rejects(Promise.resolve().then(() => adapter.setDriverApprovalAsAdmin(f.driver.id, 'approved', 'stale-revision', currentAdmin.id, currentAdmin.sessionVersion)));
+  await adapter.setDriverApprovalAsAdmin(f.driver.id, 'approved', revision, currentAdmin.id, currentAdmin.sessionVersion);
+  const [event] = await adapter.listAdminAuditEvents(undefined, 50, f.driver.id);
+  assert.equal(event.vehicleRevision, revision); assert.equal(event.fromStatus, 'pending'); assert.equal(event.toStatus, 'approved');
+});
+
+test('PostgreSQL failed approval audit insertion rolls back the driver status', async t => {
+  const f = await fixture(t);
+  await database.query(`CREATE FUNCTION fail_driver_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.driver_id='${f.driver.id}' THEN RAISE EXCEPTION 'injected driver audit failure'; END IF; RETURN NEW; END $$`);
+  await database.query('CREATE TRIGGER fail_driver_audit BEFORE INSERT ON tezjet_admin_audit_events FOR EACH ROW EXECUTE FUNCTION fail_driver_audit()');
+  try {
+    await assert.rejects(store.setDriverApprovalAsAdmin(f.driver.id, 'rejected', undefined, f.admin.id, f.admin.sessionVersion));
+    assert.equal((await store.getUser(f.driver.id)).driverApprovalStatus, 'approved');
+    assert.deepEqual(await store.listAdminAuditEvents(undefined, 50, f.driver.id), []);
+  } finally { await database.query('DROP TRIGGER fail_driver_audit ON tezjet_admin_audit_events'); await database.query('DROP FUNCTION fail_driver_audit()'); }
+});
+
+test('PostgreSQL duplicate reviews overlap under real locks and create one event', async t => {
+  const f = await fixture(t), blocker = await adminPool.connect(); let pending;
+  try {
+    await blocker.query('BEGIN'); await blocker.query(`SELECT id FROM "${schema}".tezjet_users WHERE id=$1 FOR UPDATE`, [f.driver.id]);
+    pending = Promise.allSettled([
+      store.setDriverApprovalAsAdmin(f.driver.id, 'rejected', undefined, f.admin.id, f.admin.sessionVersion),
+      otherStore.setDriverApprovalAsAdmin(f.driver.id, 'rejected', undefined, f.admin.id, f.admin.sessionVersion),
+    ]);
+    await waitForLocks(2); await blocker.query('COMMIT');
+    const result = await pending; assert.ok(result.every(item => item.status === 'fulfilled' && item.value.driverApprovalStatus === 'rejected'));
+    assert.equal((await store.listAdminAuditEvents(undefined, 50, f.driver.id)).length, 1);
+  } finally { await blocker.query('ROLLBACK'); blocker.release(); if (pending) await pending; }
 });
