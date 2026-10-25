@@ -32,6 +32,10 @@ class PassengerStopsQA:
         self.checks, self.console, self.page_errors, self.requests = [], [], [], []
         self.secrets, self.drivers = set(), []
         self.admin_token = self.passenger_token = self.order_id = None
+        self.expected_network_console = []
+        self.disconnect_injected = False
+        self.recovery_lookup_path = None
+        self.closed_request_key = None
         self.route = None
         page.on("console", self.on_console)
         page.on("pageerror", lambda error: self.page_errors.append(self.safe(str(error))))
@@ -55,6 +59,17 @@ class PassengerStopsQA:
         return value
 
     def on_console(self, message):
+        # Account only for the single explicitly injected transport failure and
+        # the exact missing-receipt lookup it causes. Other errors still fail QA.
+        path = urlparse(message.location.get("url", "")).path
+        if message.type == "error" and self.disconnect_injected:
+            expected = ((path == "/api/orders/route" and "net::ERR_" in message.text and
+                not any(item["kind"] == "transport" for item in self.expected_network_console)) or
+                (path == self.recovery_lookup_path and "404" in message.text and
+                not any(item["kind"] == "lookup404" for item in self.expected_network_console)))
+            if expected:
+                self.expected_network_console.append({"kind": "transport" if path == "/api/orders/route" else "lookup404", "text": self.safe(message.text)})
+                return
         if message.type in {"warning", "error"}:
             self.console.append({"type": message.type, "text": self.safe(message.text)})
 
@@ -268,6 +283,7 @@ class PassengerStopsQA:
             "Actual Expo Location must submit emulated GPS at selected stop D")
         order = result["order"]
         self.order_id = order["id"]
+        self.successful_request_key = response.request.header_value("Idempotency-Key")
         first_b = next(driver for driver in self.drivers if driver["direction"] == "b_to_a")
         require(order["offered_driver_id"] == first_b["id"], "Real FIFO must select the first driver in the B lane")
         require(order["fare"]["pickupStop"]["id"] == self.stop("D")["id"] and order["fare"]["destinationStop"]["id"] == self.stop("C")["id"], "Persisted order must retain exact selected stops")
@@ -278,6 +294,79 @@ class PassengerStopsQA:
         self.expect(self.page.get_by_text("Куда: " + self.stop("C")["name"], exact=True)).to_be_visible()
         self.screenshot("mobile-390-booked-D-to-C")
         self.passed("Actual passenger POST persists D-to-C GPS, fare and FIFO assignment and displays the real stop names")
+
+    def recover_unsubmitted_booking(self):
+        captured = {}
+        pattern = "**/api/orders/route"
+
+        def disconnect(route):
+            if route.request.method != "POST":
+                route.continue_()
+                return
+            require(not captured, "The app must not automatically retry a booking POST")
+            captured["key"] = route.request.header_value("Idempotency-Key")
+            captured["body"] = route.request.post_data_json
+            self.disconnect_injected = True
+            self.recovery_lookup_path = "/api/orders/route/requests/" + captured["key"]
+            route.abort("connectionfailed")
+
+        self.page.route(pattern, disconnect)
+        try:
+            with self.page.expect_event("requestfailed", predicate=lambda request:
+                    urlparse(request.url).path == "/api/orders/route" and request.method == "POST"):
+                self.control("route-book-trip").click()
+        finally:
+            self.page.unroute(pattern, disconnect)
+        require(bool(re.fullmatch(r"[0-9a-f-]{36}", captured.get("key", ""))), "An actual minted key must identify the interrupted write")
+        self.expect(self.control("route-refresh-after-submit")).to_be_visible()
+        self.expect(self.control("route-book-trip")).to_be_disabled()
+        self.page.reload(wait_until="domcontentloaded")
+        self.expect(self.control("route-refresh-after-submit")).to_be_visible()
+        self.expect(self.control("route-book-trip")).to_be_disabled()
+        path = "/orders/route/requests/" + captured["key"] + "/resolve"
+        with self.response_for(path, "POST") as pending:
+            self.control("route-refresh-after-submit").click()
+        require(pending.value.status == 200 and pending.value.json() == {"state": "closed", "request_key": captured["key"]},
+            "Recovery must obtain a real durable closure, not guess from404")
+        self.expect(self.control("route-refresh-after-submit")).to_have_count(0)
+        self.expect(self.control("route-book-trip")).to_be_disabled()
+        orders = self.expected(api_request(self.args.api_url, "/orders", token=self.passenger_token), 200, "Inspect interrupted passenger orders")["orders"]
+        require(orders == [], "Transport interruption and resolution must not create a ride")
+        late_request = Request(self.args.api_url.rstrip("/") + "/api/orders/route", method="POST",
+            data=json.dumps(captured["body"]).encode(), headers={"Content-Type": "application/json",
+                "Authorization": "Bearer " + self.passenger_token, "Idempotency-Key": captured["key"]})
+        try:
+            late_response = urlopen(late_request, timeout=15)
+        except HTTPError as error:
+            late_response = error
+        with late_response:
+            late = self.expected((late_response.status, json.loads(late_response.read().decode())),
+                409, "Delayed original booking must be fenced")
+        require(late.get("error", {}).get("code") == "ORDER_REQUEST_CLOSED", "A delayed original POST must not become another booking")
+        self.closed_request_key = captured["key"]
+        self.passed("Interrupted actual booking survives reload, resolves through the server fence and rejects its delayed original POST")
+        # A new user action must obtain a new quote/key after successful closure.
+        self.control("passenger-route-" + self.route["id"]).click()
+        self.control("passenger-direction-b_to_a").click()
+        self.choose("pickup", "D")
+        self.choose("destination", "C")
+        self.control("route-seats-plus").click()
+        self.reverse_fare = self.check_quote("b_to_a", "D", "C", 2)
+        self.expect(self.control("route-book-trip")).to_be_enabled()
+        self.passed("Server-confirmed absence allows a fresh explicit quote without reusing the interrupted booking")
+
+    def resolve_committed_booking(self):
+        require(bool(self.successful_request_key), "The successful booking must retain its actual request key")
+        require(self.successful_request_key != self.closed_request_key, "A replacement booking must mint a new key after durable closure")
+        result = self.expected(api_request(self.args.api_url,
+            "/orders/route/requests/" + self.successful_request_key + "/resolve", "POST", {}, self.passenger_token),
+            200, "Resolve a committed booking")
+        require(result.get("state") == "created" and result.get("request_key") == self.successful_request_key and
+            result.get("order", {}).get("id") == self.order_id, "Resolution must restore the committed ride without cancelling it")
+        orders = self.expected(api_request(self.args.api_url, "/orders", token=self.passenger_token), 200, "Inspect final passenger orders")["orders"]
+        require(len(orders) == 1 and orders[0]["id"] == self.order_id and orders[0]["status"] == "searching",
+            "Closure/rebooking/recovery must leave exactly one live ride")
+        self.passed("Resolving the committed replacement restores exactly one live order without cancellation or another reservation")
 
     def cleanup(self):
         failures = []
@@ -302,7 +391,9 @@ class PassengerStopsQA:
         self.passenger_login()
         self.forward_and_invalid_selection()
         self.narrow_and_reverse()
+        self.recover_unsubmitted_booking()
         self.book()
+        self.resolve_committed_booking()
         require(not [entry for entry in self.console if entry["type"] == "error"] and not self.page_errors,
             "Unexpected browser errors: " + str(self.safe(self.console + self.page_errors)))
         require(self.page.locator("vite-error-overlay, nextjs-portal, [data-nextjs-dialog-overlay]").count() == 0, "No framework overlay may cover the actual app")

@@ -3,7 +3,7 @@ import { assertVehicleQueueCapacity, assertVehicleReview, createDriverVehicle, h
 import { randomUUID } from "node:crypto";
 import { OFFER_TIMEOUT_MS, OTP_TTL_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
 import { normalizePhone } from "../utils/phone";
-import type { RouteCreateInput, RouteMetadataPatch, DriverRouteChoiceInput, ExternalPickupSelectionInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderSelectionInput, Store } from "./storeContract";
+import type { RouteCreateInput, RouteMetadataPatch, RouteOrderResolution, DriverRouteChoiceInput, ExternalPickupSelectionInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderSelectionInput, Store } from "./storeContract";
 import { emptyOtpRateState, OTP_CLEANUP_BATCH_SIZE, otpFailureState, otpPhoneBlock, otpRateExpiresAt, otpRateKey, recordOtpFailure, takeOtpIp, takeOtpSend } from "./otpProtection";
 import type { OtpRateKind, OtpRateState } from "./otpProtection";
 import { mutateRouteStop, nextRouteUpdatedAt, replaceRouteLayout } from "../utils/routeLayout";
@@ -13,7 +13,7 @@ import { AppError } from "../utils/errors";
 import { assertRouteQueueLocation, assertRouteQueueTelemetry, resolveRouteQueue, routeQueueSnapshot, sameQueueLane } from "../utils/routeQueue";
 import { acceptQueueOffer, assertLegacyOrderInput, assertOrderOfferPatch, assertQueueOfferPatch, compareOfferDrivers, hasLiveOrderOffer, orderedOfferCandidates, releaseQueueOffer, reserveQueueOffer } from "./orderOffers";
 import { buildRouteOrder, validateRouteOrderSelectionInput } from "../utils/routeOrder";
-import { assertRouteOrderRequestHash, requireRouteOrderRequestKey, routeOrderRequestHash } from "../utils/routeOrderRequest";
+import { MAX_CLOSED_ROUTE_REQUESTS_PER_DAY, ROUTE_REQUEST_CLOSURE_WINDOW_MS, assertRouteOrderRequestHash, requireRouteOrderRequestKey, routeOrderRequestHash } from "../utils/routeOrderRequest";
 import { boundedInteger } from "../utils/validation";
 import type { AdminMutationActor } from "./storeContract";
 import { routeMetadataEvent } from "./routeAudit";
@@ -52,6 +52,7 @@ class MemoryStore implements Store {
   private readonly queueEntries = new Map<string, QueueEntry>();
   private readonly orders = new Map<string, Order>();
   private readonly adminAuditEvents: AdminAuditEvent[] = [];
+  private readonly closedRouteOrderRequests = new Map<string, number>();
   private readonly routeOrderRequests = new Map<string, { requestHash: string; orderId: string }>();
   private readonly deviceRegistrations = new Map<string, DeviceRegistration>();
   private readonly routes = new Map<string, RouteDefinition>();
@@ -562,12 +563,32 @@ class MemoryStore implements Store {
     const key = requireRouteOrderRequestKey(requestKey);
     this.requireCurrentRole(passengerId, "passenger", expectedSessionVersion);
     const receipt = this.routeOrderRequests.get(JSON.stringify([passengerId, key]));
-    if (!receipt) return undefined;
+    if (!receipt) {
+      if (this.closedRouteOrderRequests.has(JSON.stringify([passengerId, key]))) throw new AppError(409, "Booking request was closed", "ORDER_REQUEST_CLOSED");
+      return undefined;
+    }
     const order = this.orders.get(receipt.orderId);
     if (!order || order.passengerId !== passengerId) {
       throw new AppError(409, "Booking requires recovery; do not create another request", "ORDER_RECOVERY_REQUIRED");
     }
     return { order: structuredClone(order), requestHash: receipt.requestHash };
+  }
+
+  resolveRouteOrderRequest(passengerId: string, requestKey: string, expectedSessionVersion?: number): RouteOrderResolution {
+    const key = requireRouteOrderRequestKey(requestKey);
+    this.requireCurrentRole(passengerId, "passenger", expectedSessionVersion);
+    const identity = JSON.stringify([passengerId, key]);
+    if (this.routeOrderRequests.has(identity)) {
+      const receipt = this.getRouteOrderRequest(passengerId, key, expectedSessionVersion)!;
+      return { state: "created", order: receipt.order };
+    }
+    if (this.closedRouteOrderRequests.has(identity)) return { state: "closed", requestKey: key };
+    const now = Date.now();
+    const prefix = JSON.stringify([passengerId]).slice(0, -1) + ",";
+    const count = [...this.closedRouteOrderRequests].filter(([id, closedAt]) => id.startsWith(prefix) && closedAt > now - ROUTE_REQUEST_CLOSURE_WINDOW_MS).length;
+    if (count >= MAX_CLOSED_ROUTE_REQUESTS_PER_DAY) throw new AppError(429, "Too many recovery closures; retry later", "ORDER_RECOVERY_LIMIT");
+    this.closedRouteOrderRequests.set(identity, now);
+    return { state: "closed", requestKey: key };
   }
 
   createRouteOrderOnce(input: RouteOrderInput, selection: RouteOrderSelectionInput, requestKey: string, expectedSessionVersion?: number) {

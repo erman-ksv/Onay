@@ -4,6 +4,9 @@ import { AppError } from "./errors";
 import { validateRouteOrderSelectionInput } from "./routeOrder";
 import { boundedInteger } from "./validation";
 
+export const MAX_CLOSED_ROUTE_REQUESTS_PER_DAY = 64;
+export const ROUTE_REQUEST_CLOSURE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 /** One client-generated UUID identifies one booking intent for one passenger. */
 export function requireRouteOrderRequestKey(value: unknown): string {
   if (typeof value !== "string" ||
