@@ -3,6 +3,11 @@ on:
   pull_request:
     paths:
       - 'deploy/onay/**'
+      - 'artifacts/api-server/**'
+      - 'lib/db/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - '.dockerignore'
       - '.github/workflows/staging-runtime.yml'
 permissions:

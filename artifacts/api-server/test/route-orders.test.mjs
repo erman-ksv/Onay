@@ -1454,9 +1454,18 @@ test("UZS survives real HTTP FIFO booking, concurrent idempotent retry, boarding
   const f = await fixture(t), route = await f.configured({ currency: "UZS", pricePerStop: 12000, pricePerStopKzt: undefined });
   const passenger = await f.createUser("passenger");
   const opposite = await enrollHttp(f, route, "b_to_a", true);
-  const first = await enrollHttp(f, route, "a_to_b", true), second = await enrollHttp(f, route, "a_to_b", true);
-  await store.updateQueueEntry(opposite.user.id, { joinedAt: 0 });
-  await store.updateQueueEntry(first.user.id, { joinedAt: 1 }); await store.updateQueueEntry(second.user.id, { joinedAt: 2 });
+  const oppositeJoinedAt = (await otherStore.getQueueEntry(opposite.user.id)).joinedAt;
+  async function afterEnrollment(joinedAt) {
+    for (let attempt = 0; Date.now() <= joinedAt && attempt < 1000; attempt++) await new Promise(resolve => setTimeout(resolve, 1));
+    assert.ok(Date.now() > joinedAt, "Server enrollment timestamp must be observable before the next registration.");
+  }
+  await afterEnrollment(oppositeJoinedAt);
+  const first = await enrollHttp(f, route, "a_to_b", true);
+  const firstJoinedAt = (await otherStore.getQueueEntry(first.user.id)).joinedAt;
+  await afterEnrollment(firstJoinedAt);
+  const second = await enrollHttp(f, route, "a_to_b", true);
+  const secondJoinedAt = (await otherStore.getQueueEntry(second.user.id)).joinedAt;
+  assert.ok(oppositeJoinedAt < firstJoinedAt && firstJoinedAt < secondJoinedAt, "Use real server enrollment order; never rewrite a collecting driver's FIFO receipt.");
   const quote = await availabilityHttp(passenger, route);
   assert.equal(quote.status, 200, JSON.stringify(quote.body)); assert.equal(quote.body.eligible_driver_count, 2);
   assertUzbekFare(quote.body.fare);
@@ -1526,8 +1535,7 @@ test("both adapters keep UZS fares through FIFO reject, cancellation and complet
     assertUzbekFare(order.fare); assert.equal(order.offeredDriverId, first.user.id);
     const rejected = await adapter.rejectOrderOffer(order.id, first.user.id);
     assert.ok(rejected);
-    const offered = await adapter.dispatchOrderOffer(order.id);
-    assert.equal(offered.order.offeredDriverId, second.user.id);
+    assert.equal(rejected.order.offeredDriverId, second.user.id, "Rejection atomically offers the next suitable FIFO driver.");
     assert.equal((await adapter.getQueueEntry(first.user.id)).availableSeats, 4);
     const accepted = await adapter.acceptOrderOffer(order.id, second.user.id);
     assert.ok(accepted); const frozen = structuredClone(accepted.fare);
