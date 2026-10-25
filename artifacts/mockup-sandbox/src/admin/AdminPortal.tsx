@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import { ArrowRight, CheckCircle2, CircleAlert, LockKeyhole, LogOut, MapPin, RefreshCw, Search, ShieldCheck, Smartphone, Users, UserRound, CarTaxiFront } from "lucide-react";
 import RouteEditor from "./RouteEditor";
 import AuditJournal from "./AuditJournal";
+import AdminOrders from "./AdminOrders";
 import DriverVehicleReview from "./DriverVehicleReview";
 import {
   AdminApiError, closeAdminSession, loadDirectories, sendAdminOtp, verifyAdminOtp,
@@ -38,7 +39,7 @@ export default function AdminPortal() {
   const [demoCode, setDemoCode] = useState("");
   const [step, setStep] = useState<"phone" | "code">("phone");
   const [tab, setTab] = useState<View>("passengers");
-  const [section, setSection] = useState<"users" | "routes" | "audit">("users");
+  const [section, setSection] = useState<"users" | "routes" | "audit" | "orders">("users");
   const [filter, setFilter] = useState("");
   const [data, setData] = useState<Directory>(empty);
   const [busy, setBusy] = useState(false);
@@ -203,6 +204,7 @@ export default function AdminPortal() {
         <button type="button" aria-current={section === "users" ? "page" : undefined} onClick={() => setSection("users")} className={"inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold " + (section === "users" ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50")}><Users size={17}/>Пользователи</button>
         <button type="button" aria-current={section === "routes" ? "page" : undefined} onClick={() => setSection("routes")} className={"inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold " + (section === "routes" ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50")}><MapPin size={17}/>Маршруты и остановки</button>
         <button type="button" aria-current={section === "audit" ? "page" : undefined} onClick={() => setSection("audit")} className={"inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold " + (section === "audit" ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50")}><ShieldCheck size={17}/>Журнал действий</button>
+        <button type="button" aria-current={section === "orders" ? "page" : undefined} onClick={() => setSection("orders")} className={"inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold " + (section === "orders" ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50")}><CarTaxiFront size={17}/>Заказы</button>
       </nav>
       <div hidden={section !== "users"}>
       <div className="mb-8"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700">Панель управления</p><h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">Пользователи TezJet</h1><p className="mt-2 text-sm text-slate-500">Просмотр пассажиров и водителей. Данные поступают из защищённого API.</p></div>
@@ -242,6 +244,7 @@ export default function AdminPortal() {
       </div>
       <div hidden={section !== "routes"}><RouteEditor token={session.token} onAccessExpired={expireRouteAccess}/></div>
       {section === "audit" ? <AuditJournal key={session.token} token={session.token} onAccessExpired={expireRouteAccess}/> : null}
+      {section === "orders" ? <AdminOrders key={session.token} token={session.token} onAccessExpired={expireRouteAccess}/> : null}
     </main>
   </div>;
 }

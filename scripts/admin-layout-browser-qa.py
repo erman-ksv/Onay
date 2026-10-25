@@ -76,6 +76,9 @@ class AdminLayoutQA:
         self.conflict_observed = False
         self.vehicle_conflict_path = None
         self.vehicle_conflict_observed = False
+        self.order_conflict_paths = set()
+        self.order_network_failure_path = None
+        self.order_cancel_requests = []
         self.audit_network_failure = False
         self.token = None
         self.route_id = None
@@ -100,6 +103,8 @@ class AdminLayoutQA:
             self.map_tiles.append({"url": request.url, "failure": redact(request.failure)})
 
     def on_request(self, request):
+        if request.method == "POST" and re.fullmatch(r"/api/admin/orders/[^/]+/cancel", urlparse(request.url).path):
+            self.order_cancel_requests.append(urlparse(request.url).path)
         if request.method == "PUT" and urlparse(request.url).path.endswith("/layout"):
             self.layout_requests.append(urlparse(request.url).path)
 
@@ -502,6 +507,184 @@ class AdminLayoutQA:
         expect_status(api_request(self.args.api_url, path), 401, "Unauthenticated audit read denied")
         self.passed("Journal transport failure is distinct from empty history, explicit retry recovers real data and non-admin reads remain forbidden")
 
+    def admin_orders(self, passenger_token):
+        route = expect_status(api_request(self.args.api_url, "/admin/routes/" + self.uzs_route_id, token=self.token), 200, "Current real UZS route for admin order QA")["route"]
+        choice = {"route_id": route["id"], "direction": "a_to_b", "expected_updated_at": route["updatedAt"]}
+        start, destination = route["stops"][0], route["stops"][-1]
+        location = {**start["location"], "timestamp": int(time.time() * 1000)}
+        driver_token = self.reviewed_driver_token
+        expect_status(api_request(self.args.api_url, "/driver/route", "PUT", choice, driver_token), 200, "Persist actual driver choice for admin cancellation")
+        expect_status(api_request(self.args.api_url, "/queue/join", "POST", {"route_choice": choice, "available_seats": 4, "location": location}, driver_token), 201, "Join actual four-seat FIFO")
+        def capacity(expected):
+            queue = expect_status(api_request(self.args.api_url, "/admin/queue", token=self.token), 200, "Read actual queue after admin cancellation")["queue"]
+            entry = next(item for item in queue if item["driver_id"] == self.reviewed_driver_id)
+            require(entry["available_seats"] == expected, "Actual queue capacity must equal " + str(expected))
+        def create():
+            body = {**choice, "pickup_stop_id": start["id"], "destination_stop_id": destination["id"], "pickup_location": {**location, "timestamp": int(time.time() * 1000)}, "seats": 2}
+            order = expect_status(api_request(self.args.api_url, "/orders/route", "POST", body, passenger_token), 201, "Create actual two-seat UZS order")["order"]
+            require(order["offered_driver_id"] == self.reviewed_driver_id and order["status"] == "searching", "Real FIFO must offer the order to the approved fixture driver")
+            capacity(2)
+            return order
+        def audit(order_id, previous_status):
+            events = expect_status(api_request(self.args.api_url, "/admin/audit-events?order_id=" + order_id, token=self.token), 200, "Read actual cancellation audit")["events"]
+            require(len(events) == 1 and events[0]["action"] == "order.cancelled" and events[0]["fromStatus"] == previous_status and events[0]["toStatus"] == "cancelled", "Exactly one actual cancellation event must describe the true transition")
+            actor = expect_status(api_request(self.args.api_url, "/auth/me", token=self.token), 200, "Read current administrator actor")["user"]
+            require(events[0]["actorId"] == actor["id"], "Cancellation audit must identify the actual current administrator")
+            return events[0]
+        def refresh():
+            with self.response_for("/admin/orders", "GET") as pending:
+                panel.get_by_role("button", name="Обновить заказы", exact=True).click()
+            require(pending.value.status == 200, "Actual orders refresh must succeed")
+            self.expect(panel.get_by_role("button", name="Обновить заказы", exact=True)).to_be_enabled()
+        def status_filter(value):
+            with self.response_for("/admin/orders", "GET") as pending:
+                panel.get_by_label("Статус заказов", exact=True).select_option(value)
+            require(pending.value.status == 200 and "status=" + value in pending.value.url, "Actual order status filter must reach the server")
+            self.expect(panel.get_by_role("button", name="Обновить заказы", exact=True)).to_be_enabled()
+        def open_confirm(order):
+            panel.get_by_test_id("admin-cancel-open-" + order["id"]).click()
+            dialog = panel.get_by_role("alertdialog")
+            self.expect(dialog).to_contain_text(order["id"])
+            self.expect(dialog).to_contain_text("Мест: 2")
+            return dialog
+
+        first = create()
+        self.page.set_viewport_size({"width": 1440, "height": 1000})
+        with self.response_for("/admin/orders", "GET") as pending:
+            self.page.get_by_role("button", name="Заказы", exact=True).click()
+        require(pending.value.status == 200, "Actual admin orders section must load protected data")
+        panel = self.page.get_by_test_id("admin-orders")
+        card = panel.get_by_test_id("admin-order-" + first["id"])
+        self.expect(card).to_contain_text("Мест: 2")
+        self.expect(card).to_contain_text("сум")
+        expected_amount = str(first["fare"]["total"])
+        require(expected_amount in re.sub(r"\s", "", card.inner_text()), "Admin must render the frozen actual UZS fare without conversion")
+        before = len(self.order_cancel_requests)
+        dialog = open_confirm(first)
+        dialog.get_by_role("button", name="Сохранить заказ", exact=True).click()
+        self.expect(panel.get_by_role("alertdialog")).to_have_count(0)
+        require(len(self.order_cancel_requests) == before, "Dismissing confirmation must send zero cancellation POSTs")
+        capacity(2)
+        self.screenshot("desktop-admin-orders")
+        self.passed("Actual order list displays frozen UZS fare and dismissing explicit confirmation preserves both the order and reserved seats")
+
+        dialog = open_confirm(first)
+        path = "/admin/orders/" + first["id"] + "/cancel"
+        with self.response_for(path, "POST") as pending:
+            dialog.get_by_role("button", name="Подтвердить отмену", exact=True).click()
+        require(pending.value.status == 200 and pending.value.request.post_data_json == {"expected_status": "searching"}, "Confirmed cancellation must submit only the exact observed status")
+        require(pending.value.json()["order"]["id"] == first["id"] and pending.value.json()["order"]["status"] == "cancelled", "Actual server must confirm cancellation of that exact order")
+        self.expect(card).to_have_count(0)
+        self.expect(panel.get_by_role("button", name="Обновить заказы", exact=True)).to_be_enabled()
+        capacity(4)
+        audit(first["id"], "searching")
+        expect_status(api_request(self.args.api_url, path, "POST", {"expected_status": "searching"}, self.token), 409, "Repeated cancellation must not succeed twice")
+        capacity(4)
+        audit(first["id"], "searching")
+        self.passed("Confirmed admin cancellation releases exactly two seats once and creates one authentic audit event; duplicate cancellation changes neither")
+
+        second = create()
+        refresh()
+        dialog = open_confirm(second)
+        accepted = expect_status(api_request(self.args.api_url, "/orders/" + second["id"] + "/accept", "POST", {}, driver_token), 200, "Real driver accepts while administrator sees old searching status")["order"]
+        require(accepted["status"] == "en_route_to_c", "Concurrent actual driver acceptance must change status")
+        second_path = "/admin/orders/" + second["id"] + "/cancel"
+        before = len(self.order_cancel_requests)
+        with self.response_for(second_path, "POST") as pending:
+            dialog.get_by_role("button", name="Подтвердить отмену", exact=True).click()
+        require(pending.value.status == 409 and pending.value.json().get("error", {}).get("code") == "ORDER_UNAVAILABLE", "Stale confirmation must be rejected by actual status compare")
+        self.order_conflict_paths.add("/api" + second_path)
+        self.expect(panel.get_by_role("alertdialog")).to_have_count(0)
+        self.expect(panel.get_by_role("alert")).to_contain_text("Обновите список")
+        self.expect(panel.get_by_test_id("admin-cancel-open-" + second["id"])).to_be_disabled()
+        capacity(2)
+        require(len(self.order_cancel_requests) == before + 1, "A conflict must not automatically retry cancellation")
+        refresh()
+        dialog = open_confirm(second)
+        self.expect(dialog).to_contain_text("Едет к точке посадки")
+        with self.response_for(second_path, "POST") as pending:
+            dialog.get_by_role("button", name="Подтвердить отмену", exact=True).click()
+        require(pending.value.status == 200 and pending.value.request.post_data_json == {"expected_status": "en_route_to_c"}, "Only fresh explicit confirmation may cancel the changed order")
+        self.expect(panel.get_by_test_id("admin-order-" + second["id"])).to_have_count(0)
+        self.expect(panel.get_by_role("button", name="Обновить заказы", exact=True)).to_be_enabled()
+        capacity(4)
+        audit(second["id"], "en_route_to_c")
+        self.passed("Concurrent real acceptance rejects stale admin confirmation, blocks further mutations until refresh and requires a new explicit decision")
+
+        third = create()
+        refresh()
+        dialog = open_confirm(third)
+        third_path = "/admin/orders/" + third["id"] + "/cancel"
+        forwarded = {}
+        pattern = "**/api" + third_path
+        def lose_response(route_request):
+            result = route_request.fetch()
+            try:
+                forwarded["status"] = result.status
+                forwarded["body"] = result.json()
+            finally:
+                result.dispose()
+            self.order_network_failure_path = "/api" + third_path
+            route_request.abort("connectionfailed")
+        before = len(self.order_cancel_requests)
+        self.page.route(pattern, lose_response)
+        try:
+            dialog.get_by_role("button", name="Подтвердить отмену", exact=True).click()
+            self.expect(panel.get_by_role("alert")).to_contain_text("Результат отмены не подтверждён")
+        finally:
+            self.page.unroute(pattern, lose_response)
+        require(forwarded.get("status") == 200 and forwarded.get("body", {}).get("order", {}).get("status") == "cancelled", "The real cancellation must commit before its response is deliberately lost")
+        self.expect(panel.get_by_test_id("admin-cancel-open-" + third["id"])).to_be_disabled()
+        require(len(self.order_cancel_requests) == before + 1, "Lost successful response must not trigger another POST")
+        capacity(4)
+        audit(third["id"], "searching")
+        refresh()
+        self.expect(panel.get_by_test_id("admin-order-" + third["id"])).to_have_count(0)
+        self.passed("A genuinely committed cancellation with lost response remains blocked until explicit authoritative refresh without automatic retry or double release")
+
+        fourth = create()
+        expect_status(api_request(self.args.api_url, "/orders/" + fourth["id"] + "/accept", "POST", {}, driver_token), 200, "Accept actual completed-order fixture")
+        for status in ("arrived_at_c", "in_transit", "completed"):
+            finished = expect_status(api_request(self.args.api_url, "/orders/" + fourth["id"] + "/status", "PATCH", {"status": status}, driver_token), 200, "Progress actual order to " + status)["order"]
+            require(finished["status"] == status, "Real trip status must be persisted")
+        capacity(4)
+        status_filter("completed")
+        completed_card = panel.get_by_test_id("admin-order-" + fourth["id"])
+        self.expect(completed_card).to_contain_text("Завершён")
+        self.expect(completed_card.get_by_role("button", name="Отменить заказ", exact=True)).to_have_count(0)
+        status_filter("cancelled")
+        closed = panel.get_by_test_id("admin-order-" + first["id"])
+        self.expect(closed).to_contain_text("Отменён")
+        self.expect(closed.get_by_role("button", name="Отменить заказ", exact=True)).to_have_count(0)
+        panel.get_by_label("Поиск по ID заказа", exact=True).fill(first["id"])
+        self.expect(panel.locator("ol > li")).to_have_count(1)
+        panel.get_by_label("Поиск по ID заказа", exact=True).fill("not-an-existing-order")
+        self.expect(panel.get_by_text("Заказы по заданным фильтрам не найдены.", exact=True)).to_be_visible()
+        panel.get_by_label("Поиск по ID заказа", exact=True).fill("")
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        require(self.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "390px admin orders must wrap IDs and controls without overflow")
+        self.screenshot("mobile-390-admin-orders")
+        expect_status(api_request(self.args.api_url, "/admin/orders", token=passenger_token), 403, "Passenger cannot list admin orders")
+        expect_status(api_request(self.args.api_url, "/admin/orders", token=driver_token), 403, "Driver cannot list admin orders")
+        expect_status(api_request(self.args.api_url, path, "POST", {"expected_status": "searching"}, passenger_token), 403, "Passenger cannot use admin cancellation")
+        expect_status(api_request(self.args.api_url, path, "POST", {"expected_status": "searching"}, driver_token), 403, "Driver cannot use admin cancellation")
+        self.passed("Actual completed/cancelled orders are read-only, ID search and mobile390px work, and passenger/driver administrative access stays forbidden")
+
+        with self.response_for("/admin/audit-events", "GET"):
+            self.page.get_by_role("button", name="Журнал действий", exact=True).click()
+        journal = self.page.get_by_test_id("admin-audit-journal")
+        self.expect(journal.get_by_role("button", name="Применить фильтры", exact=True)).to_be_enabled()
+        journal.get_by_label("ID заказа", exact=True).fill(first["id"])
+        with self.response_for("/admin/audit-events", "GET") as pending:
+            journal.get_by_role("button", name="Применить фильтры", exact=True).click()
+        events = pending.value.json()["events"]
+        require(len(events) == 1 and events[0]["action"] == "order.cancelled", "UI order journal filter must return exactly the actual admin cancellation")
+        event_card = journal.get_by_test_id("audit-event-" + events[0]["id"])
+        self.expect(event_card).to_contain_text("Заказ отменён администратором")
+        self.expect(event_card).to_contain_text(first["id"])
+        self.screenshot("mobile-390-order-cancellation-audit")
+        self.passed("Actual administrative cancellation appears in the real journal UI with the correct order and exactly one event")
+
     def run(self):
         expect_status(api_request(self.args.api_url, "/healthz"), 200, "Actual API health")
         expect_status(api_request(self.args.base_url, "/healthz"), 200, "Vite development API proxy health")
@@ -639,6 +822,7 @@ class AdminLayoutQA:
         self.currency_tariffs(passenger["access_token"])
         self.vehicle_review()
         self.audit_journal(passenger["access_token"])
+        self.admin_orders(passenger["access_token"])
 
         with self.response_for("/auth/logout", "POST") as pending:
             self.page.get_by_role("button", name="Выйти", exact=True).click()
@@ -646,6 +830,7 @@ class AdminLayoutQA:
         self.expect(self.page.get_by_role("heading", name="Вход в панель", exact=True)).to_be_visible()
         expect_status(api_request(self.args.api_url, "/admin/routes/" + self.route_id, token=self.token), 401, "Logged-out token rejected")
         self.expect(self.page.get_by_test_id("admin-audit-journal")).to_have_count(0)
+        self.expect(self.page.get_by_test_id("admin-orders")).to_have_count(0)
         self.screenshot("mobile-390-logged-out")
         self.passed("UI logout returns to login and invalidates the admin token")
         self.assert_console_health()
@@ -662,7 +847,9 @@ class AdminLayoutQA:
             expected = self.conflict_observed and urlparse(entry["url"]).path == self.expected_conflict_path and bool(re.fullmatch(r"Failed to load resource: the server responded with a status of 409 \(Conflict\)", entry["text"]))
             expected_vehicle = self.vehicle_conflict_observed and urlparse(entry["url"]).path == self.vehicle_conflict_path and bool(re.fullmatch(r"Failed to load resource: the server responded with a status of 409 \(Conflict\)", entry["text"]))
             expected_audit = self.audit_network_failure and urlparse(entry["url"]).path == "/api/admin/audit-events" and bool(re.fullmatch(r"Failed to load resource: net::ERR_CONNECTION_FAILED", entry["text"]))
-            if not expected and not expected_vehicle and not expected_audit:
+            expected_order_conflict = urlparse(entry["url"]).path in self.order_conflict_paths and bool(re.fullmatch(r"Failed to load resource: the server responded with a status of 409 \(Conflict\)", entry["text"]))
+            expected_order_network = self.order_network_failure_path and urlparse(entry["url"]).path == self.order_network_failure_path and bool(re.fullmatch(r"Failed to load resource: net::ERR_CONNECTION_FAILED", entry["text"]))
+            if not expected and not expected_vehicle and not expected_audit and not expected_order_conflict and not expected_order_network:
                 errors.append(entry)
         require(not errors and not self.page_errors, f"Browser errors: {redact(errors)}; page errors: {self.page_errors}")
 
