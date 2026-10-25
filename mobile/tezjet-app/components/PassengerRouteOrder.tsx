@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { formatFareMoney } from "../lib/fare-money";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import * as Location from "expo-location";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -327,7 +328,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
         () => { void check(); }, checking || submitting || busy, false, "route-check-availability")}
       <View style={v.priceCard}>
         <Text style={v.sectionHeading}>ПОДТВЕРЖДЁННАЯ СТОИМОСТЬ</Text>
-        <Text style={v.price}>{fresh && availability ? new Intl.NumberFormat("ru-RU").format(availability.value.priceKzt) + " ₸" : "—"}</Text>
+        <Text style={v.price}>{fresh && availability ? formatFareMoney({ total: availability.value.price, currency: availability.value.currency }) : "—"}</Text>
         <Text style={[v.availability, fresh && availability?.value.available && v.availabilityPositive]}>
           {fresh && availability
             ? availability.value.available
