@@ -63,3 +63,14 @@ jobs:
       - name: API integration tests
         run: pnpm --filter @workspace/api-server run test
 
+
+      - name: Bounded API and driver queue load
+        run: pnpm --filter @workspace/api-server run test:load
+
+      - name: Preserve source-free queue load measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onay-queue-load
+          path: artifacts/api-server/artifacts/queue-load/report.json
+          if-no-files-found: warn
