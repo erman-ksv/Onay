@@ -1654,16 +1654,30 @@ export class PostgresStore implements Store {
     audit?: { adminId: string; expectedSessionVersion: number }): Promise<User | undefined> {
     const { db, usersTable, adminAuditEventsTable } = await this.database();
     return db.transaction(async tx => {
-      // Canonical order prevents reciprocal account locks from deadlocking.
-      const rows = await tx.select().from(usersTable).where(inArray(usersTable.id, audit ? [userId, audit.adminId] : [userId]))
-        .orderBy(asc(usersTable.id)).for("update");
       if (audit) {
-        const actor = rows.find(row => row.id === audit.adminId);
+        // Preserve authorization before target lookup, without holding an
+        // administrator lock while waiting for the driver. Recheck below
+        // under SHARE so a concurrent session/role revocation cannot commit.
+        const [actor] = await tx.select().from(usersTable).where(eq(usersTable.id, audit.adminId)).limit(1);
         if (!actor || audit.expectedSessionVersion === undefined || actor.sessionVersion !== audit.expectedSessionVersion) throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
         if (actor.role !== "admin") throw new AppError(403, "Administrator role is required", "FORBIDDEN");
       }
-      const row = rows.find(row => row.id === userId);
+      // A review owns the driver first and only SHARE-locks its administrator.
+      // Taking administrator UPDATE before the driver can cycle with booking
+      // (driver SHARE -> route SHARE) and route edits (route UPDATE -> admin SHARE).
+      const [row] = await tx.select().from(usersTable).where(eq(usersTable.id, userId)).for("update").limit(1);
       if (!row || !(row.roles as string[]).includes("driver")) return undefined;
+      if (audit) {
+        // Admin accounts cannot be review targets, including legacy mixed-role
+        // accounts. Reject before a second lock so reciprocal/self reviews
+        // cannot reintroduce an account-to-account lock cycle.
+        if (userId === audit.adminId || row.role === "admin" || (row.roles as string[]).includes("admin")) {
+          throw new AppError(403, "Administrator accounts cannot be reviewed as drivers", "FORBIDDEN");
+        }
+        const [actor] = await tx.select().from(usersTable).where(eq(usersTable.id, audit.adminId)).for("share").limit(1);
+        if (!actor || audit.expectedSessionVersion === undefined || actor.sessionVersion !== audit.expectedSessionVersion) throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+        if (actor.role !== "admin") throw new AppError(403, "Administrator role is required", "FORBIDDEN");
+      }
       const driver = asUser(row as unknown as Record<string, unknown>);
       assertVehicleReview(driver, expectedVehicleRevision);
       const previous = driver.driverApprovalStatus ?? "pending";

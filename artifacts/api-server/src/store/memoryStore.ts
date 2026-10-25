@@ -860,6 +860,9 @@ class MemoryStore implements Store {
     this.requireCurrentRole(adminId, "admin", expectedSessionVersion);
     const user = this.users.get(userId);
     if (!user || !user.roles.includes("driver")) return undefined;
+    if (userId === adminId || user.role === "admin" || user.roles.includes("admin")) {
+      throw new AppError(403, "Administrator accounts cannot be reviewed as drivers", "FORBIDDEN");
+    }
     assertVehicleReview(user, expectedVehicleRevision);
     const previous = user.driverApprovalStatus ?? "pending";
     if (previous !== status) {

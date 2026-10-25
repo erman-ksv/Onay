@@ -406,3 +406,146 @@ test('PostgreSQL session revocation while metadata write waits prevents all rout
     assert.deepEqual(await store.getRoute(f.route.id), f.route); assert.deepEqual(await store.listAdminAuditEvents(undefined, 50, undefined, f.route.id), []);
   } finally { await blocker.query('ROLLBACK'); blocker.release(); if (pending) await pending; }
 });
+
+test('PostgreSQL review rechecks administrator revocation after waiting for the driver', { timeout: 10000 }, async t => {
+  const f = await fixture(t), blocker = await adminPool.connect(); let pending;
+  try {
+    await blocker.query('BEGIN');
+    await blocker.query(`SELECT id FROM "${schema}".tezjet_users WHERE id=$1 FOR UPDATE`, [f.driver.id]);
+    pending = store.setDriverApprovalAsAdmin(f.driver.id, 'rejected', undefined, f.admin.id, f.admin.sessionVersion)
+      .then(value => ({ value }), error => ({ error }));
+    await waitForLocks(1);
+    await otherStore.invalidateSessions(f.admin.id);
+    await blocker.query('COMMIT');
+    assert.equal((await pending).error?.code, 'UNAUTHORIZED');
+    assert.equal((await store.getUser(f.driver.id)).driverApprovalStatus, 'approved');
+    assert.deepEqual(await store.listAdminAuditEvents(undefined, 50, f.driver.id), []);
+  } finally { await blocker.query('ROLLBACK'); blocker.release(); if (pending) await pending; }
+});
+
+test('PostgreSQL booking, audited route edit and driver review do not form a three-way lock cycle', { timeout: 30000 }, async t => {
+  const ownUsers = [];
+  async function account(role, prefix) {
+    const user = await store.createUser({ role, fullName: 'Three-way lock fixture', phoneNumber: `cycle-${randomUUID()}`, locale: 'ru' });
+    // Account IDs are opaque strings. Make actor < driver deterministic so
+    // the former sorted-FOR-UPDATE approval strategy takes the actor first.
+    const id = `${prefix}-${randomUUID()}`;
+    await database.query('UPDATE tezjet_users SET id=$1 WHERE id=$2', [id, user.id]); ownUsers.push(id);
+    return { ...user, id };
+  }
+  const admin = await account('admin', 'aaa'), passenger = await account('passenger', 'ppp'), driver = await account('driver', 'zzz');
+  const routeId = `cycle-${randomUUID()}`;
+  t.after(async () => {
+    await database.query('DELETE FROM tezjet_orders WHERE passenger_id=$1', [passenger.id]);
+    await database.query('DELETE FROM tezjet_driver_queue WHERE driver_id=$1', [driver.id]);
+    await database.query('DELETE FROM tezjet_users WHERE id=ANY($1::text[])', [ownUsers]);
+    await store.deleteRoute(routeId);
+  });
+  await store.setDriverApproval(driver.id, 'approved');
+  const empty = await store.createRoute({ id: routeId, name: 'Three-way lock route', pricePerStopKzt: 500, active: true });
+  const route = await store.updateRouteLayout(routeId, { expectedUpdatedAt: empty.updatedAt,
+    stops: [{ code: 'A', name: 'A', location: { lat: 42.9, lng: 71.3 } }, { code: 'B', name: 'B', location: { lat: 42.94, lng: 71.43 } }],
+    pitaks: { aStopCode: 'A', bStopCode: 'B', radiusMeters: 175 } });
+  const choice = { routeId, direction: 'a_to_b', expectedUpdatedAt: route.updatedAt };
+  const pickupLocation = { ...route.stops[0].location, timestamp: Date.now() };
+  await store.setDriverRouteChoice(driver.id, choice, driver.sessionVersion);
+  await store.joinQueue({ driverId: driver.id, joinedAt: 1, status: 'searching', availableSeats: 4,
+    lastLocation: pickupLocation, priorityLock: false, inFifo: true, activeOrderIds: [] }, driver.sessionVersion, choice);
+
+  function gate() {
+    let acquired, release;
+    return { observed: new Promise(resolve => { acquired = resolve; }), proceed: new Promise(resolve => { release = resolve; }), acquired: () => acquired(), release: () => release(), seen: false };
+  }
+  const bookingUsers = gate(), editingRoute = gate();
+  function observed(promise, label) {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error(`Actual SQL did not reach ${label}`)), 10000);
+      promise.then(value => { clearTimeout(timeout); resolve(value); }, error => { clearTimeout(timeout); reject(error); });
+    });
+  }
+  const originalConnect = database.connect, originals = new Map();
+  function instrument(client) {
+    if (originals.has(client)) return client;
+    const originalQuery = client.query; originals.set(client, originalQuery);
+    client.query = function (...args) {
+      const query = typeof args[0] === 'string' ? args[0] : args[0]?.text ?? '';
+      const values = Array.isArray(args[1]) ? args[1] : args[0]?.values ?? [];
+      // Observe/gate only *after* real SELECT results acquired their locks.
+      // No SQL or results are substituted, and the callback query API remains untouched.
+      const result = originalQuery.apply(this, args);
+      if (!result || typeof result.then !== 'function') return result;
+      return result.then(async value => {
+        let pause;
+        if (query.includes('from "tezjet_users"') && query.includes('for share') && values.includes(passenger.id) && values.includes(driver.id)) pause = bookingUsers;
+        if (query.includes('from "tezjet_routes"') && query.includes('for update') && values.includes(routeId)) pause = editingRoute;
+        if (pause && !pause.seen) { pause.seen = true; pause.acquired(); await pause.proceed; }
+        return value;
+      });
+    };
+    return client;
+  }
+  database.connect = function (callback) {
+    if (typeof callback === 'function') return originalConnect.call(this, (error, client, release) => callback(error, client ? instrument(client) : client, release));
+    return originalConnect.call(this).then(instrument);
+  };
+  const pending = [];
+  const capture = promise => { const result = promise.then(value => ({ value }), error => ({ error })); pending.push(result); return result; };
+  try {
+    const booking = capture(store.createRouteOrderWithOffer({ passengerId: passenger.id, passengerPhone: passenger.phoneNumber, pickupLocation, seats: 2 }, choice, passenger.sessionVersion));
+    await observed(bookingUsers.observed, 'booking user SHARE locks');
+    const editing = capture(otherStore.updateRoute(routeId, { pricePerStopKzt: 700 }, { adminId: admin.id, expectedSessionVersion: admin.sessionVersion }));
+    await observed(editingRoute.observed, 'route UPDATE lock');
+    const reviewing = capture(store.setDriverApprovalAsAdmin(driver.id, 'rejected', undefined, admin.id, admin.sessionVersion));
+    // The real review transaction is waiting on the driver locked by booking.
+    // Under the old strategy it already owns administrator UPDATE at this point.
+    await waitForLocks(1);
+    editingRoute.release(); bookingUsers.release();
+    const [orderResult, editResult, reviewResult] = await Promise.all([booking, editing, reviewing]);
+    assert.equal(editResult.error, undefined, 'Route editing must not be a deadlock victim.');
+    assert.equal(reviewResult.error, undefined, 'Driver review must not be a deadlock victim.');
+    assert.equal(editResult.value.pricePerStopKzt, 700); assert.equal(reviewResult.value.driverApprovalStatus, 'rejected');
+    // Route edit committed before booking acquired its SHARE lock: the stale
+    // booking must fail with its documented domain conflict, never SQL40P01/500.
+    assert.equal(orderResult.error?.code, 'ROUTE_CHANGED');
+    assert.equal((await store.getQueueEntry(driver.id)).availableSeats, 4);
+    assert.equal((await store.getQueueEntry(driver.id)).pendingOfferOrderId, undefined);
+    assert.deepEqual(await store.listOrdersForUser(passenger.id), []);
+    assert.equal((await store.listAdminAuditEvents(undefined, 50, undefined, routeId)).length, 1);
+    assert.equal((await store.listAdminAuditEvents(undefined, 50, driver.id)).length, 1);
+  } finally {
+    editingRoute.release(); bookingUsers.release(); await Promise.all(pending);
+    database.connect = originalConnect;
+    for (const [client, query] of originals) client.query = query;
+  }
+});
+
+for (const kind of ['PostgreSQL', 'Memory']) test(`${kind} audited review refuses self and reciprocal mixed administrator-driver targets`, { timeout: 10000 }, async t => {
+  const adapter = kind === 'PostgreSQL' ? store : new production.MemoryStore(), f = await fixture(t, adapter);
+  // Simulate malformed/legacy mixed-role records; ordinary approved drivers
+  // remain valid review targets in the dedicated review tests above.
+  if (kind === 'PostgreSQL') {
+    await database.query("UPDATE tezjet_users SET roles='[\"admin\",\"driver\"]'::jsonb WHERE id=$1", [f.admin.id]);
+    await database.query("UPDATE tezjet_users SET role='admin', roles='[\"admin\",\"driver\"]'::jsonb WHERE id=$1", [f.driver.id]);
+  } else {
+    // The runtime adapter accepts fixture-only JS patches for corrupted legacy
+    // records; HTTP profile updates never pass role/membership fields through.
+    adapter.updateUser(f.admin.id, { roles: ['admin', 'driver'] });
+    adapter.updateUser(f.driver.id, { role: 'admin', roles: ['admin', 'driver'] });
+  }
+  const secondAdapter = kind === 'PostgreSQL' ? otherStore : adapter;
+  const result = await Promise.allSettled([
+    Promise.resolve().then(() => adapter.setDriverApprovalAsAdmin(f.admin.id, 'approved', undefined, f.admin.id, f.admin.sessionVersion)),
+    Promise.resolve().then(() => adapter.setDriverApprovalAsAdmin(f.admin.id, 'approved', undefined, f.driver.id, f.driver.sessionVersion)),
+    Promise.resolve().then(() => secondAdapter.setDriverApprovalAsAdmin(f.driver.id, 'rejected', undefined, f.admin.id, f.admin.sessionVersion)),
+  ]);
+  assert.ok(result.every(item => item.status === 'rejected' && item.reason.code === 'FORBIDDEN'));
+  assert.equal((await adapter.getUser(f.driver.id)).driverApprovalStatus, 'approved');
+  assert.equal((await adapter.getUser(f.admin.id)).driverApprovalStatus, f.admin.driverApprovalStatus);
+  assert.deepEqual(await adapter.listAdminAuditEvents(undefined, 50, f.driver.id), []);
+  assert.deepEqual(await adapter.listAdminAuditEvents(undefined, 50, f.admin.id), []);
+  // Reject unauthorized requests even for missing targets; the preliminary
+  // check must never replace the locked authority recheck for valid targets.
+  await assert.rejects(Promise.resolve().then(() => adapter.setDriverApprovalAsAdmin('missing-target', 'approved', undefined, f.passenger.id, f.passenger.sessionVersion)), error => error.code === 'FORBIDDEN');
+  await adapter.invalidateSessions(f.admin.id);
+  await assert.rejects(Promise.resolve().then(() => adapter.setDriverApprovalAsAdmin('missing-target', 'approved', undefined, f.admin.id, f.admin.sessionVersion)), error => error.code === 'UNAUTHORIZED');
+});
