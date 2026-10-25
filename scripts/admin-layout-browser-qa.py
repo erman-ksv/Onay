@@ -2,7 +2,7 @@
 """Real admin layout QA against the CI API/PostgreSQL and Vite dev proxy.
 
 Browser plugin not available; this explicit CI task uses Python Playwright.
-No requests are intercepted or mocked. CI's nonproduction NODE_ENV exposes the existing
+API responses are not mocked. The journal recovery check deliberately aborts one transport request; retry uses the real API. CI's nonproduction NODE_ENV exposes the existing
 development OTP response; production credentials or OTP bypasses are not used.
 """
 
@@ -76,6 +76,7 @@ class AdminLayoutQA:
         self.conflict_observed = False
         self.vehicle_conflict_path = None
         self.vehicle_conflict_observed = False
+        self.audit_network_failure = False
         self.token = None
         self.route_id = None
         self.last_otp_accepted_at = None
@@ -301,6 +302,7 @@ class AdminLayoutQA:
         require(response.request.post_data_json["currency"] == "UZS" and response.request.post_data_json["price_per_stop"] == 2500, "Browser must submit an explicit UZS amount without conversion")
         created = response.json()["route"]
         uzs_id = created["id"]
+        self.uzs_route_id = uzs_id
         require(created["currency"] == "UZS" and created["pricePerStop"] == 2500 and "pricePerStopKzt" not in created, "New UZS route must not masquerade as a KZT tariff")
         self.expect(self.page.get_by_role("heading", name=name, level=2, exact=True)).to_be_visible()
         self.expect(self.page.get_by_label("Тариф за остановку", exact=True)).to_have_value("2500")
@@ -376,6 +378,8 @@ class AdminLayoutQA:
         challenge = expect_status(api_request(self.args.api_url, "/auth/request-otp", "POST", {"phone_number": phone, "full_name": "CI vehicle review driver", "role": "driver", "locale": "ru"}), 202, "Driver fixture OTP")
         session = expect_status(api_request(self.args.api_url, "/auth/verify-otp", "POST", {"phone_number": phone, "code": challenge["demo_code"]}), 200, "Real driver fixture authentication")
         driver, driver_token = session["user"], session["access_token"]
+        self.reviewed_driver_id = driver["id"]
+        self.reviewed_driver_token = driver_token
         body = {"make": "Chevrolet", "model": "QA Cobalt", "plate_number": "01 T123 QA", "seat_capacity": 4, "expected_revision": None}
         first = expect_status(api_request(self.args.api_url, "/driver/vehicle", "PUT", body, driver_token), 200, "Driver submits a real vehicle")["driver_vehicle"]
         self.page.set_viewport_size({"width": 1440, "height": 1000})
@@ -415,6 +419,88 @@ class AdminLayoutQA:
         require(self.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "Driver review must not overflow the 390px admin page")
         self.screenshot("mobile-390-reviewed-vehicle")
         self.passed("Actual administrator reviews persisted car, rejects stale vehicle revision, and explicitly approves updated data")
+
+    def audit_journal(self, passenger_token):
+        path = "/admin/audit-events"
+        self.page.set_viewport_size({"width": 1440, "height": 1000})
+        with self.response_for(path, "GET") as pending:
+            self.page.get_by_role("button", name="Журнал действий", exact=True).click()
+        panel = self.page.get_by_test_id("admin-audit-journal")
+        response = pending.value
+        require(response.status == 200 and response.headers.get("cache-control") == "no-store", "Journal must read the real protected uncached API")
+        events = response.json()["events"]
+        require(len(events) > 0, "Existing route and approval writes must create actual journal entries")
+        self.expect(panel.get_by_test_id("audit-event-" + events[0]["id"])).to_contain_text(events[0]["actorId"])
+        self.expect(panel.locator("ol > li")).to_have_count(len(events))
+        require([card.get_attribute("data-testid") for card in panel.locator("ol > li").all()] == ["audit-event-" + event["id"] for event in events], "Rendered audit order must exactly match the server window")
+        self.expect(panel).to_contain_text("Последние не более 50")
+        self.screenshot("desktop-audit-journal")
+        self.passed("Actual admin journal displays durable audit events in server order without fabricating actor identities or totals")
+
+        def apply():
+            with self.response_for(path, "GET") as pending:
+                panel.get_by_role("button", name="Применить фильтры", exact=True).click()
+            require(pending.value.status == 200, "Actual journal filter must be accepted")
+            records = pending.value.json()["events"]
+            self.expect(panel.locator("ol > li")).to_have_count(len(records))
+            self.expect(panel.get_by_role("button", name="Применить фильтры", exact=True)).to_be_enabled()
+            return records, pending.value
+
+        panel.get_by_label("ID маршрута", exact=True).fill(self.uzs_route_id)
+        records, response = apply()
+        require(records and all(event.get("routeId") == self.uzs_route_id for event in records), "Route filter must bind actual UZS metadata events")
+        require(any(event.get("changedFields") == ["pricePerStop"] for event in records), "Tariff update must appear as actual generic price field")
+        for event in records:
+            card = panel.get_by_test_id("audit-event-" + event["id"])
+            self.expect(card).to_contain_text("Маршрут изменён")
+            self.expect(card).to_contain_text(event["previousVersion"])
+            self.expect(card).to_contain_text(event["nextVersion"])
+        panel.get_by_label("ID маршрута", exact=True).fill("")
+        panel.get_by_label("ID водителя", exact=True).fill(self.reviewed_driver_id)
+        records, response = apply()
+        require(len(records) == 3 and all(event.get("driverId") == self.reviewed_driver_id for event in records), "Exactly three real approval changes must appear; rejected stale write must add no event")
+        self.expect(panel).to_contain_text("Одобрен")
+        self.expect(panel).to_contain_text("Отклонён")
+        self.passed("Route and driver filters expose real tariff revisions and exactly three approval changes while preserving the rejected stale-write boundary")
+
+        panel.get_by_label("ID маршрута", exact=True).fill(self.uzs_route_id)
+        records, response = apply()
+        require(records == [], "Combined unrelated driver and route filters must use real server AND semantics")
+        self.expect(panel.get_by_text("По заданным фильтрам событий нет.", exact=True)).to_be_visible()
+        with self.response_for(path, "GET") as pending:
+            panel.get_by_role("button", name="Сбросить фильтры", exact=True).click()
+        require(pending.value.status == 200 and pending.value.json()["events"], "Reset must reload the genuine latest event window")
+        self.expect(panel.get_by_role("button", name="Применить фильтры", exact=True)).to_be_enabled()
+        panel.get_by_label("Показывать не более", exact=True).select_option("25")
+        records, response = apply()
+        require("limit=25" in response.url and len(records) <= 25, "Selected limit must be sent to the actual server")
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        self.expect(panel).to_contain_text("Последние не более 25")
+        require(self.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "390px journal must wrap IDs and filters without page overflow")
+        self.screenshot("mobile-390-audit-journal")
+        self.passed("Journal AND filters show a genuine empty state, reset reloads real events and the bounded list fits390px")
+
+        pattern = "**/api/admin/audit-events?*"
+        def disconnect(route):
+            self.audit_network_failure = True
+            route.abort("connectionfailed")
+        self.page.route(pattern, disconnect)
+        try:
+            panel.get_by_role("button", name="Обновить журнал", exact=True).click()
+            self.expect(panel.get_by_role("alert")).to_be_visible()
+            self.expect(panel.locator("ol > li")).to_have_count(0)
+            self.expect(panel.get_by_text("По заданным фильтрам событий нет.", exact=True)).to_have_count(0)
+        finally:
+            self.page.unroute(pattern, disconnect)
+        with self.response_for(path, "GET") as pending:
+            panel.get_by_role("button", name="Обновить журнал", exact=True).click()
+        require(pending.value.status == 200, "Retry after real transport failure must reload the actual API")
+        self.expect(panel.get_by_role("alert")).to_have_count(0)
+        self.expect(panel.locator("ol > li")).to_have_count(len(pending.value.json()["events"]))
+        expect_status(api_request(self.args.api_url, path, token=passenger_token), 403, "Passenger audit read denied")
+        expect_status(api_request(self.args.api_url, path, token=self.reviewed_driver_token), 403, "Driver audit read denied")
+        expect_status(api_request(self.args.api_url, path), 401, "Unauthenticated audit read denied")
+        self.passed("Journal transport failure is distinct from empty history, explicit retry recovers real data and non-admin reads remain forbidden")
 
     def run(self):
         expect_status(api_request(self.args.api_url, "/healthz"), 200, "Actual API health")
@@ -552,12 +638,14 @@ class AdminLayoutQA:
 
         self.currency_tariffs(passenger["access_token"])
         self.vehicle_review()
+        self.audit_journal(passenger["access_token"])
 
         with self.response_for("/auth/logout", "POST") as pending:
             self.page.get_by_role("button", name="Выйти", exact=True).click()
         require(pending.value.status == 204, "UI logout must invalidate the real backend session")
         self.expect(self.page.get_by_role("heading", name="Вход в панель", exact=True)).to_be_visible()
         expect_status(api_request(self.args.api_url, "/admin/routes/" + self.route_id, token=self.token), 401, "Logged-out token rejected")
+        self.expect(self.page.get_by_test_id("admin-audit-journal")).to_have_count(0)
         self.screenshot("mobile-390-logged-out")
         self.passed("UI logout returns to login and invalidates the admin token")
         self.assert_console_health()
@@ -573,7 +661,8 @@ class AdminLayoutQA:
             # real 409 response was verified; application errors still fail.
             expected = self.conflict_observed and urlparse(entry["url"]).path == self.expected_conflict_path and bool(re.fullmatch(r"Failed to load resource: the server responded with a status of 409 \(Conflict\)", entry["text"]))
             expected_vehicle = self.vehicle_conflict_observed and urlparse(entry["url"]).path == self.vehicle_conflict_path and bool(re.fullmatch(r"Failed to load resource: the server responded with a status of 409 \(Conflict\)", entry["text"]))
-            if not expected and not expected_vehicle:
+            expected_audit = self.audit_network_failure and urlparse(entry["url"]).path == "/api/admin/audit-events" and bool(re.fullmatch(r"Failed to load resource: net::ERR_CONNECTION_FAILED", entry["text"]))
+            if not expected and not expected_vehicle and not expected_audit:
                 errors.append(entry)
         require(not errors and not self.page_errors, f"Browser errors: {redact(errors)}; page errors: {self.page_errors}")
 
