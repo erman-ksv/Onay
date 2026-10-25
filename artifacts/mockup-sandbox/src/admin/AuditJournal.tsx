@@ -64,7 +64,7 @@ export default function AuditJournal({ token, onAccessExpired }: { token: string
         <input value={draft[field.key]} maxLength={100} autoComplete="off" onChange={event => setDraft(value => ({ ...value, [field.key]: event.target.value }))} className="mt-2 w-full min-w-0 rounded-xl border border-slate-200 px-3 py-2.5 font-normal outline-none focus:border-blue-600"/>
       </label>)}
       <label className="text-sm font-medium text-slate-700">Показывать не более
-        <select value={draft.limit} onChange={event => setDraft(value => ({ ...value, limit: Number(event.target.value) }))} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 font-normal">{[25, 50, 100].map(limit => <option key={limit} value={limit}>{limit} событий</option>)}</select>
+        <select aria-label="Показывать не более" value={draft.limit} onChange={event => setDraft(value => ({ ...value, limit: Number(event.target.value) }))} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 font-normal">{[25, 50, 100].map(limit => <option key={limit} value={limit}>{limit} событий</option>)}</select>
       </label>
       <div className="flex flex-wrap gap-3 sm:col-span-2 lg:col-span-4">
         <button type="submit" disabled={loading} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">Применить фильтры</button>
