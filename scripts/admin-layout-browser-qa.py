@@ -647,7 +647,9 @@ class AdminLayoutQA:
         for status in ("arrived_at_c", "in_transit", "completed"):
             finished = expect_status(api_request(self.args.api_url, "/orders/" + fourth["id"] + "/status", "PATCH", {"status": status}, driver_token), 200, "Progress actual order to " + status)["order"]
             require(finished["status"] == status, "Real trip status must be persisted")
-        capacity(4)
+        finished_entry = expect_status(api_request(self.args.api_url, "/queue", token=driver_token), 200, "Read completed driver's own durable enrollment")["your_entry"]
+        require(finished_entry["availableSeats"] == 4 and finished_entry["inFifo"] is False,
+            "Completion must restore capacity while leaving the completed origin enrollment outside FIFO")
         status_filter("completed")
         completed_card = panel.get_by_test_id("admin-order-" + fourth["id"])
         self.expect(completed_card).to_contain_text("Завершён")
