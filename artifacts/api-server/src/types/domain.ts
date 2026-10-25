@@ -51,11 +51,14 @@ export interface RouteStop {
   location?: Coordinates;
 }
 
+export type FareCurrency = "KZT" | "UZS";
+
 export interface RouteDefinition {
   id: string;
   name: string;
-  currency: "KZT";
-  pricePerStopKzt: number;
+  currency: FareCurrency;
+  pricePerStop?: number;
+  pricePerStopKzt?: number;
   active: boolean;
   stops: RouteStop[];
   pitaks?: {
@@ -72,12 +75,14 @@ export interface RouteDefinition {
 export interface ExternalPickupSettings {
   enabled: boolean;
   serviceRadiusMeters: number;
-  pricePerKmKzt: number;
+  currency?: FareCurrency;
+  pricePerKm?: number;
+  pricePerKmKzt?: number;
   gpsMaxAgeSeconds: number;
   quoteTtlSeconds: number;
   pickupGraceSeconds: number;
   maxPickupSeconds: number;
-  fareRounding: "ceil_kzt" | "nearest_kzt";
+  fareRounding: "ceil_kzt" | "nearest_kzt" | "ceil" | "nearest";
 }
 
 export interface ExternalPickupSelectionInput {
@@ -89,7 +94,11 @@ export interface ExternalPickupSelectionInput {
 
 /** Authenticated server quote; precise driver coordinates never enter its token. */
 export interface ExternalPickupQuote {
-  version: 1;
+  version: 1 | 2;
+  currency?: FareCurrency;
+  baseFare?: number;
+  pickupSurcharge?: number;
+  total?: number;
   quoteId: string;
   passengerId: string;
   sessionVersion: number;
@@ -101,9 +110,9 @@ export interface ExternalPickupQuote {
   driverLocationFingerprint: string;
   roadDistanceMeters: number;
   roadDurationSeconds: number;
-  baseFareKzt: number;
-  pickupSurchargeKzt: number;
-  totalKzt: number;
+  baseFareKzt?: number;
+  pickupSurchargeKzt?: number;
+  totalKzt?: number;
   settings: ExternalPickupSettings;
   quotedAt: number;
   expiresAt: number;
@@ -114,15 +123,18 @@ export interface ExternalPickupQuote {
 }
 
 export interface ExternalPickupSnapshot {
-  version: 1;
+  version: 1 | 2;
+  currency?: FareCurrency;
+  baseFare?: number;
+  pickupSurcharge?: number;
   quoteId: string;
   requiresPriceConfirmation: boolean;
   driverEnrollmentId: string;
   driverLocationFingerprint: string;
   roadDistanceMeters: number;
   roadDurationSeconds: number;
-  baseFareKzt: number;
-  pickupSurchargeKzt: number;
+  baseFareKzt?: number;
+  pickupSurchargeKzt?: number;
   settings: ExternalPickupSettings;
   quotedAt: number;
   quoteExpiresAt: number;
@@ -160,7 +172,7 @@ export interface DriverRouteSelection {
 }
 
 export interface FareQuote {
-  currency: "KZT";
+  currency: FareCurrency;
   /** Neutral aliases may be absent in historical persisted quotes. */
   total?: number;
   pricePerStop?: number;
@@ -170,10 +182,10 @@ export interface FareQuote {
   pickupPosition: number;
   destinationPosition: number;
   distanceStops: number;
-  pricePerStopKzt: number;
+  pricePerStopKzt?: number;
   minimumFareApplied: boolean;
   stops: RouteStop[];
-  totalKzt: number;
+  totalKzt?: number;
   calculatedAt: string;
 }
 

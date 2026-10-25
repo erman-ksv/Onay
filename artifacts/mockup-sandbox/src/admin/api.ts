@@ -132,8 +132,9 @@ export type AdminRoute = {
   id: string;
   name: string;
   active: boolean;
-  currency: "KZT";
-  pricePerStopKzt: number;
+  currency: "KZT" | "UZS";
+  pricePerStop?: number;
+  pricePerStopKzt?: number;
   updatedAt: string;
   stops: AdminRouteStop[];
   pitaks?: { aStopCode: string; bStopCode: string; radiusMeters: number };
@@ -145,6 +146,29 @@ export type RouteLayoutInput = {
   pitaks?: { a_stop_code: string; b_stop_code: string; radius_meters: number };
 };
 
+/** A currency is never inferred from the numeric size or re-labelled. */
+export function adminRoutePrice(route: Pick<AdminRoute, "currency" | "pricePerStop" | "pricePerStopKzt">): number {
+  const price = route.currency === "KZT" ? route.pricePerStopKzt ?? route.pricePerStop : route.pricePerStop;
+  if ((route.currency !== "KZT" && route.currency !== "UZS") ||
+      typeof price !== "number" || !Number.isSafeInteger(price) || price < 0 || price > 1_000_000_000 ||
+      (route.currency === "UZS" && route.pricePerStopKzt !== undefined) ||
+      (route.currency === "KZT" && route.pricePerStop !== undefined && route.pricePerStop !== price)) {
+    throw new AdminApiError(502, "Валюта или тариф маршрута некорректны.");
+  }
+  return price;
+}
+
+export function adminCurrencyLabel(currency: AdminRoute["currency"]): string {
+  return currency === "UZS" ? "сум" : "₸";
+}
+
+export function readTariffDraft(value: string): number {
+  if (!/^\d+$/.test(value.trim())) throw new Error("Введите целый тариф от 0 до 1 000 000 000.");
+  const price = Number(value.trim());
+  if (!Number.isSafeInteger(price) || price > 1_000_000_000) throw new Error("Тариф не должен превышать 1 000 000 000.");
+  return price;
+}
+
 function readRoute(value: unknown): AdminRoute {
   const route = value as AdminRoute | undefined;
   if (!route || typeof route.id !== "string" || typeof route.name !== "string" ||
@@ -152,6 +176,7 @@ function readRoute(value: unknown): AdminRoute {
       route.stops.some(stop => !stop || typeof stop.id !== "string" || typeof stop.code !== "string" || typeof stop.name !== "string")) {
     throw new AdminApiError(502, "Некорректный ответ каталога маршрутов.");
   }
+  adminRoutePrice(route);
   return route;
 }
 
@@ -166,14 +191,28 @@ export async function loadAdminRoute(token: string, routeId: string, signal?: Ab
   return readRoute(result.route);
 }
 
-/** The existing server creates an ID and applies its default fare; no tariff editing here. */
-export async function createAdminRoute(token: string, name: string): Promise<AdminRoute> {
-  const result = await adminRequest<{ route: unknown }>("/admin/routes", { token, method: "POST", body: { name: name.trim() } });
-  return readRoute(result.route);
+/** New routes require an explicitly chosen currency and tariff. */
+export async function createAdminRoute(token: string, name: string, currency: AdminRoute["currency"], price: number): Promise<AdminRoute> {
+  const result = await adminRequest<{ route: unknown }>("/admin/routes", {
+    token, method: "POST", body: { name: name.trim(), currency, price_per_stop: price },
+  });
+  const route = readRoute(result.route);
+  if (route.currency !== currency || adminRoutePrice(route) !== price) throw new AdminApiError(502, "Сервер не подтвердил заданную валюту и тариф.");
+  return route;
+}
+
+export async function saveAdminRouteTariff(token: string, routeId: string, price: number): Promise<AdminRoute> {
+  const result = await adminRequest<{ route: unknown }>("/admin/routes/" + encodeURIComponent(routeId), {
+    token, method: "PATCH", body: { price_per_stop: price },
+  });
+  const route = readRoute(result.route);
+  if (route.id !== routeId || adminRoutePrice(route) !== price) throw new AdminApiError(502, "Сервер не подтвердил заданный тариф.");
+  return route;
 }
 
 export async function saveAdminRouteLayout(token: string, routeId: string, layout: RouteLayoutInput): Promise<AdminRoute> {
   const result = await adminRequest<{ route: unknown }>("/admin/routes/" + encodeURIComponent(routeId) + "/layout", { token, method: "PUT", body: layout });
   return readRoute(result.route);
 }
+
 

@@ -285,6 +285,92 @@ class AdminLayoutQA:
         self.expect(self.page.get_by_label("Питак B", exact=True)).to_have_value(route["stops"][-1]["id"])
         self.expect(self.page.get_by_label("Радиус питака, м", exact=True)).to_have_value("175")
 
+    def currency_tariffs(self, passenger_token):
+        legacy = self.route()
+        require(legacy["currency"] == "KZT", "The original route must remain the legacy KZT fixture")
+        name = "CI UZS tariff " + uuid.uuid4().hex[:10]
+        self.page.set_viewport_size({"width": 1440, "height": 1000})
+        self.page.get_by_role("button", name="Новый маршрут", exact=True).click()
+        self.expect(self.page.get_by_label("Валюта нового маршрута", exact=True)).to_have_value("UZS")
+        self.page.get_by_label("Название нового маршрута", exact=True).fill(name)
+        self.page.get_by_label("Тариф нового маршрута", exact=True).fill("2500")
+        with self.response_for("/admin/routes", "POST") as pending:
+            self.page.get_by_role("button", name="Создать маршрут", exact=True).click()
+        response = pending.value
+        require(response.status == 201, "Actual browser must create the UZS route")
+        require(response.request.post_data_json["currency"] == "UZS" and response.request.post_data_json["price_per_stop"] == 2500, "Browser must submit an explicit UZS amount without conversion")
+        created = response.json()["route"]
+        uzs_id = created["id"]
+        require(created["currency"] == "UZS" and created["pricePerStop"] == 2500 and "pricePerStopKzt" not in created, "New UZS route must not masquerade as a KZT tariff")
+        self.expect(self.page.get_by_role("heading", name=name, level=2, exact=True)).to_be_visible()
+        self.expect(self.page.get_by_label("Тариф за остановку", exact=True)).to_have_value("2500")
+        self.expect(self.page.get_by_test_id("saved-route-tariff")).to_contain_text("сум")
+        path = "/admin/routes/" + uzs_id
+        self.page.get_by_label("Тариф за остановку", exact=True).fill("3500")
+        self.page.get_by_label("Маршрут", exact=True).select_option(self.route_id)
+        self.expect(self.page.get_by_role("button", name="Остаться", exact=True)).to_be_visible()
+        self.page.get_by_role("button", name="Остаться", exact=True).click()
+        self.expect(self.page.get_by_label("Тариф за остановку", exact=True)).to_have_value("3500")
+        self.page.get_by_role("button", name="Загрузить текущую версию", exact=True).click()
+        self.expect(self.page.get_by_role("button", name="Оставить черновик", exact=True)).to_be_visible()
+        self.page.get_by_role("button", name="Оставить черновик", exact=True).click()
+        self.expect(self.page.get_by_label("Тариф за остановку", exact=True)).to_have_value("3500")
+        with self.response_for(path, "PATCH") as pending:
+            self.page.get_by_role("button", name="Сохранить тариф", exact=True).click()
+        require(pending.value.status == 200, "Tariff editing must call the real administrator API")
+        require(pending.value.request.post_data_json == {"price_per_stop": 3500}, "Editing a tariff must retain the route currency")
+        updated = pending.value.json()["route"]
+        require(updated["currency"] == "UZS" and updated["pricePerStop"] == 3500 and "pricePerStopKzt" not in updated, "Saved UZS tariff must remain neutral and explicit")
+        self.expect(self.page.get_by_label("Тариф за остановку", exact=True)).to_have_value("3500")
+        # Use the real editor to choose the same three stops in this new route;
+        # no response interception or synthetic price is substituted.
+        for index, stop in enumerate(legacy["stops"], 1):
+            self.page.get_by_role("button", name="Добавить остановку", exact=True).click()
+            self.page.get_by_label(f"Код остановки {index}", exact=True).fill(stop["code"])
+            self.page.get_by_label(f"Название остановки {index}", exact=True).fill(stop["name"])
+            if stop.get("location"):
+                self.page.get_by_label(f"Широта остановки {index}", exact=True).fill(str(stop["location"]["lat"]))
+                self.page.get_by_label(f"Долгота остановки {index}", exact=True).fill(str(stop["location"]["lng"]))
+        self.page.get_by_label("Тариф за остановку", exact=True).fill("3600")
+        self.expect(self.page.get_by_role("button", name="Сохранить тариф", exact=True)).to_be_disabled()
+        with self.response_for(path + "/layout", "PUT") as pending:
+            self.page.get_by_role("button", name="Сохранить остановки и питаки", exact=True).click()
+        require(pending.value.status == 200, "Actual admin editor must save the selected UZS stops")
+        updated = pending.value.json()["route"]
+        require(updated["currency"] == "UZS" and updated["pricePerStop"] == 3500, "Saving stop geometry must retain the edited UZS tariff")
+        self.expect(self.page.get_by_label("Тариф за остановку", exact=True)).to_have_value("3600")
+        self.page.get_by_label("Тариф за остановку", exact=True).fill("3500")  # Explicitly discard only the unsaved tariff draft.
+        fare = expect_status(api_request(self.args.api_url, "/fares/estimate", "POST", {"route_id": uzs_id, "pickup_stop": updated["stops"][0]["id"], "destination_stop": updated["stops"][-1]["id"]}, passenger_token), 200, "Actual passenger quote from admin-selected UZS stops")["fare"]
+        require(fare["currency"] == "UZS" and fare["pricePerStop"] == 3500 and fare["distanceStops"] == 2 and fare["total"] == 7000, "Server quote must use the selected two-stop distance and edited UZS unit tariff")
+        require("totalKzt" not in fare and "pricePerStopKzt" not in fare, "Actual UZS quote must not expose KZT amount aliases")
+        self.passed("Actual admin UI creates and edits UZS tariff; selected stops produce the correct real passenger quote")
+
+        self.page.reload(wait_until="domcontentloaded")
+        self.expect(self.page.get_by_role("heading", name="Вход в панель", exact=True)).to_be_visible()
+        self.login()
+        self.open_routes()
+        self.page.get_by_label("Маршрут", exact=True).select_option(uzs_id)
+        self.expect(self.page.get_by_role("heading", name=name, level=2, exact=True)).to_be_visible()
+        self.expect(self.page.get_by_label("Тариф за остановку", exact=True)).to_have_value("3500")
+        self.expect(self.page.get_by_test_id("saved-route-tariff")).to_contain_text("сум")
+        require(expect_status(api_request(self.args.api_url, path, token=self.token), 200, "Durable UZS route")["route"] == updated, "Reload must restore the actual persisted UZS tariff")
+        require(self.route() == legacy, "Creating and editing UZS must not relabel or mutate the old KZT route")
+        self.page.get_by_label("Маршрут", exact=True).select_option(self.route_id)
+        self.expect(self.page.get_by_label("Тариф за остановку", exact=True)).to_have_value(str(legacy["pricePerStopKzt"]))
+        self.expect(self.page.get_by_test_id("saved-route-tariff")).to_contain_text("₸")
+        self.page.get_by_label("Маршрут", exact=True).select_option(uzs_id)
+        self.expect(self.page.get_by_label("Тариф за остановку", exact=True)).to_have_value("3500")
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        require(self.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "UZS tariff form must fit the 390px viewport")
+        self.screenshot("mobile-390-uzs-tariff")
+        self.passed("Browser reload retains UZS while the original KZT tariff and mobile layout stay intact")
+
+        rejected = expect_status(api_request(self.args.api_url, path, "PATCH", {"currency": "KZT", "price_per_stop": 999}, self.token), 409, "Administrator currency relabelling denied")
+        require(rejected.get("error", {}).get("code") == "ROUTE_CURRENCY_IMMUTABLE", "Currency mutation must fail with its explicit server conflict")
+        expect_status(api_request(self.args.api_url, path, "PATCH", {"currency": "KZT", "price_per_stop": 999}, passenger_token), 403, "Passenger tariff/currency write denied")
+        require(expect_status(api_request(self.args.api_url, path, token=self.token), 200, "UZS after rejected writes")["route"] == updated, "Rejected currency/authority writes must not change the tariff")
+        self.passed("Server refuses currency relabelling and passenger tariff writes without changing UZS data")
+
     def vehicle_review(self):
         phone = "+77775" + str(uuid.uuid4().int % 1_000_000).zfill(6)
         challenge = expect_status(api_request(self.args.api_url, "/auth/request-otp", "POST", {"phone_number": phone, "full_name": "CI vehicle review driver", "role": "driver", "locale": "ru"}), 202, "Driver fixture OTP")
@@ -341,6 +427,8 @@ class AdminLayoutQA:
         name = "CI route " + uuid.uuid4().hex[:10]
         self.page.get_by_role("button", name="Новый маршрут", exact=True).click()
         self.page.get_by_label("Название нового маршрута", exact=True).fill(name)
+        self.page.get_by_label("Валюта нового маршрута", exact=True).select_option("KZT")
+        self.page.get_by_label("Тариф нового маршрута", exact=True).fill("500")
         with self.response_for("/admin/routes", "POST") as pending:
             self.page.get_by_role("button", name="Создать маршрут", exact=True).click()
         require(pending.value.status == 201, "Route creation must use the actual API")
@@ -462,6 +550,7 @@ class AdminLayoutQA:
         require(self.route() == changed, "Passenger request must not mutate the route")
         self.passed("Real passenger tokens cannot read or write admin routes")
 
+        self.currency_tariffs(passenger["access_token"])
         self.vehicle_review()
 
         with self.response_for("/auth/logout", "POST") as pending:
@@ -544,3 +633,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+

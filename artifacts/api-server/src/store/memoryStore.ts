@@ -1,8 +1,9 @@
+import { applyRoutePricingPatch, normalizeRoutePricing } from "../utils/routePricing";
 import { assertVehicleQueueCapacity, assertVehicleReview, createDriverVehicle, hasRequiredDriverApproval } from "../utils/driverVehicle";
 import { randomUUID } from "node:crypto";
 import { OFFER_TIMEOUT_MS, OTP_TTL_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
 import { normalizePhone } from "../utils/phone";
-import type { DriverRouteChoiceInput, ExternalPickupSelectionInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderSelectionInput, Store } from "./storeContract";
+import type { RouteCreateInput, RouteMetadataPatch, DriverRouteChoiceInput, ExternalPickupSelectionInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderSelectionInput, Store } from "./storeContract";
 import { emptyOtpRateState, OTP_CLEANUP_BATCH_SIZE, otpFailureState, otpPhoneBlock, otpRateExpiresAt, otpRateKey, recordOtpFailure, takeOtpIp, takeOtpSend } from "./otpProtection";
 import type { OtpRateKind, OtpRateState } from "./otpProtection";
 import { mutateRouteStop, nextRouteUpdatedAt, replaceRouteLayout } from "../utils/routeLayout";
@@ -477,7 +478,7 @@ class MemoryStore implements Store {
     if (route.updatedAt !== input.expectedUpdatedAt) {
       throw new AppError(409, "Route changed; reload the catalog", "ROUTE_CHANGED");
     }
-    const settings = normalizeExternalPickupSettings(input.settings);
+    const settings = normalizeExternalPickupSettings(input.settings, route.currency);
     const updated = { ...route, externalPickup: settings, updatedAt: nextRouteUpdatedAt(route.updatedAt) };
     this.routes.set(routeId, updated);
     return structuredClone(updated);
@@ -496,6 +497,8 @@ class MemoryStore implements Store {
     // The original UUID is a permanent idempotency key, including after a
     // later repricing. Replaying it can never reserve another driver's seats.
     if (existing && (!quote.orderId || existing.externalPickup?.quoteId === quote.quoteId)) {
+      const currency = quote.version === 1 ? "KZT" : quote.version === 2 ? quote.currency : undefined;
+      if (currency !== existing.fare.currency) throw new AppError(409, "Pickup quote currency changed", "PICKUP_QUOTE_CHANGED");
       return { order: structuredClone(existing), created: false, changed: false };
     }
     if (quote.orderId && !existing) {
@@ -890,12 +893,7 @@ class MemoryStore implements Store {
     return structuredClone(route);
   }
 
-  createRoute(input: {
-    id: string;
-    name: string;
-    pricePerStopKzt: number;
-    active: boolean;
-  }): RouteDefinition {
+  createRoute(input: RouteCreateInput): RouteDefinition {
     if (this.routes.has(input.id)) {
       throw new Error(`Route ${input.id} already exists`);
     }
@@ -903,8 +901,7 @@ class MemoryStore implements Store {
     const route: RouteDefinition = {
       id: input.id,
       name: input.name,
-      currency: "KZT",
-      pricePerStopKzt: input.pricePerStopKzt,
+      ...normalizeRoutePricing(input),
       active: input.active,
       stops: [],
       createdAt: now,
@@ -916,7 +913,7 @@ class MemoryStore implements Store {
 
   updateRoute(
     routeId: string,
-    patch: Partial<Pick<RouteDefinition, "name" | "pricePerStopKzt" | "active">>,
+    patch: RouteMetadataPatch,
     audit?: AdminMutationActor,
   ): RouteDefinition | undefined {
     if (audit) {
@@ -927,7 +924,7 @@ class MemoryStore implements Store {
     if (!route) {
       return undefined;
     }
-    const updated = { ...route, ...patch, updatedAt: nextRouteUpdatedAt(route.updatedAt) };
+    const updated = { ...applyRoutePricingPatch(route, patch), updatedAt: nextRouteUpdatedAt(route.updatedAt) };
     const event = audit ? routeMetadataEvent(route, updated, audit.adminId) : undefined;
     if (audit && !event) return structuredClone(route);
     this.routes.set(routeId, updated);

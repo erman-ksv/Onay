@@ -1,5 +1,8 @@
 # Fare money contract — compatibility step
 
+This document describes the earlier KZT compatibility step. For current UZS
+contracts, migration and activation restrictions, see [UZS rollout](ONAY_UZS_ROLLOUT.md).
+
 This additive step prepares the server for currency-neutral clients. The runtime
 still creates KZT fares; it does not enable UZS tariffs or convert any stored value.
 
