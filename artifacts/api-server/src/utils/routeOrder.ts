@@ -5,7 +5,8 @@ import { resolveRouteQueue } from "./routeQueue";
 import { isValidCoordinates, isWithinRadius } from "./geo";
 import { AppError } from "./errors";
 import { optionalString } from "./validation";
-import { withCanonicalKztFare } from "./fareMoney";
+import { fareMoneyFields } from "./fareMoney";
+import { routePricePerStop } from "./routePricing";
 
 /** Passenger stop selectors must survive every HTTP/store normalization step. */
 export function validateRouteOrderSelectionInput(selection: RouteOrderSelectionInput): RouteOrderSelectionInput {
@@ -20,11 +21,12 @@ export function validateRouteOrderSelectionInput(selection: RouteOrderSelectionI
 }
 
 function validRouteOrderPricing(route: RouteDefinition): boolean {
-  if (route.currency !== "KZT" || !Number.isSafeInteger(route.pricePerStopKzt) || route.pricePerStopKzt < 0) return false;
+  let price: number;
+  try { price = routePricePerStop(route); } catch { return false; }
   const first = route.stops[0];
   const last = route.stops[route.stops.length - 1];
   return Boolean(first && last && Number.isSafeInteger(first.position) && Number.isSafeInteger(last.position) &&
-    Number.isSafeInteger(Math.max(1, Math.ceil(Math.abs(last.position - first.position))) * route.pricePerStopKzt));
+    Number.isSafeInteger(Math.max(1, Math.ceil(Math.abs(last.position - first.position))) * price));
 }
 
 /** Call under the live route lock when persisting a configured order. */
@@ -69,12 +71,13 @@ export function buildRouteOrder(
     routeContext,
     routeStops: stops,
     destination: destinationStop.name,
-    fare: withCanonicalKztFare({
-      currency: route.currency, routeId: route.id, pickupStop, destinationStop,
+    fare: {
+      ...fareMoneyFields(route, distanceStops * routePricePerStop(route)),
+      routeId: route.id, pickupStop, destinationStop,
       pickupPosition: pickupStop.position, destinationPosition: destinationStop.position,
-      distanceStops, pricePerStopKzt: route.pricePerStopKzt, minimumFareApplied: false,
-      stops, totalKzt: distanceStops * route.pricePerStopKzt, calculatedAt: new Date().toISOString(),
-    }),
+      distanceStops, minimumFareApplied: false,
+      stops, calculatedAt: new Date().toISOString(),
+    },
   };
 }
 

@@ -10,6 +10,7 @@ import { readRouteLayoutInput } from "../utils/routeLayout";
 import { boundedInteger, optionalString, pickEnum, requiredString } from "../utils/validation";
 import { normalizeExternalPickupSettings } from "../store/externalPickup";
 import { processOrderDispatch, publishOrderOfferChanges } from "../services/orderDispatchService";
+import type { RouteMetadataPatch } from "../store/storeContract";
 
 export async function listAdminAuditEvents(request: Request, response: Response): Promise<void> {
   if (Object.keys(request.query).some(key => !["order_id", "driver_id", "route_id", "limit"].includes(key))) {
@@ -122,7 +123,7 @@ export async function updateExternalPickupSettings(request: Request, response: R
   const input = body as Record<string, unknown>;
   const raw = input.settings;
   const mapping = {
-    enabled: "enabled", service_radius_meters: "serviceRadiusMeters", price_per_km_kzt: "pricePerKmKzt",
+    enabled: "enabled", currency: "currency", service_radius_meters: "serviceRadiusMeters", price_per_km_kzt: "pricePerKmKzt", price_per_km: "pricePerKm",
     gps_max_age_seconds: "gpsMaxAgeSeconds", quote_ttl_seconds: "quoteTtlSeconds",
     pickup_grace_seconds: "pickupGraceSeconds", max_pickup_seconds: "maxPickupSeconds", fare_rounding: "fareRounding",
   } as const;
@@ -152,10 +153,13 @@ export async function updateRouteLayout(request: Request, response: Response): P
 export async function createRoute(request: Request, response: Response): Promise<void> {
   let route;
   try {
+    const currency = pickEnum(request.body?.currency ?? "KZT", "currency", ["KZT", "UZS"] as const);
+    if (currency === "UZS" && request.body?.price_per_stop === undefined) throw new AppError(400, "UZS requires an explicit tariff", "INVALID_ROUTE_PRICE");
     route = await store.createRoute({
       id: routeId(request.body?.route_id),
       name: requiredString(request.body?.name, "name", 120),
-      pricePerStopKzt: boundedInteger(
+      currency,
+      pricePerStop: boundedInteger(
         request.body?.price_per_stop ?? 500,
         "price_per_stop",
         0,
@@ -175,16 +179,13 @@ export async function createRoute(request: Request, response: Response): Promise
 export async function updateRoute(request: Request, response: Response): Promise<void> {
   if (!request.auth || request.auth.role !== "admin") throw new AppError(403, "Administrator role is required", "FORBIDDEN");
   const routeIdParam = requiredString(request.params["routeId"], "route_id", 80);
-  const patch: {
-    name?: string;
-    pricePerStopKzt?: number;
-    active?: boolean;
-  } = {};
+  const patch: RouteMetadataPatch = {};
+  if (request.body?.currency !== undefined) patch.currency = pickEnum(request.body.currency, "currency", ["KZT", "UZS"] as const);
   if (request.body?.name !== undefined) {
     patch.name = requiredString(request.body.name, "name", 120);
   }
   if (request.body?.price_per_stop !== undefined) {
-    patch.pricePerStopKzt = boundedInteger(
+    patch.pricePerStop = boundedInteger(
       request.body.price_per_stop,
       "price_per_stop",
       0,

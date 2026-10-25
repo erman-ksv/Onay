@@ -7,6 +7,7 @@ import type {
   DriverRouteChoice,
   DriverRouteDirection,
   FareQuote,
+  FareCurrency,
   ExternalPickupQuote,
   ExternalPickupSelectionInput,
   ExternalPickupSettings,
@@ -29,6 +30,16 @@ import type {
  * asynchronous in durable adapters; callers should await results before
  * switching production storage.
  */
+export interface RouteCreateInput {
+  id: string;
+  name: string;
+  currency?: FareCurrency;
+  pricePerStop?: number;
+  pricePerStopKzt?: number;
+  active: boolean;
+}
+export type RouteMetadataPatch = Partial<Pick<RouteDefinition, "name" | "currency" | "pricePerStop" | "pricePerStopKzt" | "active">>;
+
 export type MaybePromise<T> = T | Promise<T>;
 export interface AdminMutationActor { adminId: string; expectedSessionVersion: number }
 export type { OrderOfferChange } from "../types/domain";
@@ -193,17 +204,8 @@ export interface Store {
   updateExternalPickupSettings(routeId: string, input: { expectedUpdatedAt: string; settings: ExternalPickupSettings }): MaybePromise<RouteDefinition | undefined>;
   /** Replace only the ordered static layout, rejecting a stale route version. */
   updateRouteLayout(routeId: string, input: RouteLayoutInput): MaybePromise<RouteDefinition | undefined>;
-  createRoute(input: {
-    id: string;
-    name: string;
-    pricePerStopKzt: number;
-    active: boolean;
-  }): MaybePromise<RouteDefinition>;
-  updateRoute(
-    routeId: string,
-    patch: Partial<Pick<RouteDefinition, "name" | "pricePerStopKzt" | "active">>,
-    audit?: AdminMutationActor,
-  ): MaybePromise<RouteDefinition | undefined>;
+  createRoute(input: RouteCreateInput): MaybePromise<RouteDefinition>;
+  updateRoute(routeId: string, patch: RouteMetadataPatch, audit?: AdminMutationActor): MaybePromise<RouteDefinition | undefined>;
   deleteRoute(routeId: string): MaybePromise<boolean>;
   addRouteStop(
     routeId: string,

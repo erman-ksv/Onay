@@ -85,6 +85,13 @@
       "when": 1792886520000,
       "tag": "0011_route_metadata_audit",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792915200000,
+      "tag": "0012_route_currency",
+      "breakpoints": true
     }
   ]
 }

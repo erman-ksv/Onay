@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import type {
   Coordinates, ExternalPickupQuote, ExternalPickupSelectionInput, ExternalPickupSettings,
-  Order, QueueEntry, RouteDefinition,
+  Order, QueueEntry, RouteDefinition, FareCurrency,
 } from "../types/domain";
 import { AppError } from "../utils/errors";
 import { isValidCoordinates, isWithinRadius } from "../utils/geo";
@@ -10,10 +10,13 @@ import { validateDriverRouteChoiceInput } from "../utils/driverRoute";
 import { optionalString, requiredString } from "../utils/validation";
 import { JWT_SECRET, OFFER_TIMEOUT_MS } from "../utils/config";
 import { isCollecting } from "./lineCollection";
+import { withCanonicalFare } from "../utils/fareMoney";
+import { externalQuoteAmounts } from "../utils/externalMoney";
 
 type ExternalDetails = Pick<Order, "pickupPoint" | "routeContext" | "routeStops" | "fare" | "destination">;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const settingsKeys = ["enabled", "serviceRadiusMeters", "pricePerKmKzt", "gpsMaxAgeSeconds", "quoteTtlSeconds", "pickupGraceSeconds", "maxPickupSeconds", "fareRounding"] as const;
+const settingsCommonKeys = ["enabled", "serviceRadiusMeters", "gpsMaxAgeSeconds", "quoteTtlSeconds", "pickupGraceSeconds", "maxPickupSeconds", "fareRounding"] as const;
+const settingsKeys = [...settingsCommonKeys, "currency", "pricePerKm", "pricePerKmKzt"] as const;
 const locationFingerprintKey = createHmac("sha256", JWT_SECRET)
   .update("TezJet/external-pickup-driver-location/v1").digest();
 
@@ -32,21 +35,37 @@ function integer(value: unknown, minimum: number, maximum: number, field: string
 }
 
 /** No settings or tariff defaults: the administrator must supply every field. */
-export function normalizeExternalPickupSettings(input: unknown): ExternalPickupSettings {
+export function normalizeExternalPickupSettings(input: unknown, expectedCurrency?: FareCurrency): ExternalPickupSettings {
   const fields = record(input, settingsKeys);
-  if (settingsKeys.some(key => !Object.hasOwn(fields, key)) || typeof fields.enabled !== "boolean" ||
-      (fields.fareRounding !== "ceil_kzt" && fields.fareRounding !== "nearest_kzt")) {
-    throw new AppError(400, "All external pickup settings and a supported fare rounding are required", "VALIDATION_ERROR");
+  const currency = fields.currency ?? "KZT";
+  if ((currency !== "KZT" && currency !== "UZS") || (expectedCurrency !== undefined && currency !== expectedCurrency) ||
+      settingsCommonKeys.some(key => !Object.hasOwn(fields, key)) || typeof fields.enabled !== "boolean") {
+    throw new AppError(400, "All external pickup settings and matching currency are required", "VALIDATION_ERROR");
+  }
+  let pricing: Pick<ExternalPickupSettings, "currency" | "pricePerKm" | "pricePerKmKzt" | "fareRounding">;
+  if (currency === "UZS") {
+    if (Object.hasOwn(fields, "pricePerKmKzt") || (fields.fareRounding !== "ceil" && fields.fareRounding !== "nearest")) {
+      throw new AppError(400, "UZS pickup requires neutral pricing and rounding", "VALIDATION_ERROR");
+    }
+    pricing = { currency, pricePerKm: integer(fields.pricePerKm, 0, 1_000_000_000, "price_per_km"), fareRounding: fields.fareRounding };
+  } else {
+    const rate = integer(fields.pricePerKmKzt ?? fields.pricePerKm, 0, 1_000_000_000, "price_per_km_kzt");
+    if ((fields.pricePerKm !== undefined && fields.pricePerKm !== rate) ||
+        (fields.pricePerKmKzt !== undefined && fields.pricePerKmKzt !== rate) ||
+        (fields.fareRounding !== "ceil_kzt" && fields.fareRounding !== "nearest_kzt")) {
+      throw new AppError(400, "KZT pickup pricing or rounding is invalid", "VALIDATION_ERROR");
+    }
+    // Keep the v1 policy byte shape: old signed quotes compare this snapshot.
+    pricing = { pricePerKmKzt: rate, fareRounding: fields.fareRounding };
   }
   const settings: ExternalPickupSettings = {
     enabled: fields.enabled,
     serviceRadiusMeters: integer(fields.serviceRadiusMeters, 1, 500_000, "service_radius_meters"),
-    pricePerKmKzt: integer(fields.pricePerKmKzt, 0, 1_000_000_000, "price_per_km_kzt"),
+    ...pricing,
     gpsMaxAgeSeconds: integer(fields.gpsMaxAgeSeconds, 1, 3600, "gps_max_age_seconds"),
     quoteTtlSeconds: integer(fields.quoteTtlSeconds, 1, 3600, "quote_ttl_seconds"),
     pickupGraceSeconds: integer(fields.pickupGraceSeconds, 0, 86400, "pickup_grace_seconds"),
     maxPickupSeconds: integer(fields.maxPickupSeconds, 1, 86400, "max_pickup_seconds"),
-    fareRounding: fields.fareRounding,
   };
   if (settings.pickupGraceSeconds > settings.maxPickupSeconds) {
     throw new AppError(400, "Pickup grace cannot exceed the maximum pickup time", "VALIDATION_ERROR");
@@ -61,21 +80,29 @@ export function validateExternalPickupSelectionInput(input: unknown): ExternalPi
   return { ...choice, ...(destinationStopId === undefined ? {} : { destinationStopId }) };
 }
 
-export function externalPickupSurchargeKzt(distanceMeters: number, settings: ExternalPickupSettings): number {
+export function externalPickupSurcharge(distanceMeters: number, settings: ExternalPickupSettings): number {
   const distance = integer(distanceMeters, 0, 10_000_000, "road_distance_meters");
-  const rate = integer(settings.pricePerKmKzt, 0, 1_000_000_000, "price_per_km_kzt");
-  if (settings.fareRounding !== "ceil_kzt" && settings.fareRounding !== "nearest_kzt") {
-    throw new AppError(400, "A supported pickup fare rounding is required", "VALIDATION_ERROR");
+  const uzs = settings.currency === "UZS";
+  const rate = integer(uzs ? settings.pricePerKm : settings.pricePerKmKzt, 0, 1_000_000_000, uzs ? "price_per_km" : "price_per_km_kzt");
+  const validRounding = uzs ? settings.fareRounding === "ceil" || settings.fareRounding === "nearest"
+    : settings.fareRounding === "ceil_kzt" || settings.fareRounding === "nearest_kzt";
+  const validCurrency = uzs ? settings.pricePerKmKzt === undefined : settings.currency === undefined || settings.currency === "KZT";
+  if (!validRounding || !validCurrency) {
+    throw new AppError(400, "A matching pickup currency and rounding are required", "VALIDATION_ERROR");
   }
-  // Integer metre billing avoids floating-point overcharges at exact tenge
-  // boundaries. nearest_kzt rounds a positive half-tenge upward; ceil_kzt
-  // rounds any positive fractional tenge upward. Zero remains zero.
+  // Integer metre billing preserves exact boundaries in either currency.
   const numerator = BigInt(distance) * BigInt(rate);
-  const rounded = (numerator + (settings.fareRounding === "ceil_kzt" ? 999n : 500n)) / 1000n;
+  const rounded = (numerator + (settings.fareRounding === "ceil_kzt" || settings.fareRounding === "ceil" ? 999n : 500n)) / 1000n;
   if (rounded > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new AppError(422, "Pickup fare exceeds the supported amount", "INVALID_PICKUP_FARE");
   }
   return Number(rounded);
+}
+
+/** Compatibility API: the KZT-named helper never computes UZS. */
+export function externalPickupSurchargeKzt(distanceMeters: number, settings: ExternalPickupSettings): number {
+  if (settings.currency === "UZS") throw new AppError(400, "KZT helper cannot compute UZS", "VALIDATION_ERROR");
+  return externalPickupSurcharge(distanceMeters, settings);
 }
 
 export function externalPickupLeaseMs(roadDurationSeconds: number, settings: ExternalPickupSettings): number {
@@ -101,24 +128,27 @@ function targetLocation(value: unknown): Coordinates {
 
 /** Structural validation used after the separate quote key/audience verification. */
 export function validateExternalPickupQuote(value: unknown): ExternalPickupQuote {
-  const fields = record(value, ["version", "quoteId", "passengerId", "sessionVersion", "selection", "pickupLocation", "seats", "driverId", "driverEnrollmentId", "driverLocationFingerprint", "roadDistanceMeters", "roadDurationSeconds", "baseFareKzt", "pickupSurchargeKzt", "totalKzt", "settings", "quotedAt", "expiresAt", "orderId", "expectedOrderUpdatedAt", "expectedAttemptedDriverIds", "pickupAddress"]);
-  if (fields.version !== 1 || typeof fields.quoteId !== "string" || !UUID.test(fields.quoteId) ||
+  const version = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>).version : undefined;
+  const moneyKeys = version === 2 ? ["currency", "baseFare", "pickupSurcharge", "total"] : ["baseFareKzt", "pickupSurchargeKzt", "totalKzt"];
+  const fields = record(value, ["version", "quoteId", "passengerId", "sessionVersion", "selection", "pickupLocation", "seats", "driverId", "driverEnrollmentId", "driverLocationFingerprint", "roadDistanceMeters", "roadDurationSeconds", ...moneyKeys, "settings", "quotedAt", "expiresAt", "orderId", "expectedOrderUpdatedAt", "expectedAttemptedDriverIds", "pickupAddress"]);
+  if ((version !== 1 && version !== 2) || (version === 2 && fields.currency !== "UZS") || typeof fields.quoteId !== "string" || !UUID.test(fields.quoteId) ||
       typeof fields.driverEnrollmentId !== "string" || !UUID.test(fields.driverEnrollmentId) ||
       typeof fields.driverLocationFingerprint !== "string" || !/^[a-f0-9]{64}$/.test(fields.driverLocationFingerprint)) {
     throw new AppError(400, "External pickup quote is invalid", "INVALID_PICKUP_QUOTE");
   }
-  const settings = normalizeExternalPickupSettings(fields.settings);
+  const currency: FareCurrency = version === 1 ? "KZT" : "UZS";
+  const settings = normalizeExternalPickupSettings(fields.settings, currency);
   const roadDistanceMeters = integer(fields.roadDistanceMeters, 0, 10_000_000, "road_distance_meters");
   const roadDurationSeconds = integer(fields.roadDurationSeconds, 0, 1_000_000, "road_duration_seconds");
   externalPickupLeaseMs(roadDurationSeconds, settings);
-  const baseFareKzt = integer(fields.baseFareKzt, 0, Number.MAX_SAFE_INTEGER, "base_fare_kzt");
-  const pickupSurchargeKzt = integer(fields.pickupSurchargeKzt, 0, Number.MAX_SAFE_INTEGER, "pickup_surcharge_kzt");
-  const totalKzt = integer(fields.totalKzt, 0, Number.MAX_SAFE_INTEGER, "total_kzt");
+  const baseFare = integer(version === 1 ? fields.baseFareKzt : fields.baseFare, 0, Number.MAX_SAFE_INTEGER, "base_fare");
+  const pickupSurcharge = integer(version === 1 ? fields.pickupSurchargeKzt : fields.pickupSurcharge, 0, Number.MAX_SAFE_INTEGER, "pickup_surcharge");
+  const total = integer(version === 1 ? fields.totalKzt : fields.total, 0, Number.MAX_SAFE_INTEGER, "total");
   const quotedAt = integer(fields.quotedAt, 0, 8_640_000_000_000_000, "quoted_at");
   const expiresAt = integer(fields.expiresAt, 0, 8_640_000_000_000_000, "expires_at");
   if (expiresAt <= quotedAt || expiresAt - quotedAt > settings.quoteTtlSeconds * 1000 ||
-      pickupSurchargeKzt !== externalPickupSurchargeKzt(roadDistanceMeters, settings) ||
-      !Number.isSafeInteger(baseFareKzt + pickupSurchargeKzt) || totalKzt !== baseFareKzt + pickupSurchargeKzt) {
+      pickupSurcharge !== externalPickupSurcharge(roadDistanceMeters, settings) ||
+      !Number.isSafeInteger(baseFare + pickupSurcharge) || total !== baseFare + pickupSurcharge) {
     throw new AppError(400, "External pickup quote totals or expiry are invalid", "INVALID_PICKUP_QUOTE");
   }
   const orderId = optionalString(fields.orderId, "order_id", 80);
@@ -139,12 +169,14 @@ export function validateExternalPickupQuote(value: unknown): ExternalPickupQuote
   }
   const pickupAddress = optionalString(fields.pickupAddress, "pickup_address", 500);
   return {
-    version: 1, quoteId: fields.quoteId, passengerId: requiredString(fields.passengerId, "passenger_id", 120),
+    version, quoteId: fields.quoteId, passengerId: requiredString(fields.passengerId, "passenger_id", 120),
     sessionVersion: integer(fields.sessionVersion, 0, Number.MAX_SAFE_INTEGER, "session_version"),
     selection: validateExternalPickupSelectionInput(fields.selection), pickupLocation: targetLocation(fields.pickupLocation),
     seats: integer(fields.seats, 1, 8, "seats"), driverId: requiredString(fields.driverId, "driver_id", 120),
     driverEnrollmentId: fields.driverEnrollmentId, driverLocationFingerprint: fields.driverLocationFingerprint,
-    roadDistanceMeters, roadDurationSeconds, baseFareKzt, pickupSurchargeKzt, totalKzt, settings, quotedAt, expiresAt,
+    roadDistanceMeters, roadDurationSeconds,
+    ...(version === 1 ? { baseFareKzt: baseFare, pickupSurchargeKzt: pickupSurcharge, totalKzt: total } : { currency, baseFare, pickupSurcharge, total }),
+    settings, quotedAt, expiresAt,
     ...(orderId === undefined ? {} : { orderId, expectedOrderUpdatedAt, expectedAttemptedDriverIds }),
     ...(pickupAddress === undefined ? {} : { pickupAddress }),
   };
@@ -153,7 +185,7 @@ export function validateExternalPickupQuote(value: unknown): ExternalPickupQuote
 export function buildExternalPickupDetails(route: RouteDefinition | undefined, selection: ExternalPickupSelectionInput, target?: Coordinates): ExternalDetails {
   const input = validateExternalPickupSelectionInput(selection);
   const details = buildRouteOrder(route, input);
-  if (!route?.externalPickup || !normalizeExternalPickupSettings(route.externalPickup).enabled) {
+  if (!route?.externalPickup || !normalizeExternalPickupSettings(route.externalPickup, route.currency).enabled) {
     throw new AppError(422, "External pickup is disabled for this route", "EXTERNAL_PICKUP_DISABLED");
   }
   if (target) {
@@ -180,7 +212,7 @@ export function eligibleExternalCandidate(entry: QueueEntry | undefined, route: 
       entry.routeContext.routeUpdatedAt !== selection.expectedUpdatedAt || !isValidCoordinates(entry.lastLocation) || entry.lastLocation.isMocked === true) return false;
   try {
     buildExternalPickupDetails(route, selection);
-    const settings = normalizeExternalPickupSettings(route.externalPickup);
+    const settings = normalizeExternalPickupSettings(route.externalPickup, route.currency);
     const age = now - entry.collectionState.locationUpdatedAt;
     return Number.isFinite(age) && age >= 0 && age <= settings.gpsMaxAgeSeconds * 1000;
   } catch { return false; }
@@ -197,7 +229,8 @@ export function assertExternalQuoteCurrent(quote: ExternalPickupQuote, route: Ro
   const details = buildExternalPickupDetails(route, verified.selection, verified.pickupLocation);
   if (!entry || entry.driverId !== verified.driverId || !eligibleExternalCandidate(entry, route, verified.selection, verified.seats, verified.expectedAttemptedDriverIds, now) ||
       entry.collectionState?.enrollmentId !== verified.driverEnrollmentId || driverLocationFingerprint(entry) !== verified.driverLocationFingerprint ||
-      JSON.stringify(normalizeExternalPickupSettings(route!.externalPickup)) !== JSON.stringify(verified.settings) || details.fare.totalKzt !== verified.baseFareKzt) {
+      JSON.stringify(normalizeExternalPickupSettings(route!.externalPickup, route!.currency)) !== JSON.stringify(verified.settings) ||
+      details.fare.currency !== externalQuoteAmounts(verified).currency || withCanonicalFare(details.fare).total !== externalQuoteAmounts(verified).baseFare) {
     throw new AppError(409, "Driver or pickup price changed; request a current quote", "PICKUP_QUOTE_CHANGED");
   }
 }
@@ -210,6 +243,9 @@ export function nextOrderUpdatedAt(previous: string, now = Date.now()): string {
 function assertRequote(quote: ExternalPickupQuote, existing: Order, passengerId: string): void {
   if (existing.passengerId !== passengerId || existing.id !== quote.orderId) {
     throw new AppError(404, "Order was not found", "ORDER_NOT_FOUND");
+  }
+  if (existing.externalPickup && (externalQuoteAmounts(quote).currency !== existing.fare.currency || quote.version !== existing.externalPickup.version)) {
+    throw new AppError(409, "Pickup currency changed; create a new order", "PICKUP_QUOTE_CHANGED");
   }
   if (!existing.externalPickup || existing.status !== "searching" || existing.driverId || existing.offeredDriverId ||
       existing.offerExpiresAt !== undefined || !existing.externalPickup.requiresPriceConfirmation) {
@@ -234,19 +270,22 @@ export function buildConfirmedExternalOrder(quote: ExternalPickupQuote, route: R
   if (existing) assertRequote(verified, existing, passenger.id);
   else if (verified.orderId || passenger.id !== verified.passengerId) throw new AppError(409, "Pickup quote does not create this order", "PICKUP_QUOTE_CHANGED");
   const details = buildExternalPickupDetails(route, verified.selection, verified.pickupLocation);
-  if (details.fare.totalKzt !== verified.baseFareKzt) throw new AppError(409, "Pickup fare changed", "PICKUP_QUOTE_CHANGED");
+  const money = externalQuoteAmounts(verified);
+  if (details.fare.currency !== money.currency || withCanonicalFare(details.fare).total !== money.baseFare) throw new AppError(409, "Pickup fare changed", "PICKUP_QUOTE_CHANGED");
   const timestamp = new Date(now).toISOString();
   return {
     ...details, id: existing?.id ?? verified.quoteId, passengerId: passenger.id, passengerPhone: passenger.phoneNumber,
     pickupLocation: structuredClone(verified.pickupLocation), seats: verified.seats, status: "searching",
-    fare: { ...details.fare, total: verified.totalKzt, totalKzt: verified.totalKzt }, driverId: undefined,
+    fare: withCanonicalFare({ ...details.fare, total: money.total, ...(money.currency === "KZT" ? { totalKzt: money.total } : {}) }), driverId: undefined,
     offeredDriverId: verified.driverId, offerExpiresAt: now + OFFER_TIMEOUT_MS, seatLockExpiresAt: undefined,
     attemptedDriverIds: [...new Set([...(existing?.attemptedDriverIds ?? []), verified.driverId])],
     createdAt: existing?.createdAt ?? timestamp, updatedAt: existing ? nextOrderUpdatedAt(existing.updatedAt, now) : timestamp,
     externalPickup: {
-      version: 1, quoteId: verified.quoteId, requiresPriceConfirmation: false, driverEnrollmentId: verified.driverEnrollmentId,
+      version: verified.version, quoteId: verified.quoteId, requiresPriceConfirmation: false, driverEnrollmentId: verified.driverEnrollmentId,
       driverLocationFingerprint: verified.driverLocationFingerprint, roadDistanceMeters: verified.roadDistanceMeters,
-      roadDurationSeconds: verified.roadDurationSeconds, baseFareKzt: verified.baseFareKzt, pickupSurchargeKzt: verified.pickupSurchargeKzt,
+      roadDurationSeconds: verified.roadDurationSeconds,
+      ...(money.currency === "KZT" ? { baseFareKzt: money.baseFare, pickupSurchargeKzt: money.pickupSurcharge }
+        : { currency: money.currency, baseFare: money.baseFare, pickupSurcharge: money.pickupSurcharge }),
       settings: structuredClone(verified.settings), quotedAt: verified.quotedAt, quoteExpiresAt: verified.expiresAt,
       ...(verified.pickupAddress === undefined ? {} : { pickupAddress: verified.pickupAddress }),
     },
@@ -264,7 +303,8 @@ export function liveExternalOfferValid(order: Order, entry: QueueEntry | undefin
     buildExternalPickupDetails(route, selection, order.pickupLocation);
     // PostgreSQL JSONB may reorder keys in the persisted snapshot. Compare
     // canonical policy values, not the provider object's insertion order.
-    return JSON.stringify(normalizeExternalPickupSettings(route!.externalPickup)) === JSON.stringify(normalizeExternalPickupSettings(pickup.settings)) &&
+    return order.fare.currency === route!.currency &&
+      JSON.stringify(normalizeExternalPickupSettings(route!.externalPickup, route!.currency)) === JSON.stringify(normalizeExternalPickupSettings(pickup.settings, route!.currency)) &&
       eligibleExternalCandidate({ ...entry, pendingOfferOrderId: undefined, availableSeats: entry.availableSeats + order.seats }, route, selection, order.seats, [], now);
   } catch { return false; }
 }

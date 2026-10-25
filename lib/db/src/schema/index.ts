@@ -1,6 +1,7 @@
 import {
   bigint,
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -152,11 +153,18 @@ export const routesTable = pgTable("tezjet_routes", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   active: boolean("active").notNull().default(true),
-  pricePerStopKzt: integer("price_per_stop_kzt").notNull(),
+  currency: text("currency").notNull().default("KZT"),
+  pricePerStop: integer("price_per_stop"),
+  pricePerStopKzt: integer("price_per_stop_kzt"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
   payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
-});
+}, table => [
+  check("tezjet_routes_currency_pricing_check", sql`(
+    (${table.currency} = 'KZT' AND ${table.pricePerStopKzt} IS NOT NULL AND ${table.pricePerStopKzt} >= 0 AND (${table.pricePerStop} IS NULL OR ${table.pricePerStop} >= 0)) OR
+    (${table.currency} = 'UZS' AND ${table.pricePerStop} IS NOT NULL AND ${table.pricePerStop} >= 0 AND ${table.pricePerStopKzt} IS NULL)
+  )`),
+]);
 
 
 /** Append-only administrative action receipts; never store secrets or GPS. */

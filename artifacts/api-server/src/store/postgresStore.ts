@@ -1,7 +1,8 @@
+import { applyRoutePricingPatch, normalizeRoutePricing, routePricePerStop } from "../utils/routePricing";
 import { assertVehicleQueueCapacity, assertVehicleReview, createDriverVehicle, hasRequiredDriverApproval } from "../utils/driverVehicle";
 import { createHmac, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
-import type { DriverRouteChoiceInput, ExternalPickupSelectionInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderReceipt, RouteOrderSelectionInput, Store } from "./storeContract";
+import type { RouteCreateInput, RouteMetadataPatch, DriverRouteChoiceInput, ExternalPickupSelectionInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderReceipt, RouteOrderSelectionInput, Store } from "./storeContract";
 import { normalizePhone } from "../utils/phone";
 import { emptyOtpRateState, OTP_CLEANUP_BATCH_SIZE, otpFailureState, otpPhoneBlock, otpRateExpiresAt, otpRateKey, recordOtpFailure, takeOtpIp, takeOtpSend } from "./otpProtection";
 import type { OtpRateKind, OtpRateState } from "./otpProtection";
@@ -152,6 +153,8 @@ function queueOwnsEligibleOffer(entry: QueueEntry | undefined, order: Order, now
 }
 
 function asRoute(row: Record<string, unknown>): RouteDefinition {
+  // Payload is authoritative: a compatible older KZT writer may update its
+  // legacy tariff while leaving the new projection columns unchanged.
   return row.payload as RouteDefinition;
 }
 
@@ -197,6 +200,8 @@ export class PostgresStore implements Store {
             id: seededRoute.id,
             name: seededRoute.name,
             active: seededRoute.active,
+            currency: seededRoute.currency,
+            pricePerStop: routePricePerStop(seededRoute),
             pricePerStopKzt: seededRoute.pricePerStopKzt,
             createdAt: seededRoute.createdAt,
             updatedAt: seededRoute.updatedAt,
@@ -952,6 +957,8 @@ export class PostgresStore implements Store {
           throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
         }
         if (passenger.role !== "passenger") throw new AppError(403, "passenger mode is required", "FORBIDDEN");
+        const currency = quote.version === 1 ? "KZT" : quote.version === 2 ? quote.currency : undefined;
+        if (currency !== existing.fare.currency) throw new AppError(409, "Pickup quote currency changed", "PICKUP_QUOTE_CHANGED");
         return { order: existing, created: false, changed: false };
       }
 
@@ -1709,23 +1716,25 @@ export class PostgresStore implements Store {
     routeId: string,
     input: { expectedUpdatedAt: string; settings: ExternalPickupSettings },
   ): Promise<RouteDefinition | undefined> {
-    const settings = normalizeExternalPickupSettings(input.settings);
     return this.mutateRoute(routeId, route => {
       if (route.updatedAt !== input.expectedUpdatedAt) {
         throw new AppError(409, "Route changed; reload the catalog", "ROUTE_CHANGED");
       }
+      const settings = normalizeExternalPickupSettings(input.settings, route.currency);
       return {
         route: { ...route, externalPickup: settings, updatedAt: nextRouteUpdatedAt(route.updatedAt) },
       };
     });
   }
 
-  async createRoute(input: { id: string; name: string; pricePerStopKzt: number; active: boolean }): Promise<RouteDefinition> {
+  async createRoute(input: RouteCreateInput): Promise<RouteDefinition> {
     const { db, routesTable } = await this.database();
     const now = new Date().toISOString();
     const route: RouteDefinition = {
-      ...input,
-      currency: "KZT",
+      id: input.id,
+      name: input.name,
+      active: input.active,
+      ...normalizeRoutePricing(input),
       stops: [],
       createdAt: now,
       updatedAt: now,
@@ -1734,7 +1743,9 @@ export class PostgresStore implements Store {
       id: route.id,
       name: route.name,
       active: route.active,
-      pricePerStopKzt: route.pricePerStopKzt,
+      currency: route.currency,
+      pricePerStop: routePricePerStop(route),
+      pricePerStopKzt: route.currency === "KZT" ? routePricePerStop(route) : null,
       createdAt: route.createdAt,
       updatedAt: route.updatedAt,
       payload: route as unknown as Record<string, unknown>,
@@ -1743,9 +1754,9 @@ export class PostgresStore implements Store {
     return asRoute(row as unknown as Record<string, unknown>);
   }
 
-  async updateRoute(routeId: string, patch: Partial<Pick<RouteDefinition, "name" | "pricePerStopKzt" | "active">>, audit?: AdminMutationActor): Promise<RouteDefinition | undefined> {
+  async updateRoute(routeId: string, patch: RouteMetadataPatch, audit?: AdminMutationActor): Promise<RouteDefinition | undefined> {
     return this.mutateRoute(routeId, (route) => ({
-      route: { ...route, ...patch, updatedAt: nextRouteUpdatedAt(route.updatedAt) },
+      route: { ...applyRoutePricingPatch(route, patch), updatedAt: nextRouteUpdatedAt(route.updatedAt) },
     }), audit);
   }
 
@@ -1806,7 +1817,9 @@ export class PostgresStore implements Store {
       const [row] = await tx.update(routesTable).set({
         name: route.name,
         active: route.active,
-        pricePerStopKzt: route.pricePerStopKzt,
+        currency: route.currency,
+        pricePerStop: routePricePerStop(route),
+        pricePerStopKzt: route.currency === "KZT" ? routePricePerStop(route) : null,
         updatedAt: route.updatedAt,
         payload: route as unknown as Record<string, unknown>,
       }).where(eq(routesTable.id, routeId)).returning();

@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { store } from "../store";
 import type { Coordinates, ExternalPickupQuote, ExternalPickupSelectionInput, Order } from "../types/domain";
-import { buildExternalPickupDetails, driverLocationFingerprint, eligibleExternalCandidate, externalPickupLeaseMs, externalPickupSurchargeKzt } from "../store/externalPickup";
+import { buildExternalPickupDetails, driverLocationFingerprint, eligibleExternalCandidate, externalPickupLeaseMs, externalPickupSurcharge, normalizeExternalPickupSettings } from "../store/externalPickup";
 import { AppError } from "../utils/errors";
 import { routePickupCandidates } from "./externalPickupRouting";
+import { withCanonicalFare } from "../utils/fareMoney";
 
 export interface ExternalPickupRequest {
   selection: ExternalPickupSelectionInput;
@@ -46,7 +47,7 @@ export async function quoteExternalPickup(
   const excluded = existing?.attemptedDriverIds ?? [];
   const { route, candidates } = await store.getExternalPickupCandidates(input.selection, input.seats, excluded);
   const details = buildExternalPickupDetails(route, input.selection, input.pickupLocation);
-  const settings = route.externalPickup!;
+  const settings = normalizeExternalPickupSettings(route.externalPickup, route.currency);
   if (candidates.length === 0) throw new AppError(409, "Водителей пока нет", "NO_DRIVERS");
   const quotedAt = Date.now();
   // Road routing performs no writes and holds no database locks. A failed batch
@@ -63,19 +64,22 @@ export async function quoteExternalPickup(
       throw error;
     }
     const roadDistanceMeters = Math.ceil(road.distanceMeters);
-    const pickupSurchargeKzt = externalPickupSurchargeKzt(roadDistanceMeters, settings);
-    const totalKzt = details.fare.totalKzt + pickupSurchargeKzt;
-    if (!Number.isSafeInteger(totalKzt)) throw new AppError(422, "External fare exceeds supported limits", "INVALID_EXTERNAL_PRICE");
+    const pickupSurcharge = externalPickupSurcharge(roadDistanceMeters, settings);
+    const baseFare = withCanonicalFare(details.fare).total;
+    const total = baseFare + pickupSurcharge;
+    if (!Number.isSafeInteger(total)) throw new AppError(422, "External fare exceeds supported limits", "INVALID_EXTERNAL_PRICE");
     const expiresAt = quotedAt + settings.quoteTtlSeconds * 1000;
     if (expiresAt <= Date.now()) throw new AppError(409, "Pickup quotation expired; request another", "QUOTE_EXPIRED");
     return {
-      version: 1, quoteId: randomUUID(), passengerId, sessionVersion,
+      version: route.currency === "KZT" ? 1 : 2, quoteId: randomUUID(), passengerId, sessionVersion,
       selection: { ...input.selection, destinationStopId: details.fare.destinationStop.id },
       pickupLocation: structuredClone(input.pickupLocation), seats: input.seats,
       driverId: candidate.driverId, driverEnrollmentId: candidate.collectionState!.enrollmentId,
       driverLocationFingerprint: driverLocationFingerprint(candidate),
-      roadDistanceMeters, roadDurationSeconds, baseFareKzt: details.fare.totalKzt,
-      pickupSurchargeKzt, totalKzt, settings: structuredClone(settings), quotedAt, expiresAt,
+      roadDistanceMeters, roadDurationSeconds,
+      ...(route.currency === "KZT" ? { baseFareKzt: baseFare, pickupSurchargeKzt: pickupSurcharge, totalKzt: total }
+        : { currency: "UZS" as const, baseFare, pickupSurcharge, total }),
+      settings: structuredClone(settings), quotedAt, expiresAt,
       ...(input.pickupAddress ? { pickupAddress: input.pickupAddress } : {}),
       ...(existing ? {
         orderId: existing.id, expectedOrderUpdatedAt: existing.updatedAt,

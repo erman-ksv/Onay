@@ -20,6 +20,8 @@ import { isValidCoordinates } from "../utils/geo";
 import { validateRouteOrderSelectionInput } from "../utils/routeOrder";
 import { assertRouteOrderRequestHash, requireRouteOrderRequestKey, routeOrderRequestHash } from "../utils/routeOrderRequest";
 import { logger } from "../lib/logger";
+import { routePricePerStop } from "../utils/routePricing";
+import { publicExternalSettings } from "../utils/externalMoney";
 
 function getSocket(request: Request): Server | undefined {
   return request.app.locals.io as Server | undefined;
@@ -172,12 +174,13 @@ export async function listOrderRoutes(request: Request, response: Response): Pro
   const routes = (await store.listRoutes()).flatMap(route => {
     if (route.active !== true) return [];
     const option = driverRouteOption(route);
-    return option ? [{ ...option, currency: route.currency, pricePerStopKzt: route.pricePerStopKzt,
-      ...(route.externalPickup?.enabled ? { external_pickup: {
-        enabled: true, service_radius_meters: route.externalPickup.serviceRadiusMeters,
-        price_per_km_kzt: route.externalPickup.pricePerKmKzt, fare_rounding: route.externalPickup.fareRounding,
-      } } : {}),
-    }] : [];
+    if (!option) return [];
+    let price: number;
+    try { price = routePricePerStop(route); } catch { return []; }
+    return [{ ...option, currency: route.currency, pricePerStop: price,
+      ...(route.currency === "KZT" ? { pricePerStopKzt: price } : {}),
+      ...(route.externalPickup?.enabled ? { external_pickup: publicExternalSettings(route.externalPickup) } : {}),
+    }];
   });
   response.json({ routes });
 }
