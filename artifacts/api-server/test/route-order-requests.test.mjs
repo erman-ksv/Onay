@@ -686,7 +686,10 @@ test('PostgreSQL failed closure insert rolls back the entire resolution and leav
   await database.query(`CREATE FUNCTION reject_test_closure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected closure failure'; END $$;
     CREATE TRIGGER reject_test_closure BEFORE INSERT ON tezjet_closed_route_order_requests FOR EACH ROW EXECUTE FUNCTION reject_test_closure()`);
   try {
-    await assert.rejects(store.resolveRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion), error => error.code === 'P0001');
+    await assert.rejects(store.resolveRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion), error => {
+      const databaseError = error.cause ?? error;
+      return databaseError.code === 'P0001' && databaseError.message === 'injected closure failure';
+    });
     assert.equal(await store.getRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion), undefined);
     assert.deepEqual(await store.listOrdersForUser(passenger.user.id), []);
     assert.equal((await store.getQueueEntry(driver.user.id)).availableSeats, 4);
