@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { authenticate, requireRole } from "../middleware/auth";
 import {
   addStop,
+  cancelAdminOrder,
   createRoute,
   deleteRoute,
   deleteStop,
@@ -35,6 +36,7 @@ router.post("/admin/routes/:routeId/stops", ...adminOnly, addStop);
 router.patch("/admin/routes/:routeId/stops/:stopId", ...adminOnly, updateStop);
 router.delete("/admin/routes/:routeId/stops/:stopId", ...adminOnly, deleteStop);
 router.get("/admin/orders", ...adminOnly, listAdminOrders);
+router.post("/admin/orders/:orderId/cancel", ...adminOnly, cancelAdminOrder);
 router.get("/admin/statistics/trips", ...adminOnly, getTripStatistics);
 router.get("/admin/queue", ...adminOnly, listAdminQueue);
 router.get("/admin/drivers", ...adminOnly, listDrivers);

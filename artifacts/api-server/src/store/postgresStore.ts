@@ -1453,6 +1453,17 @@ export class PostgresStore implements Store {
     expectedStatus?: OrderStatus,
     expectedSessionVersion?: number,
   ): Promise<Order | undefined> {
+    return this.transitionOrderInternal(orderId, actorId, nextStatus, expectedStatus, expectedSessionVersion);
+  }
+
+  async cancelOrderAsAdmin(orderId: string, adminId: string, expectedStatus: OrderStatus, expectedSessionVersion: number): Promise<Order | undefined> {
+    return this.transitionOrderInternal(orderId, adminId, "cancelled", expectedStatus, expectedSessionVersion, true);
+  }
+
+  private async transitionOrderInternal(
+    orderId: string, actorId: string, nextStatus: OrderStatus, expectedStatus?: OrderStatus,
+    expectedSessionVersion?: number, adminCancellation = false,
+  ): Promise<Order | undefined> {
     const { db, ordersTable, driverQueueTable, usersTable } = await this.database();
     return db.transaction(async (tx) => {
       // Every lifecycle operation acquires the order before any queue row.
@@ -1460,7 +1471,7 @@ export class PostgresStore implements Store {
         .for("update").limit(1);
       if (!orderRow) return undefined;
       const order = asOrder(orderRow as unknown as Record<string, unknown>);
-      if (!canTransitionOrder(order, actorId, nextStatus, expectedStatus)) return undefined;
+      if (!canTransitionOrder(order, actorId, nextStatus, expectedStatus, adminCancellation)) return undefined;
       const queueDriverId = order.driverId ?? (nextStatus === "cancelled" ? order.offeredDriverId : undefined);
       let entry: QueueEntry | undefined;
       if (queueDriverId) {
@@ -1468,14 +1479,15 @@ export class PostgresStore implements Store {
           .where(eq(driverQueueTable.driverId, queueDriverId)).for("update").limit(1);
         entry = queueRow ? asQueueEntry(queueRow as unknown as Record<string, unknown>) : undefined;
       }
-      if (expectedSessionVersion !== undefined || nextStatus === "boarded_waiting") {
+      if (adminCancellation && expectedSessionVersion === undefined) throw new AppError(401, "Session is required", "UNAUTHORIZED");
+      if (adminCancellation || expectedSessionVersion !== undefined || nextStatus === "boarded_waiting") {
         // Acquire the actor only after the order and its queue, matching every
         // offer operation and preventing revocation from racing this transition.
         const [actor] = await tx.select().from(usersTable).where(eq(usersTable.id, actorId)).for("share").limit(1);
         if (!actor || (expectedSessionVersion !== undefined && actor.sessionVersion !== expectedSessionVersion)) {
           throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
         }
-        const role = actorId === order.passengerId ? "passenger" : "driver";
+        const role = adminCancellation ? "admin" : actorId === order.passengerId ? "passenger" : "driver";
         if (actor.role !== role) throw new AppError(403, `${role} mode is required`, "FORBIDDEN");
         if (role === "driver" && !hasRequiredDriverApproval(actor, REQUIRE_DRIVER_APPROVAL)) {
           throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");

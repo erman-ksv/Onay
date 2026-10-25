@@ -237,7 +237,7 @@ class MemoryStore implements Store {
     return structuredClone(user);
   }
 
-  private requireCurrentRole(userId: string, role: "passenger" | "driver", expectedSessionVersion?: number): void {
+  private requireCurrentRole(userId: string, role: "passenger" | "driver" | "admin", expectedSessionVersion?: number): void {
     const user = this.users.get(userId);
     if (!user || (expectedSessionVersion !== undefined && user.sessionVersion !== expectedSessionVersion)) {
       throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
@@ -732,10 +732,19 @@ class MemoryStore implements Store {
   }
 
   transitionOrder(orderId: string, actorId: string, nextStatus: OrderStatus, expectedStatus?: OrderStatus, expectedSessionVersion?: number): Order | undefined {
+    return this.transitionOrderInternal(orderId, actorId, nextStatus, expectedStatus, expectedSessionVersion);
+  }
+
+  cancelOrderAsAdmin(orderId: string, adminId: string, expectedStatus: OrderStatus, expectedSessionVersion: number): Order | undefined {
+    return this.transitionOrderInternal(orderId, adminId, "cancelled", expectedStatus, expectedSessionVersion, true);
+  }
+
+  private transitionOrderInternal(orderId: string, actorId: string, nextStatus: OrderStatus, expectedStatus?: OrderStatus, expectedSessionVersion?: number, adminCancellation = false): Order | undefined {
     const order = this.orders.get(orderId);
-    if (!order || !canTransitionOrder(order, actorId, nextStatus, expectedStatus)) return undefined;
-    if (expectedSessionVersion !== undefined || nextStatus === "boarded_waiting") {
-      const role = actorId === order.passengerId ? "passenger" : "driver";
+    if (!order || !canTransitionOrder(order, actorId, nextStatus, expectedStatus, adminCancellation)) return undefined;
+    if (adminCancellation && expectedSessionVersion === undefined) throw new AppError(401, "Session is required", "UNAUTHORIZED");
+    if (adminCancellation || expectedSessionVersion !== undefined || nextStatus === "boarded_waiting") {
+      const role = adminCancellation ? "admin" : actorId === order.passengerId ? "passenger" : "driver";
       this.requireCurrentRole(actorId, role, expectedSessionVersion);
       if (role === "driver" && !hasRequiredDriverApproval(this.users.get(actorId), REQUIRE_DRIVER_APPROVAL)) {
         throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");

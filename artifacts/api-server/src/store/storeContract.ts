@@ -167,6 +167,7 @@ export interface Store {
     expectedStatus?: OrderStatus,
     expectedSessionVersion?: number,
   ): MaybePromise<Order | undefined>;
+  cancelOrderAsAdmin(orderId: string, adminId: string, expectedStatus: OrderStatus, expectedSessionVersion: number): MaybePromise<Order | undefined>;
   claimOrderForDriver(
     orderId: string,
     driverId: string,
