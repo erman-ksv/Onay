@@ -64,6 +64,13 @@
       "when": 1792584000000,
       "tag": "0008_driver_vehicle",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792886400000,
+      "tag": "0009_admin_audit_events",
+      "breakpoints": true
     }
   ]
 }

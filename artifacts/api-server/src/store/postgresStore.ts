@@ -13,6 +13,7 @@ import { assertExternalQuoteCurrent, buildConfirmedExternalOrder, buildExternalP
 import { AppError } from "../utils/errors";
 import { assertRouteQueueLocation, assertRouteQueueTelemetry, resolveRouteQueue, routeQueueSnapshot, sameQueueLane } from "../utils/routeQueue";
 import type {
+  AdminAuditEvent,
   Coordinates,
   DeviceRegistration,
   DriverApprovalStatus,
@@ -1460,11 +1461,18 @@ export class PostgresStore implements Store {
     return this.transitionOrderInternal(orderId, adminId, "cancelled", expectedStatus, expectedSessionVersion, true);
   }
 
+  async listAdminAuditEvents(orderId?: string, limit = 50): Promise<AdminAuditEvent[]> {
+    const count = boundedInteger(limit, "limit", 1, 100);
+    const { db, adminAuditEventsTable: events } = await this.database();
+    return await db.select().from(events).where(orderId ? eq(events.orderId, orderId) : undefined)
+      .orderBy(desc(events.createdAt), desc(events.id)).limit(count) as AdminAuditEvent[];
+  }
+
   private async transitionOrderInternal(
     orderId: string, actorId: string, nextStatus: OrderStatus, expectedStatus?: OrderStatus,
     expectedSessionVersion?: number, adminCancellation = false,
   ): Promise<Order | undefined> {
-    const { db, ordersTable, driverQueueTable, usersTable } = await this.database();
+    const { db, ordersTable, driverQueueTable, usersTable, adminAuditEventsTable } = await this.database();
     return db.transaction(async (tx) => {
       // Every lifecycle operation acquires the order before any queue row.
       const [orderRow] = await tx.select().from(ordersTable).where(eq(ordersTable.id, orderId))
@@ -1517,6 +1525,10 @@ export class PostgresStore implements Store {
         updatedAt: updated.updatedAt,
         payload: updated as unknown as Record<string, unknown>,
       }).where(eq(ordersTable.id, orderId));
+      if (adminCancellation) await tx.insert(adminAuditEventsTable).values({
+        id: randomUUID(), actorId, action: "order.cancelled", orderId,
+        fromStatus: order.status, toStatus: "cancelled", createdAt: updated.updatedAt,
+      });
       return updated;
     });
   }

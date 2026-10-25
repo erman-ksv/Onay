@@ -1,4 +1,5 @@
 import type {
+  AdminAuditEvent,
   DeviceRegistration,
   Coordinates,
   DriverApprovalStatus,
@@ -168,6 +169,7 @@ export interface Store {
     expectedSessionVersion?: number,
   ): MaybePromise<Order | undefined>;
   cancelOrderAsAdmin(orderId: string, adminId: string, expectedStatus: OrderStatus, expectedSessionVersion: number): MaybePromise<Order | undefined>;
+  listAdminAuditEvents(orderId?: string, limit?: number): MaybePromise<AdminAuditEvent[]>;
   claimOrderForDriver(
     orderId: string,
     driverId: string,

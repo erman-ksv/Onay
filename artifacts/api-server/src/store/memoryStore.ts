@@ -17,6 +17,7 @@ import { boundedInteger } from "../utils/validation";
 import { assertLineOrderTransition, createLineCollectionState, isCollecting, lineOrderIds, prepareLineDeparture } from "./lineCollection";
 import { assertExternalQuoteCurrent, buildConfirmedExternalOrder, buildExternalPickupDetails, eligibleExternalCandidate, externalPickupLeaseMs, liveExternalOfferValid, nextOrderUpdatedAt, normalizeExternalPickupSettings, repriceExternalOrder, validateExternalPickupSelectionInput } from "./externalPickup";
 import type {
+  AdminAuditEvent,
   Coordinates,
   DeviceRegistration,
   DriverQueueStatus,
@@ -47,6 +48,7 @@ class MemoryStore implements Store {
   private otpChallengeCleanupIterator?: IterableIterator<[string, OtpChallenge]>;
   private readonly queueEntries = new Map<string, QueueEntry>();
   private readonly orders = new Map<string, Order>();
+  private readonly adminAuditEvents: AdminAuditEvent[] = [];
   private readonly routeOrderRequests = new Map<string, { requestHash: string; orderId: string }>();
   private readonly deviceRegistrations = new Map<string, DeviceRegistration>();
   private readonly routes = new Map<string, RouteDefinition>();
@@ -739,6 +741,12 @@ class MemoryStore implements Store {
     return this.transitionOrderInternal(orderId, adminId, "cancelled", expectedStatus, expectedSessionVersion, true);
   }
 
+  listAdminAuditEvents(orderId?: string, limit = 50): AdminAuditEvent[] {
+    const count = boundedInteger(limit, "limit", 1, 100);
+    return structuredClone(this.adminAuditEvents.filter(event => !orderId || event.orderId === orderId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)).slice(0, count));
+  }
+
   private transitionOrderInternal(orderId: string, actorId: string, nextStatus: OrderStatus, expectedStatus?: OrderStatus, expectedSessionVersion?: number, adminCancellation = false): Order | undefined {
     const order = this.orders.get(orderId);
     if (!order || !canTransitionOrder(order, actorId, nextStatus, expectedStatus, adminCancellation)) return undefined;
@@ -757,6 +765,7 @@ class MemoryStore implements Store {
       const offeredEntry = this.queueEntries.get(order.offeredDriverId);
       if (offeredEntry) this.queueEntries.set(offeredEntry.driverId, releaseQueueOffer(offeredEntry, order));
     }
+    const previousStatus = order.status;
     const updated = this.writeOrder(order, {
       status: nextStatus,
       ...(nextStatus === "cancelled" ? { cancelledBy: actorId } : {}),
@@ -764,6 +773,8 @@ class MemoryStore implements Store {
         ? undefined : order.seatLockExpiresAt,
       offerExpiresAt: nextStatus === "cancelled" ? undefined : order.offerExpiresAt,
     });
+    if (adminCancellation) this.adminAuditEvents.push({ id: randomUUID(), actorId, action: "order.cancelled", orderId,
+      fromStatus: previousStatus, toStatus: "cancelled", createdAt: updated.updatedAt });
     return updated.routeContext ? structuredClone(updated) : updated;
   }
 

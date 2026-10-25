@@ -1,0 +1,11 @@
+# Administrator cancellation audit
+
+Migration0009 adds `tezjet_admin_audit_events`. Every successful dedicated administrator cancellation inserts one event in the same transaction as the order and queue updates. Event fields:ID,administrator account ID,action `order.cancelled`,order ID,previous/new status and UTC time. No names,phones,coordinates,tokens or order snapshots are stored. A unique(action,order_id) index complements the order lifecycle's single successful cancellation. Failed/replayed/stale/unauthorized operations do not add events; an audit write failure rolls back the order and seat release.
+
+`GET /api/admin/audit-events` requires a current admin JWT. Optional `order_id` filters a single order; `limit` is1–100(default50). Results sort by createdAt then ID descending and use `Cache-Control: no-store`. This is a bounded recent-events endpoint, not an export/pagination or dispute-resolution interface. There are no HTTP insert/edit/delete endpoints.
+
+Ordinary database UPDATE,DELETE and TRUNCATE are rejected by migration triggers, including empty-match mutations. IDs are retained without foreign-key cascades so deleting an operational user/order cannot silently remove history. This is not cryptographic tamper proofing: the database owner/superuser can disable triggers,change functions or drop objects. Separate runtime DB privileges,external protected logging,retention/legal policy and backup monitoring remain deployment work. Do not use the application audit table for secrets or unrestricted personal snapshots.
+
+The regression suite executes the actual migration SQL in its private PostgreSQL schema so trigger enforcement is tested, rather than relying on LIKE-table cloning which does not copy triggers. It verifies audit insertion atomicity,one record after concurrent cancellation,role/privacy/input bounds,immutable returned copies in MemoryStore,persistence across PostgreSQL store instances,and blocked UPDATE/DELETE/TRUNCATE. Existing transaction lock order(order→queue→actor) remains unchanged.
+
+Scope is administrator order cancellation only. Route/fare/driver-approval mutations,failed-attempt audit,staff roles,administrator journal UI,dispute workflow and operational retention/export remain open. Existing historic cancellations are not backfilled because their actor/time cannot be reliably reconstructed.

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -59,6 +59,8 @@ before(async () => {
   for (const table of tables) {
     await adminPool.query(`CREATE TABLE "${schema}"."${table}" (LIKE "public"."${table}" INCLUDING ALL)`);
   }
+  // Execute the actual migration in this schema, including append-only triggers.
+  await database.query(await readFile(new URL('../../../lib/db/drizzle/0009_admin_audit_events.sql', import.meta.url), 'utf8'));
   store = new production.PostgresStore();
   otherStore = new production.PostgresStore();
   assert.ok(production.runtimeStore instanceof production.PostgresStore, "The HTTP app must use the actual durable adapter.");
@@ -133,6 +135,7 @@ test('HTTP administrator cancellation rejects anonymous/passenger/driver and val
   const result = await request(f.order.id, f.admin.token); assert.equal(result.status, 200); assert.equal(result.body.order.status, 'cancelled');
   assert.equal((await store.getOrder(f.order.id)).cancelledBy, f.admin.id); await released(f);
   assert.equal((await request(f.order.id, f.admin.token)).status, 409); await released(f);
+  assert.equal((await store.listAdminAuditEvents(f.order.id)).length, 1);
 });
 
 for (const label of ['PostgreSQL', 'Memory']) {
@@ -144,6 +147,7 @@ for (const label of ['PostgreSQL', 'Memory']) {
     await f.adapter.invalidateSessions(f.admin.id);
     await assert.rejects(Promise.resolve().then(() => f.adapter.cancelOrderAsAdmin(f.order.id, f.admin.id, 'searching', f.admin.sessionVersion)), error => error.code === 'UNAUTHORIZED');
     await unchanged(f);
+    assert.deepEqual(await f.adapter.listAdminAuditEvents(f.order.id), []);
   });
   test(`${label} administrator cancellation releases pending, assigned and in-transit seats exactly once`, async t => {
     for (const status of ['searching', 'en_route_to_c', 'in_transit', 'completed']) await t.test(status, async child => {
@@ -162,6 +166,11 @@ for (const label of ['PostgreSQL', 'Memory']) {
       assert.ok(await f.adapter.cancelOrderAsAdmin(f.order.id, f.admin.id, status, f.admin.sessionVersion));
       assert.equal(await f.adapter.cancelOrderAsAdmin(f.order.id, f.admin.id, status, f.admin.sessionVersion), undefined);
       assert.equal((await f.adapter.getOrder(f.order.id)).cancelledBy, f.admin.id); await released(f);
+      const events = await f.adapter.listAdminAuditEvents(f.order.id);
+      assert.equal(events.length, 1); assert.equal(events[0].actorId, f.admin.id); assert.equal(events[0].fromStatus, status);
+      assert.equal(events[0].toStatus, 'cancelled'); assert.equal(events[0].action, 'order.cancelled');
+      events[0].actorId = 'mutated-client-copy';
+      assert.equal((await f.adapter.listAdminAuditEvents(f.order.id))[0].actorId, f.admin.id);
     });
   });
 }
@@ -187,6 +196,8 @@ test('PostgreSQL overlapping administrator/passenger cancellation commits only o
     await waitForLocks(3); await blocker.query('COMMIT');
     const outcomes = await pending; assert.ok(outcomes.every(result => result.status === 'fulfilled'));
     assert.equal(outcomes.filter(result => result.value).length, 1); await released(f);
+    const winner = await store.getOrder(f.order.id);
+    assert.equal((await store.listAdminAuditEvents(f.order.id)).length, winner.cancelledBy === f.admin.id ? 1 : 0);
   } finally { await blocker.query('ROLLBACK'); blocker.release(); if (pending) await pending; }
 });
 
@@ -208,5 +219,46 @@ test('PostgreSQL failed administrator order write rolls seat release back', asyn
   await database.query('CREATE TRIGGER fail_admin_cancel BEFORE UPDATE ON tezjet_orders FOR EACH ROW EXECUTE FUNCTION fail_admin_cancel()');
   try {
     await assert.rejects(store.cancelOrderAsAdmin(f.order.id, f.admin.id, 'searching', f.admin.sessionVersion)); await unchanged(f);
+    assert.deepEqual(await store.listAdminAuditEvents(f.order.id), []);
   } finally { await database.query('DROP TRIGGER fail_admin_cancel ON tezjet_orders'); await database.query('DROP FUNCTION fail_admin_cancel()'); }
+});
+
+test('administrator audit read API is restricted, bounded, filterable and contains no sensitive snapshots', async t => {
+  const f = await fixture(t);
+  assert.equal((await request(f.order.id, f.admin.token)).status, 200);
+  async function read(query, token) {
+    const response = await fetch(`${baseUrl}/admin/audit-events${query}`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
+    return { status: response.status, body: await response.json(), cache: response.headers.get('cache-control') };
+  }
+  assert.equal((await read('', undefined)).status, 401);
+  for (const actor of [f.driver, f.passenger]) assert.equal((await read('', actor.token)).status, 403);
+  for (const query of ['?limit=0', '?limit=101', '?limit=1.5', '?limit=2&limit=3', '?unknown=1']) assert.equal((await read(query, f.admin.token)).status, 400);
+  const result = await read(`?order_id=${f.order.id}&limit=1`, f.admin.token);
+  assert.equal(result.status, 200); assert.equal(result.cache, 'no-store'); assert.equal(result.body.events.length, 1);
+  assert.deepEqual(Object.keys(result.body.events[0]).sort(), ['action', 'actorId', 'createdAt', 'fromStatus', 'id', 'orderId', 'toStatus'].sort());
+  assert.equal(result.body.events[0].actorId, f.admin.id);
+  assert.deepEqual((await read(`?order_id=${randomUUID()}`, f.admin.token)).body.events, []);
+  const freshStore = new production.PostgresStore(); await freshStore.initialize();
+  assert.deepEqual(await freshStore.listAdminAuditEvents(f.order.id), result.body.events, 'Audit persists across store instances.');
+});
+
+test('PostgreSQL audit insertion failure rolls back cancellation and seat release together', async t => {
+  const f = await fixture(t);
+  await database.query(`CREATE FUNCTION fail_audit_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.order_id='${f.order.id}' THEN RAISE EXCEPTION 'injected audit failure'; END IF; RETURN NEW; END $$`);
+  await database.query('CREATE TRIGGER fail_audit_insert BEFORE INSERT ON tezjet_admin_audit_events FOR EACH ROW EXECUTE FUNCTION fail_audit_insert()');
+  try {
+    await assert.rejects(store.cancelOrderAsAdmin(f.order.id, f.admin.id, 'searching', f.admin.sessionVersion));
+    await unchanged(f); assert.deepEqual(await store.listAdminAuditEvents(f.order.id), []);
+  } finally { await database.query('DROP TRIGGER fail_audit_insert ON tezjet_admin_audit_events'); await database.query('DROP FUNCTION fail_audit_insert()'); }
+});
+
+test('PostgreSQL migration prevents UPDATE DELETE and TRUNCATE of audit history', async t => {
+  const f = await fixture(t); await store.cancelOrderAsAdmin(f.order.id, f.admin.id, 'searching', f.admin.sessionVersion);
+  const before = await store.listAdminAuditEvents(f.order.id);
+  for (const statement of [
+    `UPDATE tezjet_admin_audit_events SET actor_id='tamper' WHERE order_id='${f.order.id}'`,
+    `DELETE FROM tezjet_admin_audit_events WHERE order_id='${f.order.id}'`,
+    'TRUNCATE tezjet_admin_audit_events',
+  ]) await assert.rejects(database.query(statement), error => error.code === '55000');
+  assert.deepEqual(await store.listAdminAuditEvents(f.order.id), before);
 });
