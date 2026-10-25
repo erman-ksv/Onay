@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -12,7 +12,7 @@ import { build } from "esbuild";
 const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const schema = `route_order_requests_${randomUUID().replaceAll("-", "")}`;
 const applicationName = `route-order-requests-${randomUUID()}`;
-const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes", "tezjet_route_order_requests", "tezjet_admin_audit_events"];
+const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes", "tezjet_route_order_requests", "tezjet_closed_route_order_requests", "tezjet_admin_audit_events"];
 const envKeys = ["DATABASE_URL", "TEZJET_STORAGE_ADAPTER", "NODE_ENV", "SESSION_SECRET", "LOG_LEVEL", "REQUIRE_DRIVER_APPROVAL", "PYATAK_CENTER_LAT", "PYATAK_CENTER_LNG", "TEZJET_OFFER_TIMEOUT_SECONDS"];
 const originalEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
 let moduleDirectory, production, database, adminPool, store, otherStore, server, baseUrl;
@@ -43,6 +43,7 @@ before(async () => {
         'export { MemoryStore } from "./src/store/memoryStore";',
         'export { pool } from "../../lib/db/src/index";',
         'export { store as runtimeStore } from "./src/store";',
+        'export { MAX_CLOSED_ROUTE_REQUESTS_PER_DAY } from "./src/utils/routeOrderRequest";',
         'export { createAccessToken } from "./src/utils/token";',
       ].join("\n"),
       resolveDir: apiRoot, loader: "ts",
@@ -59,6 +60,7 @@ before(async () => {
   for (const table of tables) {
     await adminPool.query(`CREATE TABLE "${schema}"."${table}" (LIKE "public"."${table}" INCLUDING ALL)`);
   }
+  await database.query(await readFile(new URL('../../../lib/db/drizzle/0013_closed_route_order_requests.sql', import.meta.url), 'utf8'));
   store = new production.PostgresStore();
   otherStore = new production.PostgresStore();
   assert.ok(production.runtimeStore instanceof production.PostgresStore, "The HTTP app must use the actual durable adapter.");
@@ -127,6 +129,7 @@ async function request(pathname, { token, method = "GET", body, key } = {}) {
 async function fixture(t, adapter = store) {
   const users = [], routes = [];
   if (adapter instanceof production.PostgresStore) t.after(async () => {
+    await database.query("DELETE FROM tezjet_closed_route_order_requests WHERE passenger_id = ANY($1::text[])", [users]);
     await database.query("DELETE FROM tezjet_route_order_requests WHERE passenger_id = ANY($1::text[])", [users]);
     await database.query("DELETE FROM tezjet_orders WHERE passenger_id = ANY($1::text[]) OR driver_id = ANY($1::text[]) OR offered_driver_id = ANY($1::text[])", [users]);
     await database.query("DELETE FROM tezjet_driver_queue WHERE driver_id = ANY($1::text[])", [users]);
@@ -446,4 +449,254 @@ test("HTTP: authenticated passengers mint independent request keys without creat
   assert.deepEqual(await store.listOrdersForUser(passenger.user.id), []);
   const { rows } = await database.query("SELECT count(*)::int AS count FROM tezjet_route_order_requests WHERE passenger_id = $1", [passenger.user.id]);
   assert.equal(rows[0].count, 0);
+});
+
+for (const name of ['PostgresStore', 'MemoryStore']) {
+  test(`${name}: durable closure fences a late booking, survives reread and preserves the passenger/key namespace`, async t => {
+    const adapter = name === 'PostgresStore' ? store : new production.MemoryStore();
+    await adapter.initialize();
+    const f = await fixture(t, adapter), route = await f.configured(), passenger = await f.createUser('passenger');
+    const stranger = await f.createUser('passenger'), driver = await f.enqueue(route), key = randomUUID();
+    assert.equal(await adapter.getRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion), undefined);
+    assert.deepEqual(await adapter.resolveRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion), { state: 'closed', requestKey: key });
+    const observer = name === 'PostgresStore' ? new production.PostgresStore() : adapter;
+    assert.deepEqual(await observer.resolveRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion), { state: 'closed', requestKey: key });
+    await assert.rejects(async () => once(observer, passenger, route, key), code('ORDER_REQUEST_CLOSED'));
+    await assert.rejects(async () => observer.getRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion), code('ORDER_REQUEST_CLOSED'));
+    assert.deepEqual(await observer.listOrdersForUser(passenger.user.id), []);
+    assert.equal((await observer.getQueueEntry(driver.user.id)).availableSeats, 4);
+    assert.equal((await observer.getQueueEntry(driver.user.id)).pendingOfferOrderId, undefined);
+    assert.equal(await observer.getRouteOrderRequest(stranger.user.id, key, stranger.user.sessionVersion), undefined);
+    const fresh = await once(observer, passenger, route, randomUUID());
+    assert.equal(fresh.created, true);
+    assert.equal((await observer.getQueueEntry(driver.user.id)).availableSeats, 2);
+  });
+
+  test(`${name}: resolving a committed request returns its immutable order and never cancels or reserves again`, async t => {
+    const adapter = name === 'PostgresStore' ? store : new production.MemoryStore();
+    await adapter.initialize();
+    const f = await fixture(t, adapter), route = await f.configured(), passenger = await f.createUser('passenger');
+    const driver = await f.enqueue(route), key = randomUUID();
+    const first = await once(adapter, passenger, route, key);
+    const queue = structuredClone(await adapter.getQueueEntry(driver.user.id));
+    const resolved = await adapter.resolveRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion);
+    assert.equal(resolved.state, 'created'); assert.deepEqual(resolved.order, first.order);
+    assert.deepEqual(await adapter.resolveRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion), resolved);
+    assert.deepEqual(await adapter.getQueueEntry(driver.user.id), queue);
+    assert.equal((await adapter.listOrdersForUser(passenger.user.id)).length, 1);
+  });
+
+  test(`${name}: closure requires the current passenger session even for known and missing keys`, async t => {
+    const adapter = name === 'PostgresStore' ? store : new production.MemoryStore();
+    await adapter.initialize();
+    const f = await fixture(t, adapter), passenger = await f.createUser('passenger'), driver = await f.createUser(), key = randomUUID();
+    await adapter.resolveRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion);
+    await assert.rejects(async () => adapter.resolveRouteOrderRequest(driver.user.id, key, driver.user.sessionVersion), code('FORBIDDEN'));
+    await adapter.invalidateSessions(passenger.user.id);
+    for (const intent of [key, randomUUID()]) await assert.rejects(async () => adapter.resolveRouteOrderRequest(passenger.user.id, intent, passenger.user.sessionVersion), code('UNAUTHORIZED'));
+  });
+
+  test(`${name}: new closures have an atomic rolling quota while replays stay available and old fences never expire`, async t => {
+    const adapter = name === 'PostgresStore' ? store : new production.MemoryStore();
+    await adapter.initialize();
+    const f = await fixture(t, adapter), passenger = await f.createUser('passenger');
+    const limit = production.MAX_CLOSED_ROUTE_REQUESTS_PER_DAY;
+    const keys = Array.from({ length: limit + 2 }, () => randomUUID());
+    const observer = name === 'PostgresStore' ? otherStore : adapter;
+    const values = await Promise.all(keys.map((key, i) => Promise.resolve().then(() => (i % 2 ? observer : adapter).resolveRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion)).then(value => ({ value, key }), error => ({ error, key }))));
+    assert.equal(values.filter(value => value.value).length, limit);
+    assert.equal(values.filter(value => value.error?.code === 'ORDER_RECOVERY_LIMIT').length, 2);
+    const first = values.find(value => value.value).key;
+    assert.deepEqual(await observer.resolveRouteOrderRequest(passenger.user.id, first, passenger.user.sessionVersion), { state: 'closed', requestKey: first });
+    const originalNow = Date.now;
+    try {
+      const later = originalNow() + 24 * 60 * 60 * 1000 + 2000;
+      Date.now = () => later;
+      assert.equal((await observer.resolveRouteOrderRequest(passenger.user.id, randomUUID(), passenger.user.sessionVersion)).state, 'closed');
+      await assert.rejects(async () => observer.getRouteOrderRequest(passenger.user.id, first, passenger.user.sessionVersion), code('ORDER_REQUEST_CLOSED'));
+    } finally { Date.now = originalNow; }
+  });
+}
+
+async function captured(promise) { return promise.then(value => ({ value }), error => ({ error })); }
+
+test('PostgreSQL: booking that owns the key commits before resolution, which returns the same order', { timeout: 20000 }, async t => {
+  const f = await fixture(t), route = await f.configured(), passenger = await f.createUser('passenger'), driver = await f.enqueue(route), key = randomUUID();
+  const blocker = await adminPool.connect(); let booking, resolving;
+  try {
+    await blocker.query('BEGIN');
+    await blocker.query(`SELECT id FROM "${schema}".tezjet_users WHERE id=$1 FOR UPDATE`, [passenger.user.id]);
+    booking = captured(once(store, passenger, route, key));
+    await waitForBlockedTransactions(1);
+    resolving = captured(otherStore.resolveRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion));
+    await waitForBlockedTransactions(2);
+    await blocker.query('COMMIT');
+    const [created, resolved] = await Promise.all([booking, resolving]);
+    assert.equal(created.error, undefined); assert.equal(resolved.error, undefined);
+    assert.equal(created.value.created, true); assert.equal(resolved.value.state, 'created');
+    assert.deepEqual(resolved.value.order, created.value.order);
+    assert.equal((await store.getQueueEntry(driver.user.id)).availableSeats, 2);
+    assert.equal((await store.listOrdersForUser(passenger.user.id)).length, 1);
+    assert.equal((await database.query('SELECT count(*)::int AS count FROM tezjet_closed_route_order_requests WHERE passenger_id=$1', [passenger.user.id])).rows[0].count, 0);
+  } finally { await blocker.query('ROLLBACK'); blocker.release(); await Promise.all([booking, resolving].filter(Boolean)); }
+});
+
+test('PostgreSQL: resolution queued first fences the next allocator across instances without debiting seats', { timeout: 20000 }, async t => {
+  const f = await fixture(t), route = await f.configured(), passenger = await f.createUser('passenger'), driver = await f.enqueue(route), key = randomUUID();
+  const blocker = await adminPool.connect(); let resolving, booking;
+  try {
+    await blocker.query('BEGIN');
+    await blocker.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify(['onay-route-order', passenger.user.id, key])]);
+    resolving = captured(store.resolveRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion));
+    await waitForBlockedTransactions(1);
+    booking = captured(once(otherStore, passenger, route, key));
+    await waitForBlockedTransactions(2);
+    await blocker.query('COMMIT');
+    const [closed, rejected] = await Promise.all([resolving, booking]);
+    assert.equal(closed.error, undefined); assert.equal(closed.value.state, 'closed');
+    assert.equal(rejected.error?.code, 'ORDER_REQUEST_CLOSED');
+    assert.equal((await store.getQueueEntry(driver.user.id)).availableSeats, 4);
+    assert.deepEqual(await store.listOrdersForUser(passenger.user.id), []);
+  } finally { await blocker.query('ROLLBACK'); blocker.release(); await Promise.all([resolving, booking].filter(Boolean)); }
+});
+
+test('PostgreSQL: revocation while resolution waits on the key cannot create a fence', { timeout: 20000 }, async t => {
+  const f = await fixture(t), passenger = await f.createUser('passenger'), key = randomUUID(), blocker = await adminPool.connect(); let pending;
+  try {
+    await blocker.query('BEGIN');
+    await blocker.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify(['onay-route-order', passenger.user.id, key])]);
+    pending = captured(store.resolveRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion));
+    await waitForBlockedTransactions(1);
+    await otherStore.invalidateSessions(passenger.user.id);
+    await blocker.query('COMMIT');
+    assert.equal((await pending).error?.code, 'UNAUTHORIZED');
+    assert.equal((await database.query('SELECT count(*)::int AS count FROM tezjet_closed_route_order_requests WHERE passenger_id=$1', [passenger.user.id])).rows[0].count, 0);
+  } finally { await blocker.query('ROLLBACK'); blocker.release(); if (pending) await pending; }
+});
+
+test('PostgreSQL: the actual trigger uses the existing application advisory identity', { timeout: 20000 }, async t => {
+  const f = await fixture(t), passenger = await f.createUser('passenger'), key = randomUUID(), blocker = await adminPool.connect(); let pending;
+  try {
+    await blocker.query('BEGIN');
+    await blocker.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify(['onay-route-order', passenger.user.id, key])]);
+    pending = captured(database.query('INSERT INTO tezjet_closed_route_order_requests(passenger_id,request_key,closed_at) VALUES($1,$2,$3)', [passenger.user.id, key, new Date().toISOString()]));
+    await waitForBlockedTransactions(1);
+    await blocker.query('COMMIT');
+    assert.equal((await pending).error, undefined);
+    await assert.rejects(async () => store.getRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion), code('ORDER_REQUEST_CLOSED'));
+  } finally { await blocker.query('ROLLBACK'); blocker.release(); if (pending) await pending; }
+});
+
+test('PostgreSQL: a pre-fence writer cannot commit an order or seat debit after the durable key was closed', async t => {
+  const f = await fixture(t), route = await f.configured(), templatePassenger = await f.createUser('passenger'), passenger = await f.createUser('passenger');
+  await f.enqueue(route);
+  const template = await once(store, templatePassenger, route, randomUUID());
+  const driver = await f.enqueue(route), key = randomUUID(), id = randomUUID();
+  await store.resolveRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion);
+  const queueBefore = structuredClone(await store.getQueueEntry(driver.user.id));
+  const writer = await database.connect();
+  try {
+    await writer.query('BEGIN');
+    // Actual SQL follows the older allocator's atomic order/queue/receipt writes.
+    // There is deliberately no new application closed-key check here.
+    await writer.query(`INSERT INTO tezjet_orders(id,passenger_id,offered_driver_id,status,created_at,updated_at,payload)
+      SELECT $1,$2,$3,status,created_at,updated_at,payload || jsonb_build_object('id',$1::text,'passengerId',$2::text,'offeredDriverId',$3::text)
+      FROM tezjet_orders WHERE id=$4`, [id, passenger.user.id, driver.user.id, template.order.id]);
+    await writer.query('UPDATE tezjet_driver_queue SET available_seats=available_seats-2 WHERE driver_id=$1', [driver.user.id]);
+    await assert.rejects(writer.query('INSERT INTO tezjet_route_order_requests(passenger_id,request_key,request_hash,order_id,created_at) VALUES($1,$2,$3,$4,$5)', [passenger.user.id, key, 'old-writer-hash', id, new Date().toISOString()]), error => error.code === '23514');
+    await writer.query('ROLLBACK');
+  } finally { await writer.query('ROLLBACK'); writer.release(); }
+  assert.equal(await store.getOrder(id), undefined);
+  assert.deepEqual(await store.getQueueEntry(driver.user.id), queueBefore);
+  assert.deepEqual(await store.listOrdersForUser(passenger.user.id), []);
+});
+
+test('PostgreSQL: resolution of an orphan receipt fails closed and never replaces it with a tombstone', async t => {
+  const f = await fixture(t), route = await f.configured(), passenger = await f.createUser('passenger');
+  await f.enqueue(route); const key = randomUUID(), created = await once(store, passenger, route, key);
+  await database.query('DELETE FROM tezjet_orders WHERE id=$1', [created.order.id]);
+  await assert.rejects(store.resolveRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion), code('ORDER_RECOVERY_REQUIRED'));
+  assert.equal((await database.query('SELECT count(*)::int AS count FROM tezjet_closed_route_order_requests WHERE passenger_id=$1', [passenger.user.id])).rows[0].count, 0);
+});
+
+test('PostgreSQL: migration is repeatable and its mutual fences stay isolated to the triggering schema', async t => {
+  const f = await fixture(t), passenger = await f.createUser('passenger'), key = randomUUID();
+  const migration = await readFile(new URL('../../../lib/db/drizzle/0013_closed_route_order_requests.sql', import.meta.url), 'utf8');
+  await database.query(migration); await database.query(migration);
+  await store.resolveRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion);
+  const isolated = `other_fence_${randomUUID().replaceAll('-', '')}`, client = await adminPool.connect();
+  try {
+    await client.query(`CREATE SCHEMA "${isolated}"`);
+    await client.query(`SET search_path TO "${isolated}"`);
+    await client.query(`CREATE TABLE tezjet_route_order_requests (LIKE "${schema}".tezjet_route_order_requests INCLUDING ALL)`);
+    await client.query(migration);
+    await client.query('INSERT INTO tezjet_route_order_requests(passenger_id,request_key,request_hash,order_id,created_at) VALUES($1,$2,$3,$4,$5)', [passenger.user.id, key, 'independent-schema', randomUUID(), new Date().toISOString()]);
+    await assert.rejects(client.query('INSERT INTO tezjet_closed_route_order_requests(passenger_id,request_key,closed_at) VALUES($1,$2,$3)', [passenger.user.id, key, new Date().toISOString()]), error => error.code === '23514');
+    assert.equal((await store.resolveRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion)).state, 'closed');
+  } finally {
+    await client.query('RESET search_path');
+    await client.query(`DROP SCHEMA IF EXISTS "${isolated}" CASCADE`);
+    client.release();
+  }
+});
+
+test('HTTP resolution requires a current passenger, rejects editable input and fences late POST before GPS writes', async t => {
+  const f = await fixture(t), route = await f.configured(), passenger = await f.createUser('passenger'), driver = await f.enqueue(route), key = randomUUID();
+  const path = `/orders/route/requests/${key}/resolve`;
+  assertError(await request(path, { method: 'POST', body: {} }), 401, 'UNAUTHORIZED');
+  assertError(await request(path, { token: driver.token, method: 'POST', body: {} }), 403, 'FORBIDDEN');
+  assertError(await request(path, { token: passenger.token, method: 'POST', body: { order_id: randomUUID() } }), 400, 'VALIDATION_ERROR');
+  assertError(await request('/orders/route/requests/not-a-key/resolve', { token: passenger.token, method: 'POST', body: {} }), 400, 'INVALID_IDEMPOTENCY_KEY');
+  assertError(await request(`/orders/route/requests/${key}`, { token: passenger.token }), 404, 'ORDER_REQUEST_NOT_FOUND');
+  const closed = await request(path, { token: passenger.token, method: 'POST', body: {} });
+  assert.equal(closed.status, 200, JSON.stringify(closed.body));
+  assert.deepEqual(closed.body, { state: 'closed', request_key: key });
+  assert.deepEqual((await request(path, { token: passenger.token, method: 'POST', body: {} })).body, closed.body);
+  assertError(await request(`/orders/route/requests/${key}`, { token: passenger.token }), 409, 'ORDER_REQUEST_CLOSED');
+  const location = (await store.getUser(passenger.user.id)).lastLocation;
+  assertError(await request('/orders/route', { token: passenger.token, method: 'POST', key, body: bookingBody(route) }), 409, 'ORDER_REQUEST_CLOSED');
+  assert.deepEqual((await store.getUser(passenger.user.id)).lastLocation, location, 'A closed request must fail before the GPS middleware can write.');
+  assert.deepEqual(await store.listOrdersForUser(passenger.user.id), []);
+  assert.equal((await store.getQueueEntry(driver.user.id)).availableSeats, 4);
+  const fresh = await request('/orders/route', { token: passenger.token, method: 'POST', key: randomUUID(), body: bookingBody(route) });
+  assert.equal(fresh.status, 201, JSON.stringify(fresh.body));
+  assert.equal((await store.getQueueEntry(driver.user.id)).availableSeats, 2);
+  await store.invalidateSessions(passenger.user.id);
+  assertError(await request(path, { token: passenger.token, method: 'POST', body: {} }), 401, 'UNAUTHORIZED');
+});
+
+test('HTTP resolution restores a committed order rather than cancelling it or exposing private receipt fields', async t => {
+  const f = await fixture(t), route = await f.configured(), passenger = await f.createUser('passenger'), driver = await f.enqueue(route), key = randomUUID();
+  const created = await request('/orders/route', { token: passenger.token, method: 'POST', key, body: bookingBody(route) });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const queue = structuredClone(await store.getQueueEntry(driver.user.id));
+  const resolved = await request(`/orders/route/requests/${key}/resolve`, { token: passenger.token, method: 'POST', body: {} });
+  assert.equal(resolved.status, 200, JSON.stringify(resolved.body));
+  assert.deepEqual(resolved.body, { state: 'created', request_key: key, order: created.body.order });
+  assert.deepEqual(await store.getQueueEntry(driver.user.id), queue);
+  assert.equal((await store.listOrdersForUser(passenger.user.id)).length, 1);
+  const stranger = await f.createUser('passenger');
+  const own = await request(`/orders/route/requests/${key}/resolve`, { token: stranger.token, method: 'POST', body: {} });
+  assert.deepEqual(own.body, { state: 'closed', request_key: key }, 'Another account resolves only its own key namespace.');
+  assert.deepEqual((await request(`/orders/route/requests/${key}/resolve`, { token: passenger.token, method: 'POST', body: {} })).body, resolved.body);
+});
+
+test('PostgreSQL failed closure insert rolls back the entire resolution and leaves the original key usable', async t => {
+  const f = await fixture(t), route = await f.configured(), passenger = await f.createUser('passenger'), driver = await f.enqueue(route), key = randomUUID();
+  await database.query(`CREATE FUNCTION reject_test_closure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected closure failure'; END $$;
+    CREATE TRIGGER reject_test_closure BEFORE INSERT ON tezjet_closed_route_order_requests FOR EACH ROW EXECUTE FUNCTION reject_test_closure()`);
+  try {
+    await assert.rejects(store.resolveRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion), error => {
+      const databaseError = error.cause ?? error;
+      return databaseError.code === 'P0001' && databaseError.message === 'injected closure failure';
+    });
+    assert.equal(await store.getRouteOrderRequest(passenger.user.id, key, passenger.user.sessionVersion), undefined);
+    assert.deepEqual(await store.listOrdersForUser(passenger.user.id), []);
+    assert.equal((await store.getQueueEntry(driver.user.id)).availableSeats, 4);
+  } finally {
+    await database.query('DROP TRIGGER reject_test_closure ON tezjet_closed_route_order_requests; DROP FUNCTION reject_test_closure()');
+  }
+  const created = await once(otherStore, passenger, route, key);
+  assert.equal(created.created, true);
+  assert.equal((await store.getQueueEntry(driver.user.id)).availableSeats, 2);
 });

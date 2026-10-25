@@ -135,6 +135,16 @@ export const routeOrderRequestsTable = pgTable(
   (table) => [uniqueIndex("tezjet_route_order_requests_passenger_key_uq").on(table.passengerId, table.requestKey)],
 );
 
+/** Durable fences contain no phone, token, GPS or order payload. */
+export const closedRouteOrderRequestsTable = pgTable("tezjet_closed_route_order_requests", {
+  passengerId: text("passenger_id").notNull(),
+  requestKey: text("request_key").notNull(),
+  closedAt: text("closed_at").notNull(),
+}, table => [
+  uniqueIndex("tezjet_closed_route_requests_passenger_key_uq").on(table.passengerId, table.requestKey),
+  index("tezjet_closed_route_requests_passenger_time_idx").on(table.passengerId, table.closedAt),
+]);
+
 export const deviceRegistrationsTable = pgTable(
   "tezjet_device_registrations",
   {

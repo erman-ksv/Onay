@@ -120,6 +120,47 @@ export async function reconcileRouteBookingRequest(
   }
   return { status: "confirmed", orderId: order.id, requestKey: key };
 }
+
+export type RouteBookingResolution =
+  | { state: "created"; record: RouteBookingRecovery }
+  | { state: "closed"; requestKey: string };
+
+/** A missing receipt alone proves nothing. Only a matching durable server
+ * closure may finish an unknown request without creating another booking. */
+export async function resolveRouteBookingRequest(
+  record: RouteBookingRecovery,
+  lookup: (path: string) => Promise<unknown>,
+  resolve: (path: string) => Promise<unknown>,
+): Promise<RouteBookingResolution> {
+  if (record.status === "confirmed") return { state: "created", record };
+  if (!record.requestKey) throw new Error("Результат предыдущего заказа нужно проверить через поддержку.");
+  const key = routeBookingRequestKey(record.requestKey);
+  try {
+    return { state: "created", record: await reconcileRouteBookingRequest(record, lookup) };
+  } catch (cause) {
+    const error = cause && typeof cause === "object" ? cause as { status?: unknown; code?: unknown } : null;
+    if (!error || !((error.status === 404 && error.code === "ORDER_REQUEST_NOT_FOUND") ||
+        (error.status === 409 && error.code === "ORDER_REQUEST_CLOSED"))) throw cause;
+  }
+  const response = await resolve("/api/orders/route/requests/" + encodeURIComponent(key) + "/resolve");
+  if (!response || typeof response !== "object" || Array.isArray(response)) {
+    throw new Error("Сервер не подтвердил результат предыдущего заказа. Повтори проверку статуса.");
+  }
+  const value = response as Record<string, unknown>;
+  if (!Object.hasOwn(value, "state") || !Object.hasOwn(value, "request_key") || value.request_key !== key) {
+    throw new Error("Сервер не подтвердил конкретный запрос заказа. Повтори проверку статуса.");
+  }
+  if (value.state === "closed" && Object.keys(value).every(field => field === "state" || field === "request_key")) {
+    return { state: "closed", requestKey: key };
+  }
+  const order = value.order && typeof value.order === "object" && !Array.isArray(value.order)
+    ? value.order as { id?: unknown } : null;
+  if (value.state === "created" && Object.keys(value).every(field => ["state", "request_key", "order"].includes(field)) &&
+      order && typeof order.id === "string" && /^[a-z0-9-]{1,128}$/i.test(order.id)) {
+    return { state: "created", record: { status: "confirmed", orderId: order.id, requestKey: key } };
+  }
+  throw new Error("Сервер не подтвердил результат предыдущего заказа. Повтори проверку статуса.");
+}
 export type RouteBookingStorage = {
   getItem(key: string): Promise<string | null>;
   setItem(key: string, value: string): Promise<unknown>;
@@ -164,6 +205,20 @@ export async function saveRouteBookingRecovery(
 
 export async function clearRouteBookingRecovery(storage: RouteBookingStorage, key: string): Promise<void> {
   await storage.removeItem(key);
+}
+
+/** Caller must first obtain a matching closed proof and accept a fresh order
+ * snapshot. Never erase a newer intent or a confirmed order's recovery record. */
+export async function clearClosedRouteBookingRecovery(
+  storage: RouteBookingStorage, storageKey: string, requestKey: string,
+  inScope: () => boolean = () => true,
+): Promise<boolean> {
+  const expected = routeBookingRequestKey(requestKey);
+  if (!inScope()) return false;
+  const record = await readRouteBookingRecovery(storage, storageKey);
+  if (!inScope() || !record || record.status === "confirmed" || record.requestKey !== expected) return false;
+  await storage.removeItem(storageKey);
+  return inScope();
 }
 
 /** Safe only when the caller knows it has not started the POST. */

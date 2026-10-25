@@ -13,6 +13,7 @@ import {
   getOrderAvailability,
   getRouteOrderAvailability,
   getRouteOrderRequest,
+  resolveRouteOrderRequest,
   listOrderRoutes,
   listOrders,
   newRouteOrderRequestKey,
@@ -33,6 +34,7 @@ router.post("/orders/external/confirm", authenticate, requireRole("passenger"), 
 router.get("/orders/route/availability", authenticate, requireRole("passenger"), getRouteOrderAvailability);
 router.get("/orders/route/request-key", authenticate, requireRole("passenger"), newRouteOrderRequestKey);
 router.get("/orders/route/requests/:requestKey", authenticate, requireRole("passenger"), getRouteOrderRequest);
+router.post("/orders/route/requests/:requestKey/resolve", authenticate, requireRole("passenger"), resolveRouteOrderRequest);
 router.post(
   "/orders/route",
   authenticate,

@@ -2,7 +2,7 @@ import { applyRoutePricingPatch, normalizeRoutePricing, routePricePerStop } from
 import { assertVehicleQueueCapacity, assertVehicleReview, createDriverVehicle, hasRequiredDriverApproval } from "../utils/driverVehicle";
 import { createHmac, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
-import type { RouteCreateInput, RouteMetadataPatch, DriverRouteChoiceInput, ExternalPickupSelectionInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderReceipt, RouteOrderSelectionInput, Store } from "./storeContract";
+import type { RouteCreateInput, RouteMetadataPatch, RouteOrderResolution, DriverRouteChoiceInput, ExternalPickupSelectionInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderReceipt, RouteOrderSelectionInput, Store } from "./storeContract";
 import { normalizePhone } from "../utils/phone";
 import { emptyOtpRateState, OTP_CLEANUP_BATCH_SIZE, otpFailureState, otpPhoneBlock, otpRateExpiresAt, otpRateKey, recordOtpFailure, takeOtpIp, takeOtpSend } from "./otpProtection";
 import type { OtpRateKind, OtpRateState } from "./otpProtection";
@@ -40,7 +40,7 @@ import { buildRouteOrder, validateRouteOrderSelectionInput } from "../utils/rout
 import { boundedInteger } from "../utils/validation";
 import type { AdminMutationActor } from "./storeContract";
 import { routeMetadataEvent } from "./routeAudit";
-import { assertRouteOrderRequestHash, requireRouteOrderRequestKey, routeOrderRequestHash } from "../utils/routeOrderRequest";
+import { MAX_CLOSED_ROUTE_REQUESTS_PER_DAY, ROUTE_REQUEST_CLOSURE_WINDOW_MS, assertRouteOrderRequestHash, requireRouteOrderRequestKey, routeOrderRequestHash } from "../utils/routeOrderRequest";
 
 type DbModule = typeof import("@workspace/db");
 type DbTransaction = Parameters<Parameters<DbModule["db"]["transaction"]>[0]>[0];
@@ -1013,7 +1013,7 @@ export class PostgresStore implements Store {
 
   async getRouteOrderRequest(passengerId: string, requestKey: string, expectedSessionVersion?: number): Promise<RouteOrderReceipt | undefined> {
     const key = requireRouteOrderRequestKey(requestKey);
-    const { db, usersTable, ordersTable, routeOrderRequestsTable } = await this.database();
+    const { db, usersTable, ordersTable, routeOrderRequestsTable, closedRouteOrderRequestsTable } = await this.database();
     return db.transaction(async tx => {
       // No order/queue lock is taken after this user lock. A revoked session
       // cannot recover a receipt, even if the caller already knows its key.
@@ -1026,12 +1026,42 @@ export class PostgresStore implements Store {
       const [receipt] = await tx.select().from(routeOrderRequestsTable).where(and(
         eq(routeOrderRequestsTable.passengerId, passengerId), eq(routeOrderRequestsTable.requestKey, key),
       )).limit(1);
-      if (!receipt) return undefined;
+      if (!receipt) {
+        const [closed] = await tx.select().from(closedRouteOrderRequestsTable).where(and(eq(closedRouteOrderRequestsTable.passengerId, passengerId), eq(closedRouteOrderRequestsTable.requestKey, key))).limit(1);
+        if (closed) throw new AppError(409, "Booking request was closed", "ORDER_REQUEST_CLOSED");
+        return undefined;
+      }
       const [row] = await tx.select().from(ordersTable).where(and(
         eq(ordersTable.id, receipt.orderId), eq(ordersTable.passengerId, passengerId),
       )).limit(1);
       if (!row) throw new AppError(409, "Order recovery requires review", "ORDER_RECOVERY_REQUIRED");
       return { order: asOrder(row as unknown as Record<string, unknown>), requestHash: receipt.requestHash };
+    });
+  }
+
+  async resolveRouteOrderRequest(passengerId: string, requestKey: string, expectedSessionVersion?: number): Promise<RouteOrderResolution> {
+    const key = requireRouteOrderRequestKey(requestKey);
+    const { db, usersTable, ordersTable, routeOrderRequestsTable, closedRouteOrderRequestsTable } = await this.database();
+    return db.transaction<RouteOrderResolution>(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${JSON.stringify(["onay-route-order", passengerId, key])}, 0))`);
+      const [passenger] = await tx.select().from(usersTable).where(eq(usersTable.id, passengerId)).for("share").limit(1);
+      if (!passenger || (expectedSessionVersion !== undefined && passenger.sessionVersion !== expectedSessionVersion)) throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+      if (passenger.role !== "passenger") throw new AppError(403, "passenger mode is required", "FORBIDDEN");
+      const [receipt] = await tx.select().from(routeOrderRequestsTable).where(and(eq(routeOrderRequestsTable.passengerId, passengerId), eq(routeOrderRequestsTable.requestKey, key))).limit(1);
+      if (receipt) {
+        const [order] = await tx.select().from(ordersTable).where(and(eq(ordersTable.id, receipt.orderId), eq(ordersTable.passengerId, passengerId))).limit(1);
+        if (!order) throw new AppError(409, "Order recovery requires review", "ORDER_RECOVERY_REQUIRED");
+        return { state: "created", order: asOrder(order as unknown as Record<string, unknown>) };
+      }
+      const [closed] = await tx.select().from(closedRouteOrderRequestsTable).where(and(eq(closedRouteOrderRequestsTable.passengerId, passengerId), eq(closedRouteOrderRequestsTable.requestKey, key))).limit(1);
+      if (closed) return { state: "closed", requestKey: key };
+      // Different keys share a per-passenger quota; locks always precede the count.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${JSON.stringify(["onay-route-order-close-quota", passengerId])}, 0))`);
+      const now = new Date(Date.now());
+      const [usage] = await tx.select({ count: sql<number>`count(*)::int` }).from(closedRouteOrderRequestsTable).where(and(eq(closedRouteOrderRequestsTable.passengerId, passengerId), gt(closedRouteOrderRequestsTable.closedAt, new Date(now.getTime() - ROUTE_REQUEST_CLOSURE_WINDOW_MS).toISOString())));
+      if (usage.count >= MAX_CLOSED_ROUTE_REQUESTS_PER_DAY) throw new AppError(429, "Too many recovery closures; retry later", "ORDER_RECOVERY_LIMIT");
+      await tx.insert(closedRouteOrderRequestsTable).values({ passengerId, requestKey: key, closedAt: now.toISOString() });
+      return { state: "closed", requestKey: key };
     });
   }
 
@@ -1052,7 +1082,7 @@ export class PostgresStore implements Store {
     selection?: RouteOrderSelectionInput,
     request?: { key: string; hash: string },
   ): Promise<{ order: Order; created: boolean } | undefined> {
-    const { db, driverQueueTable, usersTable, ordersTable, routesTable, routeOrderRequestsTable } = await this.database();
+    const { db, driverQueueTable, usersTable, ordersTable, routesTable, routeOrderRequestsTable, closedRouteOrderRequestsTable } = await this.database();
     const legacyInput = input as Omit<Order, "id" | "createdAt" | "updatedAt">;
     return db.transaction(async tx => {
       if (request) {
@@ -1081,6 +1111,13 @@ export class PostgresStore implements Store {
           )).limit(1);
           if (!row) throw new AppError(409, "Order recovery requires review", "ORDER_RECOVERY_REQUIRED");
           return { order: asOrder(row as unknown as Record<string, unknown>), created: false };
+        }
+        const [closed] = await tx.select().from(closedRouteOrderRequestsTable).where(and(eq(closedRouteOrderRequestsTable.passengerId, input.passengerId), eq(closedRouteOrderRequestsTable.requestKey, request.key))).limit(1);
+        if (closed) {
+          const [passenger] = await tx.select().from(usersTable).where(eq(usersTable.id, input.passengerId)).for("share").limit(1);
+          if (!passenger || (expectedSessionVersion !== undefined && passenger.sessionVersion !== expectedSessionVersion)) throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+          if (passenger.role !== "passenger") throw new AppError(403, "passenger mode is required", "FORBIDDEN");
+          throw new AppError(409, "Booking request was closed", "ORDER_REQUEST_CLOSED");
         }
       }
       // This order does not exist yet. Locking queue rows before inserting its

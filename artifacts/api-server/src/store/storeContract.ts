@@ -41,6 +41,8 @@ export interface RouteCreateInput {
 export type RouteMetadataPatch = Partial<Pick<RouteDefinition, "name" | "currency" | "pricePerStop" | "pricePerStopKzt" | "active">>;
 
 export type MaybePromise<T> = T | Promise<T>;
+/** A closed key is durably fenced against every later booking attempt. */
+export type RouteOrderResolution = { state: "created"; order: Order } | { state: "closed"; requestKey: string };
 export interface AdminMutationActor { adminId: string; expectedSessionVersion: number }
 export type { OrderOfferChange } from "../types/domain";
 export type { ExternalPickupQuote, ExternalPickupSelectionInput, ExternalPickupSettings } from "../types/domain";
@@ -152,6 +154,7 @@ export interface Store {
   createRouteOrderWithOffer(input: RouteOrderInput, selection: RouteOrderSelectionInput, expectedSessionVersion?: number): MaybePromise<Order | undefined>;
   /** Resolve a passenger-owned booking without repeating GPS, fare or seat allocation. */
   getRouteOrderRequest(passengerId: string, requestKey: string, expectedSessionVersion?: number): MaybePromise<RouteOrderReceipt | undefined>;
+  resolveRouteOrderRequest(passengerId: string, requestKey: string, expectedSessionVersion?: number): MaybePromise<RouteOrderResolution>;
   /** Persist the receipt and reservation together; replay never reserves seats again. */
   createRouteOrderOnce(input: RouteOrderInput, selection: RouteOrderSelectionInput, requestKey: string, expectedSessionVersion?: number): MaybePromise<{ order: Order; created: boolean } | undefined>;
   /** Advisory snapshot only; road routing happens outside transaction locks. */

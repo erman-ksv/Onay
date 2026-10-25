@@ -8,7 +8,7 @@ import { isClosed, type RideOrder } from "../lib/orders";
 import type { PassengerBookingGate } from "../lib/passenger-booking-gate";
 import { orderedDriverStops, parseDriverRouteCatalog, type DriverDirection, type DriverRouteOption } from "../lib/driver-routes";
 import { createPassengerRouteRequestScope, passengerRouteSelection, passengerRouteSelectionKey, passengerRouteAvailabilityPath,
-  parsePassengerRouteAvailability, passengerRouteOrderBody, passengerRouteCatalogStatus, routeBookingRecoveryKey, routeBookingRequestKey, reconcileRouteBookingRequest, readRouteBookingRecovery, saveRouteBookingRecovery, clearRouteBookingRecovery, discardUnsentRouteBooking, confirmedRouteBookingPresent, isFreshPassengerRouteQuote, routeBookingDefinitivelyRejected, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability, type PassengerRouteSegment } from "../lib/passenger-route-orders";
+  parsePassengerRouteAvailability, passengerRouteOrderBody, passengerRouteCatalogStatus, routeBookingRecoveryKey, routeBookingRequestKey, resolveRouteBookingRequest, readRouteBookingRecovery, saveRouteBookingRecovery, clearRouteBookingRecovery, clearClosedRouteBookingRecovery, discardUnsentRouteBooking, confirmedRouteBookingPresent, isFreshPassengerRouteQuote, routeBookingDefinitivelyRejected, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability, type PassengerRouteSegment } from "../lib/passenger-route-orders";
 
 type Props = { token: string; endpoint: string; userId: string; busy: boolean; activeOrder: boolean; bookingGate: PassengerBookingGate; onCreated: () => Promise<void> };
 const choices: DriverDirection[] = ["a_to_b", "b_to_a"];
@@ -136,30 +136,48 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
       let record = await readRouteBookingRecovery(AsyncStorage, recoveryKey);
       if (!inScope()) return;
       if (!record) throw new Error("Сведения о предыдущем заказе не найдены на устройстве. Новый заказ заблокирован до проверки.");
+      let closedRequestKey: string | null = null;
       if (record.status !== "confirmed" && record.requestKey) {
-        record = await reconcileRouteBookingRequest(record, path => scopedRequest<unknown>(path));
-        await saveRouteBookingRecovery(AsyncStorage, recoveryKey, record);
+        const resolution = await resolveRouteBookingRequest(record,
+          path => scopedRequest<unknown>(path),
+          path => scopedRequest<unknown>(path, { method: "POST", body: JSON.stringify({}) }));
         if (!inScope()) return;
-        setUncertainBooking(false);
+        if (resolution.state === "created") {
+          record = resolution.record;
+          await saveRouteBookingRecovery(AsyncStorage, recoveryKey, record);
+          if (!inScope()) return;
+          setUncertainBooking(false);
+        } else closedRequestKey = resolution.requestKey;
       }
       const synced = await syncConfirmedRouteBooking(onCreated);
       if (!inScope()) return;
       let exactConfirmed = false;
-      if (synced && record.status === "confirmed") {
+      if (synced && (record.status === "confirmed" || closedRequestKey !== null)) {
         const bookingReadRevision = bookingGate.beginOrdersRead();
         const response = await scopedRequest<{orders: RideOrder[]}>("/api/orders");
-        exactConfirmed = Array.isArray(response.orders) && confirmedRouteBookingPresent(record, response.orders);
+        exactConfirmed = Array.isArray(response.orders) &&
+          (closedRequestKey !== null || confirmedRouteBookingPresent(record, response.orders));
         // The parent may already have an older GET in flight. Admission must
         // also use this authoritative snapshot before clearing the receipt.
         if (exactConfirmed) exactConfirmed = bookingGate.applyOrdersSnapshot(bookingReadRevision, response.orders.some(order => !isClosed(order)));
       }
       if (synced && exactConfirmed) {
-        await clearRouteBookingRecovery(AsyncStorage, recoveryKey);
-        if (!mounted.current) return;
+        if (closedRequestKey !== null) {
+          const cleared = await clearClosedRouteBookingRecovery(AsyncStorage, recoveryKey, closedRequestKey, inScope);
+          if (!inScope()) return;
+          if (!cleared) {
+            bookingGate.recoveryChanged();
+            throw new Error("Сведения о предыдущем заказе изменились. Проверь его статус ещё раз.");
+          }
+          setAvailability(null);
+        } else await clearRouteBookingRecovery(AsyncStorage, recoveryKey);
+        if (!inScope()) return;
         bookingGate.setRecovery(true, false);
         setPendingSync(false);
         setUncertainBooking(false);
-        setMessage("Заказы обновлены. Проверь состояние поездки.");
+        setMessage(closedRequestKey !== null
+          ? "Сервер подтвердил: заказ не был создан. Можно проверить водителей снова."
+          : "Заказы обновлены. Проверь состояние поездки.");
       } else if (synced) setMessage("Проверка завершена, но конкретный заказ не подтверждён. Повторная отправка заблокирована; обратись в поддержку.");
       else setError("Не удалось обновить заказы. Повтори проверку; не создавай ещё один заказ.");
     } catch (cause) {

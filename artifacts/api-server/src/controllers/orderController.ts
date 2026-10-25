@@ -163,6 +163,21 @@ export async function getRouteOrderRequest(request: Request, response: Response)
   response.json({ order: serializeOrder(receipt.order) });
 }
 
+/** Resolve transport uncertainty without cancelling an already created ride. */
+export async function resolveRouteOrderRequest(request: Request, response: Response): Promise<void> {
+  response.set("Cache-Control", "no-store");
+  const passengerId = assertPassenger(request);
+  if (request.body !== undefined && (request.body === null || typeof request.body !== "object" ||
+      Array.isArray(request.body) || Object.keys(request.body).length !== 0)) {
+    throw new AppError(400, "Recovery accepts no editable booking fields", "VALIDATION_ERROR");
+  }
+  const key = requireRouteOrderRequestKey(request.params["requestKey"]);
+  const result = await store.resolveRouteOrderRequest(passengerId, key, request.auth?.user.sessionVersion);
+  response.json(result.state === "created"
+    ? { state: "created", request_key: key, order: serializeOrder(result.order) }
+    : { state: "closed", request_key: result.requestKey });
+}
+
 /** Mint an unreserved intent ID without requiring a native random-number dependency. */
 export function newRouteOrderRequestKey(request: Request, response: Response): void {
   assertPassenger(request);
