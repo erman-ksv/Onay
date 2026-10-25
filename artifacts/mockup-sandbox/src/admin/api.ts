@@ -216,3 +216,40 @@ export async function saveAdminRouteLayout(token: string, routeId: string, layou
 }
 
 
+
+export type AdminAuditFilters = { orderId: string; driverId: string; routeId: string; limit: number };
+export type AdminAuditEvent = {
+  id: string; actorId: string; action: "order.cancelled" | "driver.approval_changed" | "route.updated";
+  createdAt: string; orderId?: string; driverId?: string; routeId?: string;
+  fromStatus?: string; toStatus?: string; vehicleRevision?: string;
+  changedFields?: string[]; previousVersion?: string; nextVersion?: string;
+};
+
+/** Consume only the server's bounded audit window. It has no cursor or total-count API. */
+export async function loadAdminAuditEvents(token: string, filters: AdminAuditFilters, signal?: AbortSignal): Promise<AdminAuditEvent[]> {
+  if (!Number.isInteger(filters.limit) || filters.limit < 1 || filters.limit > 100) throw new AdminApiError(400, "Лимит событий должен быть от 1 до 100.");
+  const query = new URLSearchParams({ limit: String(filters.limit) });
+  for (const [name, raw] of [["order_id", filters.orderId], ["driver_id", filters.driverId], ["route_id", filters.routeId]] as const) {
+    const value = raw.trim();
+    if (value.length > 100) throw new AdminApiError(400, "ID в фильтре слишком длинный.");
+    if (value) query.set(name, value);
+  }
+  const result = await adminRequest<{ events: unknown }>("/admin/audit-events?" + query, { token, signal });
+  if (!result || !Array.isArray(result.events) || result.events.length > filters.limit) throw new AdminApiError(502, "Некорректный ответ журнала.");
+  return result.events.map((value: unknown) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new AdminApiError(502, "Некорректное событие журнала.");
+    const event = value as Record<string, unknown>;
+    const text = (key: string): string | undefined => typeof event[key] === "string" && event[key] ? event[key] as string : undefined;
+    const action = text("action");
+    if (!text("id") || !text("actorId") || !text("createdAt") || !Number.isFinite(Date.parse(text("createdAt")!)) ||
+      !["order.cancelled", "driver.approval_changed", "route.updated"].includes(action ?? "")) throw new AdminApiError(502, "Некорректное событие журнала.");
+    if (action === "order.cancelled" && (!text("orderId") || !text("fromStatus") || text("toStatus") !== "cancelled") ||
+      action === "driver.approval_changed" && (!text("driverId") || !text("fromStatus") || !text("toStatus")) ||
+      action === "route.updated" && (!text("routeId") || !Array.isArray(event.changedFields) || !event.changedFields.every(field => typeof field === "string") || !text("previousVersion") || !text("nextVersion"))) throw new AdminApiError(502, "Неполное событие журнала.");
+    // Deliberately project known fields; raw payloads and any future personal data are not rendered.
+    return { id: text("id")!, actorId: text("actorId")!, action: action as AdminAuditEvent["action"], createdAt: text("createdAt")!,
+      orderId: text("orderId"), driverId: text("driverId"), routeId: text("routeId"), fromStatus: text("fromStatus"), toStatus: text("toStatus"),
+      vehicleRevision: text("vehicleRevision"), changedFields: action === "route.updated" ? [...event.changedFields as string[]] : undefined,
+      previousVersion: text("previousVersion"), nextVersion: text("nextVersion") };
+  });
+}
