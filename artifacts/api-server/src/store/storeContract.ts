@@ -30,6 +30,7 @@ import type {
  * switching production storage.
  */
 export type MaybePromise<T> = T | Promise<T>;
+export interface AdminMutationActor { adminId: string; expectedSessionVersion: number }
 export type { OrderOfferChange } from "../types/domain";
 export type { ExternalPickupQuote, ExternalPickupSelectionInput, ExternalPickupSettings } from "../types/domain";
 
@@ -169,7 +170,7 @@ export interface Store {
     expectedSessionVersion?: number,
   ): MaybePromise<Order | undefined>;
   cancelOrderAsAdmin(orderId: string, adminId: string, expectedStatus: OrderStatus, expectedSessionVersion: number): MaybePromise<Order | undefined>;
-  listAdminAuditEvents(orderId?: string, limit?: number, driverId?: string): MaybePromise<AdminAuditEvent[]>;
+  listAdminAuditEvents(orderId?: string, limit?: number, driverId?: string, routeId?: string): MaybePromise<AdminAuditEvent[]>;
   setDriverApprovalAsAdmin(userId: string, status: DriverApprovalStatus, expectedVehicleRevision: string | null | undefined, adminId: string, expectedSessionVersion: number): MaybePromise<User | undefined>;
   claimOrderForDriver(
     orderId: string,
@@ -201,6 +202,7 @@ export interface Store {
   updateRoute(
     routeId: string,
     patch: Partial<Pick<RouteDefinition, "name" | "pricePerStopKzt" | "active">>,
+    audit?: AdminMutationActor,
   ): MaybePromise<RouteDefinition | undefined>;
   deleteRoute(routeId: string): MaybePromise<boolean>;
   addRouteStop(

@@ -8,7 +8,7 @@ Ordinary database UPDATE,DELETE and TRUNCATE are rejected by migration triggers,
 
 The regression suite executes the actual migration SQL in its private PostgreSQL schema so trigger enforcement is tested, rather than relying on LIKE-table cloning which does not copy triggers. It verifies audit insertion atomicity,one record after concurrent cancellation,role/privacy/input bounds,immutable returned copies in MemoryStore,persistence across PostgreSQL store instances,and blocked UPDATE/DELETE/TRUNCATE. Existing transaction lock order(order→queue→actor) remains unchanged.
 
-Scope covers administrator order cancellation and driver approval changes. Route/fare mutations,failed-attempt audit,staff roles,administrator journal UI,dispute workflow and operational retention/export remain open. Existing historic cancellations are not backfilled because their actor/time cannot be reliably reconstructed.
+Scope covers administrator order cancellation, driver approval changes and route metadata updates. Other route mutations,failed-attempt audit,staff roles,administrator journal UI,dispute workflow and operational retention/export remain open. Existing historic cancellations are not backfilled because their actor/time cannot be reliably reconstructed.
 
 
 ## Driver approval changes
@@ -20,3 +20,14 @@ The existing PATCH admin/drivers/:id/approval now uses an audited store operatio
 Tests verify authorized HTTP transitions/filtering,no-op deduplication,live role/session guards,stale vehicle revision refusal,reviewed revision persistence,audit-write rollback and actual PostgreSQL lock overlap for duplicate reviews. Legacy trusted store fixture setters are retained;HTTP clients use only the audited administrator operation. Test schemas include the migrated audit table;the dedicated audit suite executes both actual migration scripts to exercise protected history.
 
 This does not add staff roles,driver ban/unban semantics,an administrator journal screen or dispute handling. It does not backfill approvals made before this migration. Database owner/superuser DDL bypass remains outside the trigger guarantee.
+
+
+## Route metadata and tariffs
+
+Migration0011 adds route_id,changed_fields and previous/next route versions,plus a route/time index. Status fields are nullable because a route update is not an order/driver status transition. Existing cancellation and approval JSON omits unused nullable columns as before. GET audit-events accepts route_id; filters intersect.
+
+The existing PATCH /admin/routes/:routeId passes a server-derived administrator ID/session to the store. Its transaction locks the route,then the administrator account,checks current role/session and writes both route and route.updated event. A failed event write rolls the route/tariff/version back. Identical metadata is a no-op with no new version/event. Only actual differences in the fixed fields name,active,pricePerStopKzt are recorded. Events retain field names and route versions,not names,price values,geometry or arbitrary request snapshots. They identify who changed which fields;they are not a historical price reconstruction or full dispute export.
+
+Tests cover HTTP authorization/filtering/compatibility,no-op behavior,Memory/PostgreSQL current session checks,copy isolation,transaction rollback,actual concurrent identical writes and session revocation while waiting on an account lock. Trusted internal fixture writers remain available;HTTP metadata edits always pass the administrator context.
+
+Creation/deletion,stop/layout edits,external-pickup settings and the legacy in-process queue-point endpoint are not audited by this change. Their journal coverage,staff roles,dispute handling and the administrator history UI remain open. No production migration or historic backfill was performed.

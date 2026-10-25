@@ -14,6 +14,8 @@ import { acceptQueueOffer, assertLegacyOrderInput, assertOrderOfferPatch, assert
 import { buildRouteOrder, validateRouteOrderSelectionInput } from "../utils/routeOrder";
 import { assertRouteOrderRequestHash, requireRouteOrderRequestKey, routeOrderRequestHash } from "../utils/routeOrderRequest";
 import { boundedInteger } from "../utils/validation";
+import type { AdminMutationActor } from "./storeContract";
+import { routeMetadataEvent } from "./routeAudit";
 import { assertLineOrderTransition, createLineCollectionState, isCollecting, lineOrderIds, prepareLineDeparture } from "./lineCollection";
 import { assertExternalQuoteCurrent, buildConfirmedExternalOrder, buildExternalPickupDetails, eligibleExternalCandidate, externalPickupLeaseMs, liveExternalOfferValid, nextOrderUpdatedAt, normalizeExternalPickupSettings, repriceExternalOrder, validateExternalPickupSelectionInput } from "./externalPickup";
 import type {
@@ -741,9 +743,9 @@ class MemoryStore implements Store {
     return this.transitionOrderInternal(orderId, adminId, "cancelled", expectedStatus, expectedSessionVersion, true);
   }
 
-  listAdminAuditEvents(orderId?: string, limit = 50, driverId?: string): AdminAuditEvent[] {
+  listAdminAuditEvents(orderId?: string, limit = 50, driverId?: string, routeId?: string): AdminAuditEvent[] {
     const count = boundedInteger(limit, "limit", 1, 100);
-    return structuredClone(this.adminAuditEvents.filter(event => (!orderId || event.orderId === orderId) && (!driverId || event.driverId === driverId))
+    return structuredClone(this.adminAuditEvents.filter(event => (!orderId || event.orderId === orderId) && (!driverId || event.driverId === driverId) && (!routeId || event.routeId === routeId))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)).slice(0, count));
   }
 
@@ -912,12 +914,21 @@ class MemoryStore implements Store {
   updateRoute(
     routeId: string,
     patch: Partial<Pick<RouteDefinition, "name" | "pricePerStopKzt" | "active">>,
+    audit?: AdminMutationActor,
   ): RouteDefinition | undefined {
+    if (audit) {
+      if (audit.expectedSessionVersion === undefined) throw new AppError(401, "Session is required", "UNAUTHORIZED");
+      this.requireCurrentRole(audit.adminId, "admin", audit.expectedSessionVersion);
+    }
     const route = this.routes.get(routeId);
     if (!route) {
       return undefined;
     }
-    this.routes.set(routeId, { ...route, ...patch, updatedAt: nextRouteUpdatedAt(route.updatedAt) });
+    const updated = { ...route, ...patch, updatedAt: nextRouteUpdatedAt(route.updatedAt) };
+    const event = audit ? routeMetadataEvent(route, updated, audit.adminId) : undefined;
+    if (audit && !event) return structuredClone(route);
+    this.routes.set(routeId, updated);
+    if (event) this.adminAuditEvents.push(event);
     return this.getRoute(routeId);
   }
 
