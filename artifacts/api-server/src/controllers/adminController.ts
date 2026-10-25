@@ -11,6 +11,19 @@ import { boundedInteger, optionalString, pickEnum, requiredString } from "../uti
 import { normalizeExternalPickupSettings } from "../store/externalPickup";
 import { processOrderDispatch, publishOrderOfferChanges } from "../services/orderDispatchService";
 
+export async function listAdminAuditEvents(request: Request, response: Response): Promise<void> {
+  if (Object.keys(request.query).some(key => !["order_id", "limit"].includes(key))) {
+    throw new AppError(400, "Unsupported audit filter", "VALIDATION_ERROR");
+  }
+  const orderId = request.query["order_id"] === undefined ? undefined : requiredString(request.query["order_id"], "order_id", 100);
+  const rawLimit = request.query["limit"];
+  if (rawLimit !== undefined && (typeof rawLimit !== "string" || !/^\d+$/.test(rawLimit))) {
+    throw new AppError(400, "limit must be an integer", "VALIDATION_ERROR");
+  }
+  const limit = boundedInteger(rawLimit === undefined ? 50 : Number(rawLimit), "limit", 1, 100);
+  response.set("Cache-Control", "no-store").json({ events: await store.listAdminAuditEvents(orderId, limit) });
+}
+
 function routeId(value: unknown): string {
   const raw = value === undefined ? randomUUID() : requiredString(value, "route_id", 80);
   if (!/^[a-z0-9][a-z0-9_-]*$/i.test(raw)) {

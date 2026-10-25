@@ -291,6 +291,16 @@ export interface OrderOfferChange {
   previousDriverId?: string;
 }
 
+export interface AdminAuditEvent {
+  id: string;
+  actorId: string;
+  action: "order.cancelled";
+  orderId: string;
+  fromStatus: OrderStatus;
+  toStatus: "cancelled";
+  createdAt: string;
+}
+
 export interface DeviceRegistration {
   userId: string;
   deviceToken: string;

@@ -158,3 +158,18 @@ export const routesTable = pgTable("tezjet_routes", {
   payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
 });
 
+
+/** Append-only administrative cancellation receipts; never store secrets or GPS. */
+export const adminAuditEventsTable = pgTable("tezjet_admin_audit_events", {
+  id: text("id").primaryKey(),
+  actorId: text("actor_id").notNull(),
+  action: text("action").notNull(),
+  orderId: text("order_id").notNull(),
+  fromStatus: text("from_status").notNull(),
+  toStatus: text("to_status").notNull(),
+  createdAt: text("created_at").notNull(),
+}, table => [
+  index("tezjet_admin_audit_created_idx").on(table.createdAt, table.id),
+  index("tezjet_admin_audit_order_created_idx").on(table.orderId, table.createdAt, table.id),
+  uniqueIndex("tezjet_admin_audit_action_order_uq").on(table.action, table.orderId),
+]);
