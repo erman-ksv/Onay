@@ -1,4 +1,5 @@
 import type { DriverDirection, DriverRouteOption } from "./driver-routes";
+import { parseServerFareMoney } from "./fare-money.ts";
 
 /**
  * Keep route-catalog fetches independent from short-lived availability quotes.
@@ -197,9 +198,8 @@ export type PassengerRouteSegment = { pickupStopId: string; destinationStopId: s
 export type PassengerRouteAvailability = {
   available: boolean;
   eligibleDriverCount: number;
-  priceKzt: number;
-  currency: "KZT";
-};
+  price: number;
+} & ({ currency: "KZT"; priceKzt: number } | { currency: "UZS"; priceKzt?: never });
 
 function validText(value: string): boolean { return Boolean(value && value.trim()); }
 
@@ -248,18 +248,17 @@ export function parsePassengerRouteAvailability(body: unknown): PassengerRouteAv
   const fare = value.fare;
   if (!fare || typeof fare !== "object" || Array.isArray(fare))
     throw new Error("Сервер не рассчитал стоимость поездки.");
-  const quote = fare as Record<string, unknown>;
+  const money = parseServerFareMoney(fare);
   if (typeof value.available !== "boolean" ||
       !Number.isSafeInteger(value.eligible_driver_count) ||
       (value.eligible_driver_count as number) < 0 ||
-      !Number.isSafeInteger(quote.totalKzt) ||
-      (quote.totalKzt as number) < 0 || quote.currency !== "KZT" ||
       (value.available === true && value.eligible_driver_count === 0)) {
     throw new Error("Данные о водителях или стоимости недостоверны. Обнови проверку.");
   }
   return {
     available: value.available, eligibleDriverCount: value.eligible_driver_count as number,
-    priceKzt: quote.totalKzt as number, currency: "KZT",
+    price: money.total,
+    ...(money.currency === "KZT" ? { currency: "KZT" as const, priceKzt: money.total } : { currency: "UZS" as const }),
   };
 }
 

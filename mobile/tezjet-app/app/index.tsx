@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { parseServerFareMoney, formatFareMoney, type FareMoney } from "../lib/fare-money";
 import * as Location from "expo-location";
 import { io } from "socket.io-client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -21,7 +22,7 @@ const TOKEN = "tezjet_access_token";
 const API_ENDPOINT = "tezjet_api_endpoint";
 type Mode = "passenger" | "driver";
 type Stop = { id: string; code: string; name: string; sequence: number; position: number };
-type Fare = { totalKzt: number; currency: string; distanceStops: number };
+type Fare = FareMoney;
 type Profile = { id: string; role: string; active_role?: string; roles?: string[]; driver_approval_status?: "pending" | "approved" | "rejected"; full_name?: string; driver_vehicle?: { seat_capacity: number } };
 
 function Button({ title, onPress, disabled = false, secondary = false, testID }: { title: string; onPress: () => void; disabled?: boolean; secondary?: boolean; testID?: string }) {
@@ -231,8 +232,8 @@ export default function Home() {
     if (!token || activeRole !== "passenger" || !a || !b || a === b) { setFare(null); return; }
     let active = true;
     setFare(null);
-    request<{ fare: Fare }>("/api/fares/estimate", token, { method: "POST", body: JSON.stringify({ route_id: "pyatak", pickup_stop: a, destination_stop: b }) })
-      .then(r => { if (active) { setFare({ ...r.fare, pickup: a, destination: b }); setRouteError(""); } })
+    request<{ fare: unknown }>("/api/fares/estimate", token, { method: "POST", body: JSON.stringify({ route_id: "pyatak", pickup_stop: a, destination_stop: b }) })
+      .then(r => { if (active) { setFare({ ...parseServerFareMoney(r.fare), pickup: a, destination: b }); setRouteError(""); } })
       .catch(e => { if (active) { setFare(null); setRouteError(errorMessage(e, "Не удалось рассчитать цену.")); } });
     return () => { active = false; };
   }, [token, activeRole, a, b, profileRefresh]);
@@ -759,7 +760,7 @@ export default function Home() {
       <Text style={s.label}>ТОЧКА А · ОТПРАВЛЕНИЕ</Text>{stops.filter(v => v.code === "C" || v.code === "D").map(v => <Pressable key={"a"+v.id} onPress={() => setA(v.code)} style={[s.stop, a===v.code && s.selected]}><Text style={s.stopText}>{v.name}</Text><Text>{v.code}</Text></Pressable>)}
       <Text style={s.label}>ТОЧКА Б · НАЗНАЧЕНИЕ</Text>{stops.map(v => <Pressable key={"b"+v.id} onPress={() => setB(v.code)} style={[s.stop, b===v.code && s.selected]}><Text style={s.stopText}>{v.name}</Text><Text>{v.code}</Text></Pressable>)}
       <TextInput style={s.input} value={address} onChangeText={setAddress} placeholder="Уточнение адреса подачи (необязательно)" />
-      <View style={s.fare}><Text style={s.label}>ПРЕДВАРИТЕЛЬНАЯ СТОИМОСТЬ</Text><Text style={s.price}>{fareFresh && fare ? new Intl.NumberFormat("ru-RU").format(fare.totalKzt)+" ₸" : "—"}</Text></View>
+      <View style={s.fare}><Text style={s.label}>ПРЕДВАРИТЕЛЬНАЯ СТОИМОСТЬ</Text><Text style={s.price}>{fareFresh && fare ? formatFareMoney(fare) : "—"}</Text></View>
       <View style={s.seatsRow}><Text style={s.descDark}>Пассажиры (до 8)</Text><Stepper value={seats} onChange={setSeats} /></View>
       <Text style={s.descDark}>Наличие водителей: {availabilityDisplay.label}</Text>
       {availabilityError ? <Text style={s.note}>{availabilityError}</Text> : null}
