@@ -1,10 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, statSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createBackup, verifyBackup } from './backup.mjs';
+import { runScheduledBackup, backupStatus } from './backup-schedule.mjs';
 
 export async function runStagingSmoke(env = process.env) {
   if (env.CI !== 'true' || env.GITHUB_ACTIONS !== 'true') throw new Error('ONAY_SMOKE_REQUIRES_ISOLATED_GITHUB_RUNNER');
@@ -81,6 +82,31 @@ export async function runStagingSmoke(env = process.env) {
     check('live-database-and-session-unchanged-after-restore-drill', () => {
       command(['exec', '-T', 'db', 'psql', '-U', 'onay', '-d', 'onay', '-v', 'ON_ERROR_STOP=1', '-tAc',
         `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM tezjet_users WHERE id='${laterId}') THEN RAISE EXCEPTION 'LIVE_DATABASE_CHANGED'; END IF; END $$;`]);
+      command(['exec', '-T', 'api', 'node', '--input-type=module', '-e', requestWithToken], { input: token });
+    });
+    const scheduled = { envFile, project, directory: join(temporary, 'scheduled'), keep: 2 };
+    await checkAsync('automatic-backup-runs-verify-and-prune-only-completed-copies', async () => {
+      for (let run = 0; run < 3; run++) await runScheduledBackup(scheduled);
+      if (readdirSync(scheduled.directory).filter(name => name.endsWith('.dump')).length !== 2) throw new Error('BACKUP_RETENTION_FAILED');
+      if ((await backupStatus(scheduled.directory)).state !== 'success') throw new Error('BACKUP_STATUS_FAILED');
+    });
+    await checkAsync('failed-automatic-backup-preserves-copies-and-reports-failure', async () => {
+      const before = readdirSync(scheduled.directory).filter(name => name.endsWith('.dump')).sort();
+      const prior = JSON.parse(readFileSync(join(scheduled.directory, 'status.json'), 'utf8'));
+      command(['stop', 'db']);
+      let rejected = false;
+      try { await runScheduledBackup(scheduled); } catch { rejected = true; }
+      const status = JSON.parse(readFileSync(join(scheduled.directory, 'status.json'), 'utf8'));
+      if (!rejected || status.state !== 'failed' || status.lastSuccess !== prior.lastSuccess ||
+        JSON.stringify(before) !== JSON.stringify(readdirSync(scheduled.directory).filter(name => name.endsWith('.dump')).sort())) throw new Error('BACKUP_FAILURE_DAMAGED_HISTORY');
+      let unhealthy = false;
+      try { await backupStatus(scheduled.directory); } catch { unhealthy = true; }
+      if (!unhealthy) throw new Error('BACKUP_FAILURE_WAS_NOT_REPORTED');
+      command(['up', '-d', '--wait', '--wait-timeout', '120', 'db', 'api']);
+    });
+    await checkAsync('automatic-backup-recovers-after-database-return-and-keeps-api-session', async () => {
+      if ((await runScheduledBackup(scheduled)).state !== 'success') throw new Error('BACKUP_RECOVERY_FAILED');
+      if ((await backupStatus(scheduled.directory)).state !== 'success') throw new Error('BACKUP_RECOVERY_STATUS_FAILED');
       command(['exec', '-T', 'api', 'node', '--input-type=module', '-e', requestWithToken], { input: token });
     });
     check('https-proxy-configuration-valid', () => command(['run', '--rm', '--no-deps', 'edge', 'caddy', 'validate', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile']));
