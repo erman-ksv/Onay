@@ -5,6 +5,7 @@ import { resolveRouteQueue } from "./routeQueue";
 import { isValidCoordinates, isWithinRadius } from "./geo";
 import { AppError } from "./errors";
 import { optionalString } from "./validation";
+import { withCanonicalKztFare } from "./fareMoney";
 
 /** Passenger stop selectors must survive every HTTP/store normalization step. */
 export function validateRouteOrderSelectionInput(selection: RouteOrderSelectionInput): RouteOrderSelectionInput {
@@ -68,12 +69,12 @@ export function buildRouteOrder(
     routeContext,
     routeStops: stops,
     destination: destinationStop.name,
-    fare: {
+    fare: withCanonicalKztFare({
       currency: route.currency, routeId: route.id, pickupStop, destinationStop,
       pickupPosition: pickupStop.position, destinationPosition: destinationStop.position,
       distanceStops, pricePerStopKzt: route.pricePerStopKzt, minimumFareApplied: false,
       stops, totalKzt: distanceStops * route.pricePerStopKzt, calculatedAt: new Date().toISOString(),
-    },
+    }),
   };
 }
 

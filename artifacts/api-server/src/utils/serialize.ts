@@ -1,5 +1,6 @@
 import type { Order, User } from "../types/domain";
 import { maskPhone } from "./phone";
+import { withCanonicalKztFare } from "./fareMoney";
 
 export function serializeUser(user: User) {
   return {
@@ -50,7 +51,7 @@ export function serializeOrder(order: Order, maskPassenger = false) {
       destination_stop_id: order.fare.destinationStop.id,
     } : {}),
     route_stops: order.routeStops,
-    fare: order.fare,
+    fare: withCanonicalKztFare(order.fare),
     destination: order.destination,
     seats: order.seats,
     status: order.status,

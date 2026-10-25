@@ -161,6 +161,9 @@ export interface DriverRouteSelection {
 
 export interface FareQuote {
   currency: "KZT";
+  /** Neutral aliases may be absent in historical persisted quotes. */
+  total?: number;
+  pricePerStop?: number;
   routeId: string;
   pickupStop: RouteStop;
   destinationStop: RouteStop;
