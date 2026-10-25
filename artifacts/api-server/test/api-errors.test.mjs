@@ -16,7 +16,7 @@ const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const { Pool } = createRequire(new URL("../../../lib/db/package.json", import.meta.url))("pg");
 const schema = `api_errors_${randomUUID().replaceAll("-", "")}`;
 const emptySchema = `${schema}_startup`;
-const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes"];
+const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes", "tezjet_admin_audit_events"];
 const secret = "api-errors-production-regression-secret-at-least-32-characters";
 const sentinels = {
   query: "PRIVATE_QUERY_SENTINEL", path: "PRIVATE_PATH_SENTINEL", header: "PRIVATE_HEADER_SENTINEL",

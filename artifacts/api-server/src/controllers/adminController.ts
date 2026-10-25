@@ -12,16 +12,17 @@ import { normalizeExternalPickupSettings } from "../store/externalPickup";
 import { processOrderDispatch, publishOrderOfferChanges } from "../services/orderDispatchService";
 
 export async function listAdminAuditEvents(request: Request, response: Response): Promise<void> {
-  if (Object.keys(request.query).some(key => !["order_id", "limit"].includes(key))) {
+  if (Object.keys(request.query).some(key => !["order_id", "driver_id", "limit"].includes(key))) {
     throw new AppError(400, "Unsupported audit filter", "VALIDATION_ERROR");
   }
   const orderId = request.query["order_id"] === undefined ? undefined : requiredString(request.query["order_id"], "order_id", 100);
+  const driverId = request.query["driver_id"] === undefined ? undefined : requiredString(request.query["driver_id"], "driver_id", 100);
   const rawLimit = request.query["limit"];
   if (rawLimit !== undefined && (typeof rawLimit !== "string" || !/^\d+$/.test(rawLimit))) {
     throw new AppError(400, "limit must be an integer", "VALIDATION_ERROR");
   }
   const limit = boundedInteger(rawLimit === undefined ? 50 : Number(rawLimit), "limit", 1, 100);
-  response.set("Cache-Control", "no-store").json({ events: await store.listAdminAuditEvents(orderId, limit) });
+  response.set("Cache-Control", "no-store").json({ events: await store.listAdminAuditEvents(orderId, limit, driverId) });
 }
 
 function routeId(value: unknown): string {
@@ -357,15 +358,18 @@ export async function listDrivers(_request: Request, response: Response): Promis
 }
 
 export async function updateDriverApproval(request: Request, response: Response): Promise<void> {
+  if (!request.auth || request.auth.role !== "admin") throw new AppError(403, "Administrator role is required", "FORBIDDEN");
   const status = pickEnum(
     request.body?.status,
     "status",
     ["pending", "approved", "rejected"] as const,
   ) as DriverApprovalStatus;
-  const user = await store.setDriverApproval(
+  const user = await store.setDriverApprovalAsAdmin(
     requiredString(request.params["driverId"], "driver_id", 80),
     status,
     request.body?.expected_vehicle_revision,
+    request.auth.userId,
+    request.auth.user.sessionVersion,
   );
   if (!user) {
     throw new AppError(404, "Driver not found", "DRIVER_NOT_FOUND");

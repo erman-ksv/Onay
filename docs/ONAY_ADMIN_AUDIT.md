@@ -8,4 +8,15 @@ Ordinary database UPDATE,DELETE and TRUNCATE are rejected by migration triggers,
 
 The regression suite executes the actual migration SQL in its private PostgreSQL schema so trigger enforcement is tested, rather than relying on LIKE-table cloning which does not copy triggers. It verifies audit insertion atomicity,one record after concurrent cancellation,role/privacy/input bounds,immutable returned copies in MemoryStore,persistence across PostgreSQL store instances,and blocked UPDATE/DELETE/TRUNCATE. Existing transaction lock order(order→queue→actor) remains unchanged.
 
-Scope is administrator order cancellation only. Route/fare/driver-approval mutations,failed-attempt audit,staff roles,administrator journal UI,dispute workflow and operational retention/export remain open. Existing historic cancellations are not backfilled because their actor/time cannot be reliably reconstructed.
+Scope covers administrator order cancellation and driver approval changes. Route/fare mutations,failed-attempt audit,staff roles,administrator journal UI,dispute workflow and operational retention/export remain open. Existing historic cancellations are not backfilled because their actor/time cannot be reliably reconstructed.
+
+
+## Driver approval changes
+
+Migration0010 extends the same table with nullable driver_id/vehicle_revision and permits order_id to be absent for driver events. Existing cancellation JSON remains unchanged: unused nullable columns are omitted. GET audit-events additionally accepts driver_id; filters intersect when combined.
+
+The existing PATCH admin/drivers/:id/approval now uses an audited store operation. It locks driver and administrator account rows in canonical ID order,checks the live administrator role/session and the submitted vehicle revision,then writes status and `driver.approval_changed` atomically. A repeated identical status returns success without a new event; actual transitions retain previous/new status and the reviewed vehicle revision when present. Audit insertion failure rolls the approval back. No phone,name,plate,car snapshot,GPS or tokens are copied to the journal.
+
+Tests verify authorized HTTP transitions/filtering,no-op deduplication,live role/session guards,stale vehicle revision refusal,reviewed revision persistence,audit-write rollback and actual PostgreSQL lock overlap for duplicate reviews. Legacy trusted store fixture setters are retained;HTTP clients use only the audited administrator operation. Test schemas include the migrated audit table;the dedicated audit suite executes both actual migration scripts to exercise protected history.
+
+This does not add staff roles,driver ban/unban semantics,an administrator journal screen or dispute handling. It does not backfill approvals made before this migration. Database owner/superuser DDL bypass remains outside the trigger guarantee.

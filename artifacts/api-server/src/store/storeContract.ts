@@ -169,7 +169,8 @@ export interface Store {
     expectedSessionVersion?: number,
   ): MaybePromise<Order | undefined>;
   cancelOrderAsAdmin(orderId: string, adminId: string, expectedStatus: OrderStatus, expectedSessionVersion: number): MaybePromise<Order | undefined>;
-  listAdminAuditEvents(orderId?: string, limit?: number): MaybePromise<AdminAuditEvent[]>;
+  listAdminAuditEvents(orderId?: string, limit?: number, driverId?: string): MaybePromise<AdminAuditEvent[]>;
+  setDriverApprovalAsAdmin(userId: string, status: DriverApprovalStatus, expectedVehicleRevision: string | null | undefined, adminId: string, expectedSessionVersion: number): MaybePromise<User | undefined>;
   claimOrderForDriver(
     orderId: string,
     driverId: string,

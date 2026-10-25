@@ -294,10 +294,12 @@ export interface OrderOfferChange {
 export interface AdminAuditEvent {
   id: string;
   actorId: string;
-  action: "order.cancelled";
-  orderId: string;
-  fromStatus: OrderStatus;
-  toStatus: "cancelled";
+  action: "order.cancelled" | "driver.approval_changed";
+  orderId?: string;
+  driverId?: string;
+  vehicleRevision?: string;
+  fromStatus: OrderStatus | DriverApprovalStatus;
+  toStatus: "cancelled" | DriverApprovalStatus;
   createdAt: string;
 }
 

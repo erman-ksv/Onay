@@ -13,7 +13,7 @@ import { performance } from "node:perf_hooks";
 const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const schema = `queue_load_${randomUUID().replaceAll("-", "")}`;
 const applicationName = `queue-load-${randomUUID()}`;
-const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes", "tezjet_route_order_requests"];
+const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes", "tezjet_route_order_requests", "tezjet_admin_audit_events"];
 const envKeys = ["DATABASE_URL", "TEZJET_STORAGE_ADAPTER", "NODE_ENV", "SESSION_SECRET", "LOG_LEVEL", "REQUIRE_DRIVER_APPROVAL", "PYATAK_CENTER_LAT", "PYATAK_CENTER_LNG", "TEZJET_OFFER_TIMEOUT_SECONDS"];
 const originalEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
 const measurements = [];
@@ -202,5 +202,3 @@ test('bounded HTTP load preserves FIFO, one offer per driver, idempotency and se
   } catch (error) { report.status = 'failed'; report.reasonCode = 'QUEUE_LOAD_INVARIANT_FAILED'; throw error; }
   finally { await writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n'); }
 });
-
-
