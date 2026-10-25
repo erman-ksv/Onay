@@ -37,6 +37,8 @@ import { OFFER_TIMEOUT_MS, OTP_TTL_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS
 import { acceptQueueOffer, assertLegacyOrderInput, assertOrderOfferPatch, assertQueueOfferPatch, compareOfferDrivers, hasLiveOrderOffer, orderedOfferCandidates, releaseQueueOffer, reserveQueueOffer } from "./orderOffers";
 import { buildRouteOrder, validateRouteOrderSelectionInput } from "../utils/routeOrder";
 import { boundedInteger } from "../utils/validation";
+import type { AdminMutationActor } from "./storeContract";
+import { routeMetadataEvent } from "./routeAudit";
 import { assertRouteOrderRequestHash, requireRouteOrderRequestKey, routeOrderRequestHash } from "../utils/routeOrderRequest";
 
 type DbModule = typeof import("@workspace/db");
@@ -1461,13 +1463,15 @@ export class PostgresStore implements Store {
     return this.transitionOrderInternal(orderId, adminId, "cancelled", expectedStatus, expectedSessionVersion, true);
   }
 
-  async listAdminAuditEvents(orderId?: string, limit = 50, driverId?: string): Promise<AdminAuditEvent[]> {
+  async listAdminAuditEvents(orderId?: string, limit = 50, driverId?: string, routeId?: string): Promise<AdminAuditEvent[]> {
     const count = boundedInteger(limit, "limit", 1, 100);
     const { db, adminAuditEventsTable: events } = await this.database();
-    const rows = await db.select().from(events).where(and(orderId ? eq(events.orderId, orderId) : undefined, driverId ? eq(events.driverId, driverId) : undefined))
+    const rows = await db.select().from(events).where(and(orderId ? eq(events.orderId, orderId) : undefined, driverId ? eq(events.driverId, driverId) : undefined, routeId ? eq(events.routeId, routeId) : undefined))
       .orderBy(desc(events.createdAt), desc(events.id)).limit(count);
-    return rows.map(({ orderId, driverId, vehicleRevision, ...event }) => ({ ...event,
-      ...(orderId ? { orderId } : {}), ...(driverId ? { driverId } : {}), ...(vehicleRevision ? { vehicleRevision } : {}) } as AdminAuditEvent));
+    return rows.map(({ orderId, driverId, vehicleRevision, routeId, changedFields, previousVersion, nextVersion, fromStatus, toStatus, ...event }) => ({ ...event,
+      ...(orderId ? { orderId } : {}), ...(driverId ? { driverId } : {}), ...(vehicleRevision ? { vehicleRevision } : {}),
+      ...(routeId ? { routeId } : {}), ...(changedFields ? { changedFields } : {}), ...(previousVersion ? { previousVersion } : {}), ...(nextVersion ? { nextVersion } : {}),
+      ...(fromStatus ? { fromStatus } : {}), ...(toStatus ? { toStatus } : {}) } as AdminAuditEvent));
   }
 
   private async transitionOrderInternal(
@@ -1725,10 +1729,10 @@ export class PostgresStore implements Store {
     return asRoute(row as unknown as Record<string, unknown>);
   }
 
-  async updateRoute(routeId: string, patch: Partial<Pick<RouteDefinition, "name" | "pricePerStopKzt" | "active">>): Promise<RouteDefinition | undefined> {
+  async updateRoute(routeId: string, patch: Partial<Pick<RouteDefinition, "name" | "pricePerStopKzt" | "active">>, audit?: AdminMutationActor): Promise<RouteDefinition | undefined> {
     return this.mutateRoute(routeId, (route) => ({
       route: { ...route, ...patch, updatedAt: nextRouteUpdatedAt(route.updatedAt) },
-    }));
+    }), audit);
   }
 
   async deleteRoute(routeId: string): Promise<boolean> {
@@ -1767,15 +1771,24 @@ export class PostgresStore implements Store {
   private async mutateRoute<T = RouteDefinition>(
     routeId: string,
     mutate: (route: RouteDefinition) => { route: RouteDefinition; result?: T } | undefined,
+    audit?: AdminMutationActor,
   ): Promise<T | undefined> {
-    const { db, routesTable } = await this.database();
+    const { db, routesTable, usersTable, adminAuditEventsTable } = await this.database();
     return db.transaction(async tx => {
       const [current] = await tx.select().from(routesTable)
         .where(eq(routesTable.id, routeId)).for("update").limit(1);
       if (!current) return undefined;
-      const changed = mutate(asRoute(current as unknown as Record<string, unknown>));
+      if (audit) {
+        const [actor] = await tx.select().from(usersTable).where(eq(usersTable.id, audit.adminId)).for("share").limit(1);
+        if (!actor || audit.expectedSessionVersion === undefined || actor.sessionVersion !== audit.expectedSessionVersion) throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+        if (actor.role !== "admin") throw new AppError(403, "Administrator role is required", "FORBIDDEN");
+      }
+      const before = asRoute(current as unknown as Record<string, unknown>);
+      const changed = mutate(before);
       if (!changed) return undefined;
       const { route } = changed;
+      const event = audit ? routeMetadataEvent(before, route, audit.adminId) : undefined;
+      if (audit && !event) return (changed.result ?? before) as T;
       const [row] = await tx.update(routesTable).set({
         name: route.name,
         active: route.active,
@@ -1783,6 +1796,7 @@ export class PostgresStore implements Store {
         updatedAt: route.updatedAt,
         payload: route as unknown as Record<string, unknown>,
       }).where(eq(routesTable.id, routeId)).returning();
+      if (event) await tx.insert(adminAuditEventsTable).values(event);
       return changed.result ?? asRoute(row as unknown as Record<string, unknown>) as T;
     });
   }

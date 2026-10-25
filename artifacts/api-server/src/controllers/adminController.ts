@@ -12,17 +12,18 @@ import { normalizeExternalPickupSettings } from "../store/externalPickup";
 import { processOrderDispatch, publishOrderOfferChanges } from "../services/orderDispatchService";
 
 export async function listAdminAuditEvents(request: Request, response: Response): Promise<void> {
-  if (Object.keys(request.query).some(key => !["order_id", "driver_id", "limit"].includes(key))) {
+  if (Object.keys(request.query).some(key => !["order_id", "driver_id", "route_id", "limit"].includes(key))) {
     throw new AppError(400, "Unsupported audit filter", "VALIDATION_ERROR");
   }
   const orderId = request.query["order_id"] === undefined ? undefined : requiredString(request.query["order_id"], "order_id", 100);
   const driverId = request.query["driver_id"] === undefined ? undefined : requiredString(request.query["driver_id"], "driver_id", 100);
+  const routeIdFilter = request.query["route_id"] === undefined ? undefined : requiredString(request.query["route_id"], "route_id", 100);
   const rawLimit = request.query["limit"];
   if (rawLimit !== undefined && (typeof rawLimit !== "string" || !/^\d+$/.test(rawLimit))) {
     throw new AppError(400, "limit must be an integer", "VALIDATION_ERROR");
   }
   const limit = boundedInteger(rawLimit === undefined ? 50 : Number(rawLimit), "limit", 1, 100);
-  response.set("Cache-Control", "no-store").json({ events: await store.listAdminAuditEvents(orderId, limit, driverId) });
+  response.set("Cache-Control", "no-store").json({ events: await store.listAdminAuditEvents(orderId, limit, driverId, routeIdFilter) });
 }
 
 function routeId(value: unknown): string {
@@ -172,6 +173,7 @@ export async function createRoute(request: Request, response: Response): Promise
 }
 
 export async function updateRoute(request: Request, response: Response): Promise<void> {
+  if (!request.auth || request.auth.role !== "admin") throw new AppError(403, "Administrator role is required", "FORBIDDEN");
   const routeIdParam = requiredString(request.params["routeId"], "route_id", 80);
   const patch: {
     name?: string;
@@ -192,7 +194,7 @@ export async function updateRoute(request: Request, response: Response): Promise
   if (request.body?.active !== undefined) {
     patch.active = optionalBoolean(request.body.active, "active", true);
   }
-  const route = await store.updateRoute(routeIdParam, patch);
+  const route = await store.updateRoute(routeIdParam, patch, { adminId: request.auth.userId, expectedSessionVersion: request.auth.user.sessionVersion });
   if (!route) {
     throw new AppError(404, "Route not found", "ROUTE_NOT_FOUND");
   }

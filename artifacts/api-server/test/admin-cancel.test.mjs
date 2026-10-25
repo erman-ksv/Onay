@@ -62,6 +62,7 @@ before(async () => {
   // Execute the actual migration in this schema, including append-only triggers.
   await database.query(await readFile(new URL('../../../lib/db/drizzle/0009_admin_audit_events.sql', import.meta.url), 'utf8'));
   await database.query(await readFile(new URL('../../../lib/db/drizzle/0010_driver_approval_audit.sql', import.meta.url), 'utf8'));
+  await database.query(await readFile(new URL('../../../lib/db/drizzle/0011_route_metadata_audit.sql', import.meta.url), 'utf8'));
   store = new production.PostgresStore();
   otherStore = new production.PostgresStore();
   assert.ok(production.runtimeStore instanceof production.PostgresStore, "The HTTP app must use the actual durable adapter.");
@@ -325,5 +326,83 @@ test('PostgreSQL duplicate reviews overlap under real locks and create one event
     await waitForLocks(2); await blocker.query('COMMIT');
     const result = await pending; assert.ok(result.every(item => item.status === 'fulfilled' && item.value.driverApprovalStatus === 'rejected'));
     assert.equal((await store.listAdminAuditEvents(undefined, 50, f.driver.id)).length, 1);
+  } finally { await blocker.query('ROLLBACK'); blocker.release(); if (pending) await pending; }
+});
+
+async function routeFixture(t, adapter = store) {
+  const f = await fixture(t, adapter);
+  const route = await adapter.createRoute({ id: `audit-${randomUUID()}`, name: 'Private route fixture name', pricePerStopKzt: 500, active: true });
+  t.after(() => adapter.deleteRoute(route.id));
+  return { ...f, route, actor: { adminId: f.admin.id, expectedSessionVersion: f.admin.sessionVersion } };
+}
+
+test('HTTP route metadata updates are audited without route text or coordinates and support route filtering', async t => {
+  const f = await routeFixture(t);
+  async function patch(body, token = f.admin.token, id = f.route.id) {
+    const response = await fetch(`${baseUrl}/admin/routes/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+    return { status: response.status, body: await response.json() };
+  }
+  for (const actor of [f.passenger, f.driver]) assert.equal((await patch({ active: false }, actor.token)).status, 403);
+  assert.equal((await patch({ price_per_stop: -1 })).status, 400);
+  assert.equal((await patch({ active: false }, f.admin.token, randomUUID())).status, 404);
+  const changed = await patch({ name: 'Changed secret route fixture name', price_per_stop: 900, active: false });
+  assert.equal(changed.status, 200);
+  assert.equal((await patch({ name: 'Changed secret route fixture name', price_per_stop: 900, active: false })).body.route.updatedAt, changed.body.route.updatedAt);
+  const response = await fetch(`${baseUrl}/admin/audit-events?route_id=${f.route.id}`, { headers: { authorization: `Bearer ${f.admin.token}` } });
+  assert.equal(response.status, 200); const { events } = await response.json(); assert.equal(events.length, 1);
+  const event = events[0]; assert.equal(event.action, 'route.updated'); assert.equal(event.routeId, f.route.id); assert.equal(event.actorId, f.admin.id);
+  assert.deepEqual(event.changedFields.sort(), ['active', 'name', 'pricePerStopKzt']);
+  assert.equal(event.previousVersion, f.route.updatedAt); assert.equal(event.nextVersion, changed.body.route.updatedAt);
+  assert.deepEqual(Object.keys(event).sort(), ['action', 'actorId', 'changedFields', 'createdAt', 'id', 'nextVersion', 'previousVersion', 'routeId'].sort());
+  assert.ok(!JSON.stringify(event).includes('route fixture name'));
+});
+
+for (const kind of ['PostgreSQL', 'Memory']) test(`${kind} audited route metadata checks authority and suppresses no-op changes`, async t => {
+  const adapter = kind === 'PostgreSQL' ? store : new production.MemoryStore(), f = await routeFixture(t, adapter);
+  await assert.rejects(Promise.resolve().then(() => adapter.updateRoute(f.route.id, { active: false }, { adminId: f.passenger.id, expectedSessionVersion: f.passenger.sessionVersion })), error => error.code === 'FORBIDDEN');
+  await adapter.invalidateSessions(f.admin.id);
+  await assert.rejects(Promise.resolve().then(() => adapter.updateRoute(f.route.id, { active: false }, f.actor)), error => error.code === 'UNAUTHORIZED');
+  assert.deepEqual(await adapter.getRoute(f.route.id), f.route);
+  assert.deepEqual(await adapter.listAdminAuditEvents(undefined, 50, undefined, f.route.id), []);
+  const actor = { ...f.actor, expectedSessionVersion: (await adapter.getUser(f.admin.id)).sessionVersion };
+  assert.equal((await adapter.updateRoute(f.route.id, { active: true }, actor)).updatedAt, f.route.updatedAt);
+  assert.deepEqual(await adapter.listAdminAuditEvents(undefined, 50, undefined, f.route.id), []);
+  await adapter.updateRoute(f.route.id, { pricePerStopKzt: 700 }, actor);
+  const [event] = await adapter.listAdminAuditEvents(undefined, 50, undefined, f.route.id); assert.deepEqual(event.changedFields, ['pricePerStopKzt']);
+  event.changedFields.push('tampered');
+  assert.deepEqual((await adapter.listAdminAuditEvents(undefined, 50, undefined, f.route.id))[0].changedFields, ['pricePerStopKzt']);
+});
+
+test('PostgreSQL failed route audit insert rolls tariff and route version back', async t => {
+  const f = await routeFixture(t);
+  await database.query(`CREATE FUNCTION fail_route_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.route_id='${f.route.id}' THEN RAISE EXCEPTION 'injected route audit failure'; END IF; RETURN NEW; END $$`);
+  await database.query('CREATE TRIGGER fail_route_audit BEFORE INSERT ON tezjet_admin_audit_events FOR EACH ROW EXECUTE FUNCTION fail_route_audit()');
+  try {
+    await assert.rejects(store.updateRoute(f.route.id, { pricePerStopKzt: 900 }, f.actor));
+    assert.deepEqual(await store.getRoute(f.route.id), f.route);
+    assert.deepEqual(await store.listAdminAuditEvents(undefined, 50, undefined, f.route.id), []);
+  } finally { await database.query('DROP TRIGGER fail_route_audit ON tezjet_admin_audit_events'); await database.query('DROP FUNCTION fail_route_audit()'); }
+});
+
+test('PostgreSQL concurrent identical metadata writes create one event under actual row locks', async t => {
+  const f = await routeFixture(t), blocker = await adminPool.connect(); let pending;
+  try {
+    await blocker.query('BEGIN'); await blocker.query(`SELECT id FROM "${schema}".tezjet_routes WHERE id=$1 FOR UPDATE`, [f.route.id]);
+    pending = Promise.allSettled([store.updateRoute(f.route.id, { pricePerStopKzt: 900 }, f.actor), otherStore.updateRoute(f.route.id, { pricePerStopKzt: 900 }, f.actor)]);
+    await waitForLocks(2); await blocker.query('COMMIT'); const result = await pending;
+    assert.ok(result.every(item => item.status === 'fulfilled' && item.value.pricePerStopKzt === 900));
+    assert.equal((await store.listAdminAuditEvents(undefined, 50, undefined, f.route.id)).length, 1);
+  } finally { await blocker.query('ROLLBACK'); blocker.release(); if (pending) await pending; }
+});
+
+test('PostgreSQL session revocation while metadata write waits prevents all route changes', async t => {
+  const f = await routeFixture(t), blocker = await adminPool.connect(); let pending;
+  try {
+    await blocker.query('BEGIN'); await blocker.query(`SELECT id FROM "${schema}".tezjet_users WHERE id=$1 FOR UPDATE`, [f.admin.id]);
+    pending = Promise.allSettled([store.updateRoute(f.route.id, { active: false }, f.actor)]);
+    await waitForLocks(1); await blocker.query(`UPDATE "${schema}".tezjet_users SET session_version=session_version+1 WHERE id=$1`, [f.admin.id]);
+    await blocker.query('COMMIT'); const [result] = await pending;
+    assert.equal(result.status, 'rejected'); assert.equal(result.reason.code, 'UNAUTHORIZED');
+    assert.deepEqual(await store.getRoute(f.route.id), f.route); assert.deepEqual(await store.listAdminAuditEvents(undefined, 50, undefined, f.route.id), []);
   } finally { await blocker.query('ROLLBACK'); blocker.release(); if (pending) await pending; }
 });

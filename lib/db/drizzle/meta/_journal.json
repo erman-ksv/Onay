@@ -78,6 +78,13 @@
       "when": 1792886460000,
       "tag": "0010_driver_approval_audit",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792886520000,
+      "tag": "0011_route_metadata_audit",
+      "breakpoints": true
     }
   ]
 }
