@@ -9,6 +9,7 @@ import { serializeOrder, serializeUser } from "../utils/serialize";
 import { readRouteLayoutInput } from "../utils/routeLayout";
 import { boundedInteger, optionalString, pickEnum, requiredString } from "../utils/validation";
 import { normalizeExternalPickupSettings } from "../store/externalPickup";
+import { processOrderDispatch, publishOrderOfferChanges } from "../services/orderDispatchService";
 
 function routeId(value: unknown): string {
   const raw = value === undefined ? randomUUID() : requiredString(value, "route_id", 80);
@@ -247,6 +248,27 @@ export async function deleteStop(request: Request, response: Response): Promise<
     throw new AppError(404, "Route stop not found", "STOP_NOT_FOUND");
   }
   response.status(204).send();
+}
+
+/** Explicit administrator cancellation; storage rechecks authority under its locks. */
+export async function cancelAdminOrder(request: Request, response: Response): Promise<void> {
+  if (!request.auth || request.auth.role !== "admin") throw new AppError(403, "Administrator role is required", "FORBIDDEN");
+  if (!request.body || typeof request.body !== "object" || Array.isArray(request.body) ||
+      Object.keys(request.body).some(key => key !== "expected_status")) {
+    throw new AppError(400, "Only expected_status is accepted", "VALIDATION_ERROR");
+  }
+  const expected = pickEnum(request.body.expected_status, "expected_status", [
+    "searching", "en_route_to_c", "arrived_at_c", "boarded_waiting", "in_transit", "completed", "cancelled",
+  ] as const);
+  const id = requiredString(request.params["orderId"], "order_id", 100);
+  const before = await store.getOrder(id);
+  if (!before) throw new AppError(404, "Order not found", "ORDER_NOT_FOUND");
+  const order = await store.cancelOrderAsAdmin(id, request.auth.userId, expected, request.auth.user.sessionVersion);
+  if (!order) throw new AppError(409, "Order changed or is already closed", "ORDER_UNAVAILABLE");
+  const io = request.app.locals.io;
+  await publishOrderOfferChanges(io, [{ order, previousDriverId: order.offeredDriverId }]);
+  await processOrderDispatch(io);
+  response.set("Cache-Control", "no-store").json({ order: serializeOrder(order) });
 }
 
 /** View existing orders without changing dispatch or trip state. */

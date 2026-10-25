@@ -38,9 +38,12 @@ export function canTransitionOrder(
   actorId: string,
   nextStatus: OrderStatus,
   expectedStatus?: OrderStatus,
+  adminCancellation = false,
 ): boolean {
   if (!actorId || (expectedStatus !== undefined && order.status !== expectedStatus)) return false;
   if (!statusTransitions[order.status].includes(nextStatus)) return false;
+  // Store callers must verify the administrator's current role/session under lock.
+  if (adminCancellation) return nextStatus === "cancelled";
   if (nextStatus === "cancelled" && order.status === "searching" && order.offerExpiresAt !== undefined) {
     return actorId === order.passengerId;
   }
