@@ -509,6 +509,14 @@ class AdminLayoutQA:
 
     def admin_orders(self, passenger_token):
         route = expect_status(api_request(self.args.api_url, "/admin/routes/" + self.uzs_route_id, token=self.token), 200, "Current real UZS route for admin order QA")["route"]
+        # The tariff-only scenario saves stops without assigning origin pitaks.
+        # Enroll through a genuinely configured route; do not bypass that guard.
+        route = expect_status(api_request(self.args.api_url, "/admin/routes/" + route["id"] + "/layout", "PUT", {
+            "expected_updated_at": route["updatedAt"],
+            "stops": [{"id": stop["id"], "code": stop["code"], "name": stop["name"],
+                "location": {"lat": stop["location"]["lat"], "lng": stop["location"]["lng"]}} for stop in route["stops"]],
+            "pitaks": {"a_stop_code": route["stops"][0]["code"], "b_stop_code": route["stops"][-1]["code"], "radius_meters": 175},
+        }, self.token), 200, "Configure actual pitaks before enrolling the admin cancellation fixture")["route"]
         choice = {"route_id": route["id"], "direction": "a_to_b", "expected_updated_at": route["updatedAt"]}
         start, destination = route["stops"][0], route["stops"][-1]
         location = {**start["location"], "timestamp": int(time.time() * 1000)}
