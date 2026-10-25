@@ -1,12 +1,14 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import { io } from "socket.io-client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { API, ApiError, errorMessage, request, setApiEndpoint, validateApiEndpoint, type Availability } from "../lib/api";
 import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextDriverTripStatus, nextTripLabel, ridePickupLabel, rideDestinationLabel, statusLabels, type RideOrder } from "../lib/orders";
 import DriverRoutePicker from "../components/DriverRoutePicker";
 import PassengerRouteOrder from "../components/PassengerRouteOrder";
+import { createPassengerBookingGate } from "../lib/passenger-booking-gate";
+import { routeBookingRecoveryKey, saveRouteBookingRecovery, clearRouteBookingRecovery, routeBookingDefinitivelyRejected } from "../lib/passenger-route-orders";
 import PassengerDriverCard from "../components/PassengerDriverCard";
 import DriverVehicleForm from "../components/DriverVehicleForm";
 import type { DriverVehicleSnapshot } from "../lib/driver-vehicle";
@@ -82,6 +84,9 @@ export default function Home() {
   const activeRole = profile?.active_role ?? profile?.role;
   const currentToken = useRef(token);
   currentToken.current = token;
+  const driverRouteSession = driverRouteSessionKey(apiBase, token);
+  const [, updateBookingAdmission] = useState(0);
+  const bookingGate = useMemo(() => createPassengerBookingGate(() => updateBookingAdmission(value => value + 1)), [driverRouteSession]);
   const availabilityGeneration = useRef(0);
   const ordersRequestInFlight = useRef<string | null>(null);
   const trackedOrders = useRef<RideOrder[]>([]);
@@ -101,10 +106,10 @@ export default function Home() {
   const applyOrder = useCallback((incoming: RideOrder) => {
     orderChanges.current.set(incoming.id, ++orderRevision.current);
     trackedOrders.current = mergeOrder(trackedOrders.current, incoming);
+    bookingGate.setActiveOrder(trackedOrders.current.some(order => order.passenger_id === profile?.id && !isClosed(order)));
     setOrders(trackedOrders.current);
-  }, []);
+  }, [bookingGate, profile?.id]);
   const driverApproved = activeRole === "driver" && profile?.driver_approval_status === "approved";
-  const driverRouteSession = driverRouteSessionKey(apiBase, token);
   const busy = actionBusy || vehicleBusySession === driverRouteSession;
   const vehicleBusyChange = useCallback((value: boolean) => {
     setVehicleBusySession(previous => value ? driverRouteSession : previous === driverRouteSession ? null : previous);
@@ -236,6 +241,7 @@ export default function Home() {
     if (!token || !profile?.id || (activeRole !== "passenger" && !driverApproved)) return;
     if (ordersRequestInFlight.current === token) return;
     ordersRequestInFlight.current = token;
+    const bookingReadRevision = bookingGate.beginOrdersRead();
     const revisionAtStart = orderRevision.current;
     const queueRevisionAtStart = queueRevision.current;
     const enrollmentRevisionAtStart = queueEnrollmentRevision.current;
@@ -252,6 +258,7 @@ export default function Home() {
       const list = (ordersResult.value as { orders: RideOrder[] }).orders || [];
       const changedAfterRequest = new Set([...orderChanges.current].filter(([, revision]) => revision > revisionAtStart).map(([id]) => id));
       trackedOrders.current = mergeOrderSnapshot(trackedOrders.current, list, changedAfterRequest);
+      bookingGate.applyOrdersSnapshot(bookingReadRevision, trackedOrders.current.some(order => order.passenger_id === profile.id && !isClosed(order)));
       setOrders(trackedOrders.current);
       if (driverApproved) {
         setIncomingOrder(trackedOrders.current.find(order => isLiveOffer(order, profile.id)) ?? null);
@@ -283,7 +290,7 @@ export default function Home() {
       setDataError(errorMessage(failed.reason, "Не удалось обновить заказы."));
       if (results.some(result => result.status === "rejected" && result.reason instanceof ApiError && result.reason.status === 401)) await clearSession();
     } else setDataError("");
-  }, [token, apiBase, profile?.id, activeRole, driverApproved, clearSession, updateQueueSnapshot]);
+  }, [token, apiBase, profile?.id, activeRole, driverApproved, clearSession, updateQueueSnapshot, bookingGate]);
 
   const refreshAvailability = useCallback(async () => {
     if (!token || activeRole !== "passenger" || !a) return null;
@@ -426,6 +433,10 @@ export default function Home() {
     const from = stops.find(v => v.code === a), to = stops.find(v => v.code === b);
     if (!from || !to || a === b) return Alert.alert("Маршрут", "Выбери разные точки А и Б.");
     if (!fareFresh) return Alert.alert("Стоимость", "Дождись расчёта стоимости выбранного маршрута.");
+    if (busy || activeRole !== "passenger" || passengerHasActiveOrder || !bookingGate.tryStart("legacy")) return;
+    const requestToken = token, requestEndpoint = apiBase;
+    const recoveryKey = routeBookingRecoveryKey(requestEndpoint, profile!.id);
+    let recoveryPrepared = false, postStarted = false;
     setBusy(true);
     try {
       const available = await refreshAvailability();
@@ -435,23 +446,42 @@ export default function Home() {
         return;
       }
       const coords = await getCoordinates();
-      const r = await request<{ order: RideOrder; offer?: unknown }>("/api/orders", token, { method: "POST", body: JSON.stringify({
+      if (currentToken.current !== requestToken || API !== requestEndpoint) return;
+      // Both booking forms share this durable record. Legacy has no request-key
+      // receipt API: an uncertain POST remains fail-closed, never guessed from404.
+      recoveryPrepared = true;
+      await saveRouteBookingRecovery(AsyncStorage, recoveryKey, { status: "in_flight", orderId: null });
+      bookingGate.recoveryChanged();
+      if (currentToken.current !== requestToken || API !== requestEndpoint) throw new Error("Подключение изменилось до отправки заказа.");
+      postStarted = true;
+      const r = await request<{ order: RideOrder; offer?: unknown }>("/api/orders", requestToken, { method: "POST", body: JSON.stringify({
         route_id: "pyatak", pickup_point: from.code, pickup_stop: from.code, destination_stop: to.code,
         pickup_location: coords, pickup_address: address.trim() || from.name, destination: to.name, seats
       }) });
+      bookingGate.setActiveOrder(true);
+      await saveRouteBookingRecovery(AsyncStorage, recoveryKey, { status: "confirmed", orderId: r.order.id });
+      bookingGate.recoveryChanged();
+      if (currentToken.current !== requestToken || API !== requestEndpoint) return;
       applyOrder(r.order);
       setMessage(r.offer ? "Заказ отправлен водителю. Ждём подтверждения." : "Заказ создан. Ищем водителя.");
       await refreshOrders();
     } catch (e) {
+      const rejected = postStarted && e instanceof ApiError && routeBookingDefinitivelyRejected(e);
+      if (recoveryPrepared && (!postStarted || rejected)) {
+        try { await clearRouteBookingRecovery(AsyncStorage, recoveryKey); } catch { /* Keep admission closed until storage can be read. */ }
+        bookingGate.recoveryChanged();
+      }
+      if (currentToken.current !== requestToken || API !== requestEndpoint) return;
       if (e instanceof ApiError && e.code === "NO_DRIVERS") {
         setAvailability({ pickup: a, seats, available: false, eligibleDriverCount: 0, checkedAt: Date.now() });
         setMessage("Водителей пока нет. Заказ не создан. Проверь наличие позже.");
       } else {
-        Alert.alert("Заказ", errorMessage(e, "Не удалось создать заказ."));
+        Alert.alert("Заказ", postStarted && !rejected
+          ? "Не удалось подтвердить результат заказа. Проверь его статус; повторное оформление заблокировано."
+          : errorMessage(e, "Не удалось создать заказ."));
         await refreshOrders();
       }
-    }
-    finally { setBusy(false); }
+    } finally { bookingGate.finish("legacy"); setBusy(false); }
   }
 
   async function refreshProfile() {
@@ -723,7 +753,7 @@ export default function Home() {
       </>
     ) : <>
     {passengerOrders.filter(order => !isClosed(order)).map(passengerOrder => <View key={passengerOrder.id} style={s.card} testID={`passenger-trip-${passengerOrder.id}`}><Text style={s.heading}>Твоя поездка</Text><Text style={s.descDark}>{statusLabels[passengerOrder.status]}</Text><Text style={s.descDark}>Точка подачи: {ridePickupLabel(passengerOrder)}</Text><Text style={s.descDark}>Куда: {rideDestinationLabel(passengerOrder)}</Text><Text style={s.descDark}>Пассажиров: {passengerOrder.seats}</Text>{passengerOrder.status === "searching" && passengerOrder.offered_driver_id ? <Text style={s.note}>Ждём ответа водителя.</Text> : null}<PassengerDriverCard key={`${driverRouteSession}:${passengerOrder.id}:${passengerOrder.driver_id ?? ""}:${passengerOrder.status}`} endpoint={apiBase} token={token} order={passengerOrder} /><Button title={busy ? "Отменяем…" : "Отменить заказ"} onPress={() => cancelOrder(passengerOrder)} disabled={busy} secondary /></View>)}
-    <PassengerRouteOrder key={driverRouteSession} endpoint={apiBase} userId={profile.id} token={token} busy={busy} activeOrder={passengerHasActiveOrder} onCreated={refreshOrders} />
+    <PassengerRouteOrder key={driverRouteSession} endpoint={apiBase} userId={profile.id} token={token} busy={busy} activeOrder={passengerHasActiveOrder} bookingGate={bookingGate} onCreated={refreshOrders} />
     <View style={s.card}>
       <Text style={s.heading}>Прежний маршрут C/D</Text>
       <Text style={s.label}>ТОЧКА А · ОТПРАВЛЕНИЕ</Text>{stops.filter(v => v.code === "C" || v.code === "D").map(v => <Pressable key={"a"+v.id} onPress={() => setA(v.code)} style={[s.stop, a===v.code && s.selected]}><Text style={s.stopText}>{v.name}</Text><Text>{v.code}</Text></Pressable>)}
@@ -734,7 +764,7 @@ export default function Home() {
       <Text style={s.descDark}>Наличие водителей: {availabilityDisplay.label}</Text>
       {availabilityError ? <Text style={s.note}>{availabilityError}</Text> : null}
       <Button title="Проверить наличие водителей" onPress={() => { void refreshAvailability(); }} disabled={busy || checkingAvailability} secondary />
-      <Button title={busy ? "Оформляем…" : "Заказать поездку"} onPress={order} disabled={busy || !fareFresh || !canOrder || passengerHasActiveOrder} />
+      <Button title={busy ? "Оформляем…" : "Заказать поездку"} onPress={order} disabled={busy || !fareFresh || !canOrder || passengerHasActiveOrder || !bookingGate.canSubmit()} />
       {passengerHasActiveOrder ? <Text style={s.small}>Сначала заверши или отмени текущий заказ.</Text> : null}
       {message ? <Text style={s.note}>{message}</Text> : null}<Text style={s.small}>Геолокация запрашивается только при оформлении заказа.</Text>
     </View>

@@ -3,13 +3,15 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-nati
 import * as Location from "expo-location";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { API, ApiError, errorMessage, request } from "../lib/api";
+import { isClosed, type RideOrder } from "../lib/orders";
+import type { PassengerBookingGate } from "../lib/passenger-booking-gate";
 import { orderedDriverStops, parseDriverRouteCatalog, type DriverDirection, type DriverRouteOption } from "../lib/driver-routes";
 import { createPassengerRouteRequestScope, passengerRouteSelection, passengerRouteSelectionKey, passengerRouteAvailabilityPath,
-  parsePassengerRouteAvailability, passengerRouteOrderBody, passengerRouteCatalogStatus, createPassengerRouteSubmissionGuard, routeBookingRecoveryKey, routeBookingRequestKey, reconcileRouteBookingRequest, readRouteBookingRecovery, saveRouteBookingRecovery, clearRouteBookingRecovery, discardUnsentRouteBooking, confirmedRouteBookingPresent, isFreshPassengerRouteQuote, routeBookingDefinitivelyRejected, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability, type PassengerRouteSegment } from "../lib/passenger-route-orders";
+  parsePassengerRouteAvailability, passengerRouteOrderBody, passengerRouteCatalogStatus, routeBookingRecoveryKey, routeBookingRequestKey, reconcileRouteBookingRequest, readRouteBookingRecovery, saveRouteBookingRecovery, clearRouteBookingRecovery, discardUnsentRouteBooking, confirmedRouteBookingPresent, isFreshPassengerRouteQuote, routeBookingDefinitivelyRejected, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability, type PassengerRouteSegment } from "../lib/passenger-route-orders";
 
-type Props = { token: string; endpoint: string; userId: string; busy: boolean; activeOrder: boolean; onCreated: () => Promise<void> };
+type Props = { token: string; endpoint: string; userId: string; busy: boolean; activeOrder: boolean; bookingGate: PassengerBookingGate; onCreated: () => Promise<void> };
 const choices: DriverDirection[] = ["a_to_b", "b_to_a"];
-export default function PassengerRouteOrder({ token, endpoint, userId, busy, activeOrder, onCreated }: Props) {
+export default function PassengerRouteOrder({ token, endpoint, userId, busy, activeOrder, bookingGate, onCreated }: Props) {
   const [routes, setRoutes] = useState<DriverRouteOption[]>([]);
   const [routeId, setRouteId] = useState("");
   const [direction, setDirection] = useState<DriverDirection>("a_to_b");
@@ -30,7 +32,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
   const [message, setMessage] = useState("");
   const [availability, setAvailability] = useState<{ key: string; checkedAt: number; value: PassengerRouteAvailability } | null>(null);
   const requestScope = useRef(createPassengerRouteRequestScope());
-  const submissionGuard = useRef(createPassengerRouteSubmissionGuard());
+  const recoveryRevision = bookingGate.recoveryRevision();
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const route = routes.find(item => item.id === routeId);
@@ -49,7 +51,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
   activeSelectionKey.current = key;
   const [now, setNow] = useState(Date.now());
   const fresh = !!availability && availability.key === key && now >= availability.checkedAt && now - availability.checkedAt < 15000;
-  const canOrder = isFreshPassengerRouteQuote(availability, key, now) && !busy && !activeOrder && !submitting && !checking && !pendingSync && recoveryReady && !recoveryError;
+  const canOrder = isFreshPassengerRouteQuote(availability, key, now) && !busy && !activeOrder && !submitting && !checking && !pendingSync && recoveryReady && !recoveryError && bookingGate.canSubmit();
   const catalogStatus = passengerRouteCatalogStatus({ loading, error: catalogError, count: routes.length });
 
   const inScope = () => mounted.current && API === endpoint;
@@ -63,6 +65,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
   useEffect(() => {
     let mounted = true;
     setRecoveryReady(false);
+    bookingGate.setRecovery(false, true);
     if (!recoveryKey) {
       setRecoveryError("Сначала подключи сервер и войди в аккаунт. Создание заказа заблокировано.");
       return;
@@ -70,16 +73,17 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
     setRecoveryError("");
     readRouteBookingRecovery(AsyncStorage, recoveryKey)
       .then(state => {
-        if (!mounted) return;
+        if (!mounted || recoveryRevision !== bookingGate.recoveryRevision()) return;
+        bookingGate.setRecovery(true, state !== null);
         setPendingSync(state !== null);
         setUncertainBooking(state !== null && state.status !== "confirmed");
         setMessage(state?.status === "confirmed" ? "Ранее заказ был создан. Проверь список поездок перед новым заказом."
           : state ? "Предыдущий заказ мог быть создан. Проверь его статус; повторное оформление заблокировано." : "");
         setRecoveryReady(true);
       })
-      .catch(() => { if (mounted) setRecoveryError("Не удалось проверить предыдущие заказы на устройстве. Создание нового заказа заблокировано."); });
+      .catch(() => { if (mounted && recoveryRevision === bookingGate.recoveryRevision()) setRecoveryError("Не удалось проверить предыдущие заказы на устройстве. Создание нового заказа заблокировано."); });
     return () => { mounted = false; };
-  }, [recoveryKey]);
+  }, [recoveryKey, bookingGate, recoveryRevision]);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
@@ -125,7 +129,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
     } finally { if (requestScope.current.isCurrentAvailability(version)) setChecking(false); }
   }
   async function retrySync() {
-    if (submitting || !pendingSync || !recoveryReady || !submissionGuard.current.tryStart()) return;
+    if (submitting || !pendingSync || !recoveryReady || !bookingGate.tryStart("recovery")) return;
     setSubmitting(true); setError("");
     try {
       let record = await readRouteBookingRecovery(AsyncStorage, recoveryKey);
@@ -141,12 +145,17 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
       if (!inScope()) return;
       let exactConfirmed = false;
       if (synced && record.status === "confirmed") {
-        const response = await scopedRequest<{orders: {id: string}[]}>("/api/orders");
+        const bookingReadRevision = bookingGate.beginOrdersRead();
+        const response = await scopedRequest<{orders: RideOrder[]}>("/api/orders");
         exactConfirmed = Array.isArray(response.orders) && confirmedRouteBookingPresent(record, response.orders);
+        // The parent may already have an older GET in flight. Admission must
+        // also use this authoritative snapshot before clearing the receipt.
+        if (exactConfirmed) exactConfirmed = bookingGate.applyOrdersSnapshot(bookingReadRevision, response.orders.some(order => !isClosed(order)));
       }
       if (synced && exactConfirmed) {
         await clearRouteBookingRecovery(AsyncStorage, recoveryKey);
         if (!mounted.current) return;
+        bookingGate.setRecovery(true, false);
         setPendingSync(false);
         setUncertainBooking(false);
         setMessage("Заказы обновлены. Проверь состояние поездки.");
@@ -156,10 +165,10 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
       if (mounted.current) setError(cause instanceof ApiError && cause.status === 404
         ? "Заказ пока не найден. Предыдущая отправка ещё могла обрабатываться. Повтори проверку статуса; новый заказ заблокирован."
         : errorMessage(cause, "Не удалось проверить заказ. Повтори проверку статуса."));
-    } finally { submissionGuard.current.finish(); if (mounted.current) setSubmitting(false); }
+    } finally { bookingGate.finish("recovery"); if (mounted.current) setSubmitting(false); }
   }
   async function submit() {
-    if (!selection || !canOrder || !submissionGuard.current.tryStart()) return;
+    if (!selection || !canOrder || !bookingGate.tryStart("configured")) return;
     setSubmitting(true); setMessage(""); setError("");
     let postStarted = false;
     try {
@@ -186,12 +195,14 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
         await discardUnsentRouteBooking(AsyncStorage, recoveryKey, requestKey);
         return;
       }
+      bookingGate.setRecovery(true, true);
       setPendingSync(true);
       setUncertainBooking(true);
       postStarted = true;
       const created = await scopedRequest<{ order: { id: string } }>("/api/orders/route", {
         method: "POST", headers: { "Idempotency-Key": requestKey }, body: JSON.stringify(body),
       });
+      bookingGate.setActiveOrder(true);
       if (!created?.order?.id) throw new Error("Сервер не вернул идентификатор созданного заказа.");
       await saveRouteBookingRecovery(AsyncStorage, recoveryKey, { status: "confirmed", orderId: created.order.id, requestKey });
       if (!inScope()) return;
@@ -210,7 +221,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
     } catch (cause) {
       const rejected = postStarted && cause instanceof ApiError && routeBookingDefinitivelyRejected(cause);
       if (rejected) {
-        try { await clearRouteBookingRecovery(AsyncStorage, recoveryKey); setPendingSync(false); setUncertainBooking(false); }
+        try { await clearRouteBookingRecovery(AsyncStorage, recoveryKey); bookingGate.setRecovery(true, false); setPendingSync(false); setUncertainBooking(false); }
         catch { setRecoveryError("Не удалось снять блокировку заказа. Повторное оформление запрещено до проверки."); }
       }
       if (cause instanceof ApiError && cause.code === "NO_DRIVERS") {
@@ -219,7 +230,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
       } else if (cause instanceof ApiError && ["ROUTE_CHANGED", "ROUTE_NOT_FOUND", "ROUTE_INACTIVE"].includes(cause.code ?? "")) {
         setAvailability(null);
         setError("Маршрут изменился. Обнови список маршрутов.");
-      } else if (cause instanceof ApiError && routeBookingOutcomeUncertain(cause)) {
+      } else if (postStarted && cause instanceof ApiError && routeBookingOutcomeUncertain(cause)) {
         setAvailability(null);
         setPendingSync(true);
         setUncertainBooking(true);
@@ -229,7 +240,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
         setUncertainBooking(true);
         setError("Не удалось подтвердить результат предыдущей отправки. Проверь список поездок; повторное оформление заблокировано.");
       } else setError(errorMessage(cause, "Не удалось оформить заказ."));
-    } finally { submissionGuard.current.finish(); if (mounted.current) setSubmitting(false); }
+    } finally { bookingGate.finish("configured"); if (mounted.current) setSubmitting(false); }
   }
   const button = (title: string, onPress: () => void, disabled = false, primary = false, testID?: string) =>
     <Pressable testID={testID} accessibilityRole="button" accessibilityState={{ disabled }}
