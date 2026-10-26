@@ -307,7 +307,12 @@ export async function listAdminOrders(request: Request, response: Response): Pro
 }
 
 /** Read the current FIFO snapshot without exposing driver GPS or private queue locks. */
-export async function listAdminQueue(_request: Request, response: Response): Promise<void> {
+export async function listAdminQueue(request: Request, response: Response): Promise<void> {
+  const rawIncludeLanes = request.query["include_lanes"];
+  if (rawIncludeLanes !== undefined && rawIncludeLanes !== "true" && rawIncludeLanes !== "false") {
+    throw new AppError(400, "include_lanes must be true or false", "VALIDATION_ERROR");
+  }
+  const includeLanes = rawIncludeLanes === "true";
   const entries = await store.queueSnapshot();
   response.json({
     total_queued: entries.length,
@@ -317,6 +322,17 @@ export async function listAdminQueue(_request: Request, response: Response): Pro
       joined_at: entry.joinedAt,
       status: entry.status,
       available_seats: entry.availableSeats,
+      // Position is lane-local; expose its identity without private GPS/locks.
+      ...(includeLanes ? { lane: entry.routeContext ? {
+        kind: "configured",
+        route_id: entry.routeContext.routeId,
+        route_name: entry.routeContext.routeName,
+        direction: entry.routeContext.direction,
+        pitak: entry.routeContext.pitak,
+        stop_code: entry.routeContext.stopCode,
+        stop_name: entry.routeContext.stopName,
+        route_updated_at: entry.routeContext.routeUpdatedAt,
+      } : { kind: "legacy" } } : {}),
     })),
   });
 }
