@@ -143,7 +143,9 @@ class LineRideQA(shared.DriverRouteQA):
     def ui_login(self, page, role):
         page.goto(self.args.base_url, wait_until="domcontentloaded")
         page.get_by_role("button", name="Водитель" if role == "driver" else "Пассажир", exact=True).click()
-        page.get_by_placeholder("Твоё имя", exact=True).fill("CI line ride " + role)
+        page.get_by_test_id("auth-signup-mode").click()
+        page.get_by_placeholder("Имя", exact=True).fill("CI line ride")
+        page.get_by_placeholder("Фамилия", exact=True).fill(role)
         page.get_by_placeholder("+998 90 123 45 67", exact=True).fill(
             "+77776" + str(uuid.uuid4().int % 1_000_000).zfill(6))
         with self.response(page, "/auth/request-otp", "POST") as pending:
