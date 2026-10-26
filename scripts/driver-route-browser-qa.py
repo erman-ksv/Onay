@@ -185,6 +185,10 @@ class DriverRouteQA:
         self.expect(self.control("registration-given-name")).to_have_count(0)
         self.expect(self.control("registration-family-name")).to_have_count(0)
         self.page.get_by_placeholder("+998 90 123 45 67", exact=True).fill(phone)
+        # The previous successful request started the real 60s resend cooldown.
+        # Wait before sending so a deliberate 429 cannot pollute console QA.
+        # Do not shorten the server limit or allowlist authentication errors.
+        self.page.wait_for_timeout(60_250)
         with self.response_for("/auth/request-otp", "POST") as pending:
             self.page.get_by_role("button", name="Получить код", exact=True).click()
         require("full_name" not in pending.value.request.post_data_json, "Sign-in must omit registration names")
