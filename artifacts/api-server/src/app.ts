@@ -41,6 +41,12 @@ app.use(
 );
 app.use(cors());
 app.use("/api", protectOtpRequests);
+// Admin responses contain private account and operational data. Apply before
+// body parsing and authentication so failures and HEAD responses cannot be cached.
+app.use("/api/admin", (_request, response, next) => {
+  response.set("Cache-Control", "no-store");
+  next();
+});
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
