@@ -476,7 +476,7 @@ test("administrator queue identifies each durable lane without changing FIFO or 
   }
   await store.joinQueue({ ...f.queueInput(legacy.user), joinedAt: epoch + 4 }, legacy.user.sessionVersion);
   const before = await store.queueSnapshot();
-  const result = await request("/admin/queue", { token: admin.token });
+  const result = await request("/admin/queue?include_lanes=true", { token: admin.token });
   assert.equal(result.status, 200);
   assert.equal(result.body.total_queued, 5);
   assert.deepEqual(result.body.queue.map(entry => entry.driver_id), [a1, b, other, a2, legacy].map(actor => actor.user.id));
@@ -504,9 +504,27 @@ test("administrator queue identifies each durable lane without changing FIFO or 
 test("administrator lane details remain forbidden to anonymous, passenger and driver callers", async t => {
   const f = await fixture(t), passenger = await f.createUser("passenger"), driver = await f.createUser();
   for (const [token, status] of [[undefined, 401], [passenger.token, 403], [driver.token, 403]]) {
-    const result = await request("/admin/queue", { token });
+    const result = await request("/admin/queue?include_lanes=true", { token });
     assert.equal(result.status, status);
     assert.equal(result.body.queue, undefined);
     assert.equal(result.body.total_queued, undefined);
+  }
+});
+
+test("admin lane opt-in preserves the exact legacy response and validates the boolean query", async t => {
+  const f = await fixture(t), admin = await f.createUser("admin"), driver = await f.createUser();
+  await store.joinQueue(f.queueInput(driver.user), driver.user.sessionVersion);
+  const original = await request("/admin/queue", { token: admin.token });
+  const explicitFalse = await request("/admin/queue?include_lanes=false", { token: admin.token });
+  assert.equal(original.status, 200);
+  assert.equal(explicitFalse.status, 200);
+  assert.deepEqual(explicitFalse.body, original.body);
+  assert.equal(original.body.queue.some(entry => "lane" in entry), false);
+  const opted = await request("/admin/queue?include_lanes=true", { token: admin.token });
+  assert.equal(opted.status, 200);
+  assert.deepEqual(opted.body.queue.map(({ lane, ...entry }) => entry), original.body.queue);
+  for (const query of ["1", "", "TRUE", "true&include_lanes=false"]) {
+    const result = await request("/admin/queue?include_lanes=" + query, { token: admin.token });
+    assertError(result, 400, "VALIDATION_ERROR");
   }
 });
