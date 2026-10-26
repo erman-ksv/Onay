@@ -133,6 +133,8 @@ export interface Store {
   saveOtpProtected(challenge: OtpChallenge): MaybePromise<OtpLimitResult>;
   /** Consume once or commit a failed attempt while holding the same phone locks as resend. */
   consumeOtpProtected(phoneNumber: string, code: string): MaybePromise<OtpVerifyResult>;
+  /** Discard only this failed provider attempt; retain all send/failure budgets. */
+  discardOtpDelivery(phoneNumber: string, deliveryId: string): MaybePromise<boolean>;
 
   getQueueEntry(driverId: string): MaybePromise<QueueEntry | undefined>;
   removeDriverFromFifo(driverId: string): MaybePromise<QueueEntry | undefined>;

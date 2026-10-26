@@ -297,6 +297,7 @@ export class PostgresStore implements Store {
       role: challenge.role,
       locale: challenge.locale,
       fullName: challenge.fullName ?? null,
+      deliveryId: challenge.deliveryId ?? null,
       expiresAt: challenge.expiresAt,
     }).onConflictDoUpdate({
       target: otpChallengesTable.phoneNumber,
@@ -305,6 +306,7 @@ export class PostgresStore implements Store {
         role: challenge.role,
         locale: challenge.locale,
         fullName: challenge.fullName ?? null,
+        deliveryId: challenge.deliveryId ?? null,
         expiresAt: challenge.expiresAt,
       },
     });
@@ -414,6 +416,7 @@ export class PostgresStore implements Store {
           role: challenge.role,
           locale: challenge.locale,
           fullName: challenge.fullName ?? null,
+          deliveryId: challenge.deliveryId ?? null,
           expiresAt: now + OTP_TTL_MS,
         };
         await tx.insert(otpChallengesTable).values(values).onConflictDoUpdate({
@@ -453,12 +456,28 @@ export class PostgresStore implements Store {
           locale: row.locale as Locale,
           fullName: row.fullName ?? undefined,
           expiresAt: Number(row.expiresAt),
+          ...(row.deliveryId ? { deliveryId: row.deliveryId } : {}),
         } };
       }
       const failure = recordOtpFailure(verification, now);
       await this.saveOtpState(tx, otpRateLimitsTable, "verify", verifyKey, failure);
       const limit = otpPhoneBlock(failure, now);
       return limit.allowed ? { status: "invalid" } : { status: "limited", retryAfterMs: limit.retryAfterMs };
+    });
+  }
+
+  async discardOtpDelivery(phone: string, deliveryId: string): Promise<boolean> {
+    // Invalid identities must never turn a conditional delete into a phone-only delete.
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(deliveryId)) return false;
+    const phoneNumber = normalizePhone(phone);
+    const { db, otpRateLimitsTable, otpChallengesTable } = await this.database();
+    return db.transaction(async tx => {
+      await this.lockOtpStates(tx, otpRateLimitsTable, [otpRateKey("send", phoneNumber), otpRateKey("verify", phoneNumber)]);
+      const deleted = await tx.delete(otpChallengesTable).where(and(
+        eq(otpChallengesTable.phoneNumber, phoneNumber), eq(otpChallengesTable.deliveryId, deliveryId),
+      )).returning({ phoneNumber: otpChallengesTable.phoneNumber });
+      // Do not refund or reset budgets: a rejected provider request still consumed admission.
+      return deleted.length > 0;
     });
   }
 
@@ -587,6 +606,7 @@ export class PostgresStore implements Store {
       locale: row.locale as Locale,
       fullName: row.fullName ?? undefined,
       expiresAt: Number(row.expiresAt),
+      ...(row.deliveryId ? { deliveryId: row.deliveryId } : {}),
     } : undefined;
   }
 

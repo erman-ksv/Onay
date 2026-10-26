@@ -47,6 +47,7 @@ export const otpChallengesTable = pgTable(
   {
     phoneNumber: text("phone_number").primaryKey(),
     code: text("code").notNull(),
+    deliveryId: text("delivery_id"),
     role: text("role").notNull(),
     locale: text("locale").notNull(),
     fullName: text("full_name"),

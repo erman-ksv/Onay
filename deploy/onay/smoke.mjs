@@ -9,6 +9,8 @@ import { runScheduledBackup, backupStatus } from './backup-schedule.mjs';
 
 export async function runStagingSmoke(env = process.env) {
   if (env.CI !== 'true' || env.GITHUB_ACTIONS !== 'true') throw new Error('ONAY_SMOKE_REQUIRES_ISOLATED_GITHUB_RUNNER');
+  // Even an accidentally configured runner must never spend a real SMS quota.
+  const smokeEnv = { ...env, TEZJET_SMS_PROVIDER: '', TEZJET_SMS_SEND_ENABLED: 'false', DEVSMS_API_KEY: '' };
   const temporary = mkdtempSync(join(tmpdir(), 'onay-staging-'));
   const identifier = randomBytes(6).toString('hex'), project = `onay-smoke-${identifier}`;
   const password = randomBytes(32).toString('hex'), secret = randomBytes(32).toString('hex');
@@ -20,7 +22,7 @@ export async function runStagingSmoke(env = process.env) {
   const save = () => writeFileSync(join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n');
   const redact = text => String(text ?? '').replaceAll(password, '[REDACTED]').replaceAll(secret, '[REDACTED]');
   function command(parts, { input, expected = 0, timeout = 180000 } = {}) {
-    const result = spawnSync('docker', [...args, ...parts], { input, encoding: 'utf8', timeout, maxBuffer: 8 * 1024 * 1024, env });
+    const result = spawnSync('docker', [...args, ...parts], { input, encoding: 'utf8', timeout, maxBuffer: 8 * 1024 * 1024, env: smokeEnv });
     if (result.status !== expected || result.error) {
       console.error(redact((result.stdout ?? '') + (result.stderr ?? '')).slice(-12000));
       throw new Error('ONAY_STAGING_SMOKE_COMMAND_FAILED');
@@ -47,8 +49,10 @@ export async function runStagingSmoke(env = process.env) {
     const token = command(['exec', '-T', 'api', 'node', '--input-type=module', '-e',
       `import {createRequire} from 'node:module';const jwt=createRequire('/app/artifacts/api-server/package.json')('jsonwebtoken');process.stdout.write(jwt.sign({sub:'${id}',role:'passenger',locale:'ru',sessionVersion:0,sessionId:'staging-smoke'},process.env.SESSION_SECRET,{expiresIn:'10m'}));`]);
     check('authenticated-api-reads-postgres', () => command(['exec', '-T', 'api', 'node', '--input-type=module', '-e', requestWithToken], { input: token }));
-    check('production-does-not-expose-demo-otp', () => command(['exec', '-T', 'api', 'node', '--input-type=module', '-e',
-      `const r=await fetch('http://127.0.0.1:8080/api/auth/request-otp',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({phone_number:'+15555550102',full_name:'Staging smoke',role:'passenger',locale:'ru'}),signal:AbortSignal.timeout(5000)});const b=await r.json();if(r.status!==202||Object.hasOwn(b,'demo_code')||Object.hasOwn(b,'code')){console.error('STAGING_OTP_STATUS_'+r.status);process.exit(1);}`]));
+    check('production-without-sms-fails-closed-and-does-not-expose-otp', () => command(['exec', '-T', 'api', 'node', '--input-type=module', '-e',
+      `const r=await fetch('http://127.0.0.1:8080/api/auth/request-otp',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({phone_number:'+15555550102',full_name:'Staging smoke',role:'passenger',locale:'ru'}),signal:AbortSignal.timeout(5000)});const b=await r.json();if(r.status!==503||b.error?.code!=='SMS_NOT_CONFIGURED'||Object.hasOwn(b,'demo_code')||Object.hasOwn(b,'code')){console.error('STAGING_OTP_STATUS_'+r.status);process.exit(1);}`]));
+    check('unconfigured-sms-does-not-allocate-phone-challenge', () => command(['exec', '-T', 'db', 'psql', '-U', 'onay', '-d', 'onay', '-v', 'ON_ERROR_STOP=1', '-tAc',
+      `DO $$ BEGIN IF EXISTS (SELECT 1 FROM tezjet_otp_challenges WHERE phone_number='+15555550102') THEN RAISE EXCEPTION 'UNSENT_OTP_ALLOCATED'; END IF; END $$;`]));
     check('same-session-survives-api-restart', () => { command(['restart', 'api']); command(['up', '-d', '--wait', '--wait-timeout', '120', 'api']); command(['exec', '-T', 'api', 'node', '--input-type=module', '-e', requestWithToken], { input: token }); });
     check('same-session-survives-postgres-restart', () => { command(['restart', 'db']); command(['up', '-d', '--wait', '--wait-timeout', '120', 'db', 'api']); command(['exec', '-T', 'api', 'node', '--input-type=module', '-e', requestWithToken], { input: token }); });
     const backup = join(temporary, 'onay.dump');
