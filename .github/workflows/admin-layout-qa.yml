@@ -9,6 +9,7 @@ on:
       - "scripts/admin-layout-browser-qa.py"
       - "scripts/admin-audit-client.test.mjs"
       - "scripts/admin-orders-client.test.mjs"
+      - "scripts/admin-monitoring-client.test.mjs"
       - ".github/workflows/admin-layout-qa.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -25,6 +26,7 @@ on:
       - "scripts/admin-layout-browser-qa.py"
       - "scripts/admin-audit-client.test.mjs"
       - "scripts/admin-orders-client.test.mjs"
+      - "scripts/admin-monitoring-client.test.mjs"
       - ".github/workflows/admin-layout-qa.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -95,6 +97,8 @@ jobs:
         run: node --experimental-transform-types --test-reporter=tap scripts/admin-audit-client.test.mjs
       - name: Admin orders client regressions
         run: node --experimental-transform-types --test-reporter=tap scripts/admin-orders-client.test.mjs
+      - name: Admin monitoring client regressions
+        run: node --experimental-transform-types --test-reporter=tap scripts/admin-monitoring-client.test.mjs
       - name: Typecheck
         run: pnpm run typecheck
 
