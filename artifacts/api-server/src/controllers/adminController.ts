@@ -317,6 +317,17 @@ export async function listAdminQueue(_request: Request, response: Response): Pro
       joined_at: entry.joinedAt,
       status: entry.status,
       available_seats: entry.availableSeats,
+      // Position is lane-local; expose its identity without private GPS/locks.
+      lane: entry.routeContext ? {
+        kind: "configured",
+        route_id: entry.routeContext.routeId,
+        route_name: entry.routeContext.routeName,
+        direction: entry.routeContext.direction,
+        pitak: entry.routeContext.pitak,
+        stop_code: entry.routeContext.stopCode,
+        stop_name: entry.routeContext.stopName,
+        route_updated_at: entry.routeContext.routeUpdatedAt,
+      } : { kind: "legacy" },
     })),
   });
 }

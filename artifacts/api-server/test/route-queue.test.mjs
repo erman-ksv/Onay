@@ -461,3 +461,52 @@ test("actual Socket.IO initial snapshots expose only the caller's configured lan
     assert.deepEqual(snapshot.zone, http.body.zone, "The initial zone must also identify the same pitak and geofence as HTTP.");
   }
 });
+
+test("administrator queue identifies each durable lane without changing FIFO or leaking GPS and locks", async t => {
+  const f = await fixture(t), route = await f.configured(), route2 = await f.configured();
+  const admin = await f.createUser("admin");
+  const a1 = await planned(f, route), a2 = await planned(f, route);
+  const b = await planned(f, route, "b_to_a"), other = await planned(f, route2);
+  const legacy = await f.createUser();
+  const enrollments = [[a1, route, "a_to_b"], [b, route, "b_to_a"], [other, route2, "a_to_b"], [a2, route, "a_to_b"]];
+  const epoch = Date.now();
+  for (const [index, [driver, config, direction]] of enrollments.entries()) {
+    await store.joinQueue({ ...enrollment(f, driver.user, config, direction), joinedAt: epoch + index },
+      driver.user.sessionVersion, choiceInput(config, direction));
+  }
+  await store.joinQueue({ ...f.queueInput(legacy.user), joinedAt: epoch + 4 }, legacy.user.sessionVersion);
+  const before = await store.queueSnapshot();
+  const result = await request("/admin/queue", { token: admin.token });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.total_queued, 5);
+  assert.deepEqual(result.body.queue.map(entry => entry.driver_id), [a1, b, other, a2, legacy].map(actor => actor.user.id));
+  assert.deepEqual(result.body.queue.map(entry => entry.position), [1, 1, 1, 2, 1]);
+  for (const entry of result.body.queue) {
+    assert.deepEqual(Object.keys(entry).sort(), ["driver_id", "position", "joined_at", "status", "available_seats", "lane"].sort());
+    const persisted = before.find(item => item.driverId === entry.driver_id);
+    if (persisted.routeContext) {
+      const context = persisted.routeContext;
+      assert.deepEqual(entry.lane, {
+        kind: "configured", route_id: context.routeId, route_name: context.routeName,
+        direction: context.direction, pitak: context.pitak, stop_code: context.stopCode,
+        stop_name: context.stopName, route_updated_at: context.routeUpdatedAt,
+      });
+      assert.equal("center" in entry.lane, false);
+      assert.equal("radiusMeters" in entry.lane, false);
+    } else assert.deepEqual(entry.lane, { kind: "legacy" });
+  }
+  assert.deepEqual(await store.queueSnapshot(), before, "Monitoring reads must not reserve seats, dispatch or reorder.");
+  const restored = new production.PostgresStore();
+  await restored.initialize();
+  assert.deepEqual(await restored.queueSnapshot(), before, "The lane identity must come from durable enrollments.");
+});
+
+test("administrator lane details remain forbidden to anonymous, passenger and driver callers", async t => {
+  const f = await fixture(t), passenger = await f.createUser("passenger"), driver = await f.createUser();
+  for (const [token, status] of [[undefined, 401], [passenger.token, 403], [driver.token, 403]]) {
+    const result = await request("/admin/queue", { token });
+    assert.equal(result.status, status);
+    assert.equal(result.body.queue, undefined);
+    assert.equal(result.body.total_queued, undefined);
+  }
+});
