@@ -175,7 +175,9 @@ class PassengerStopsQA:
     def passenger_login(self):
         self.page.goto(self.args.base_url, wait_until="domcontentloaded")
         self.page.get_by_role("button", name="Пассажир", exact=True).click()
-        self.page.get_by_placeholder("Твоё имя", exact=True).fill("CI stop selection passenger")
+        self.control("auth-signup-mode").click()
+        self.page.get_by_placeholder("Имя", exact=True).fill("CI stop selection")
+        self.page.get_by_placeholder("Фамилия", exact=True).fill("passenger")
         self.page.get_by_placeholder("+998 90 123 45 67", exact=True).fill(
             "+77777" + str(uuid.uuid4().int % 1_000_000).zfill(6))
         with self.response_for("/auth/request-otp", "POST") as pending:

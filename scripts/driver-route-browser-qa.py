@@ -157,10 +157,14 @@ class DriverRouteQA:
     def driver_login_and_approval(self):
         self.page.goto(self.args.base_url, wait_until="domcontentloaded")
         self.page.get_by_role("button", name="Водитель", exact=True).click()
-        self.expect(self.page.get_by_text("Вход или регистрация водителя", exact=True)).to_be_visible()
-        self.page.get_by_placeholder("Твоё имя", exact=True).fill("CI route driver")
+        self.control("auth-signup-mode").click()
+        self.expect(self.page.get_by_text("Регистрация водителя", exact=True)).to_be_visible()
+        self.page.get_by_placeholder("Имя", exact=True).fill("CI route")
         phone = "+77779" + str(uuid.uuid4().int % 1_000_000).zfill(6)
         self.page.get_by_placeholder("+998 90 123 45 67", exact=True).fill(phone)
+        self.expect(self.page.get_by_role("button", name="Получить код", exact=True)).to_be_disabled()
+        self.page.get_by_placeholder("Фамилия", exact=True).fill("driver")
+        self.expect(self.page.get_by_role("button", name="Получить код", exact=True)).to_be_enabled()
         with self.response_for("/auth/request-otp", "POST") as pending:
             self.page.get_by_role("button", name="Получить код", exact=True).click()
         response = pending.value
@@ -175,6 +179,23 @@ class DriverRouteQA:
         session = response.json()
         user = session.get("user", {})
         require(user.get("active_role", user.get("role")) == "driver" and user.get("driver_approval_status") == "pending", "New driver must await actual administrator approval")
+        require(user.get("full_name") == "CI route driver", "Registration must persist both name fields in the existing full_name contract")
+        self.page.get_by_text("Выйти", exact=True).click()
+        self.control("auth-signin-mode").click()
+        self.expect(self.control("registration-given-name")).to_have_count(0)
+        self.expect(self.control("registration-family-name")).to_have_count(0)
+        self.page.get_by_placeholder("+998 90 123 45 67", exact=True).fill(phone)
+        with self.response_for("/auth/request-otp", "POST") as pending:
+            self.page.get_by_role("button", name="Получить код", exact=True).click()
+        require(pending.value.status == 202, "Existing account must request OTP without name fields")
+        require("full_name" not in pending.value.request.post_data_json, "Sign-in must omit registration names")
+        self.page.get_by_placeholder("Код подтверждения", exact=True).fill(pending.value.json()["demo_code"])
+        with self.response_for("/auth/verify-otp", "POST") as pending:
+            self.page.get_by_role("button", name="Продолжить как водитель", exact=True).click()
+        require(pending.value.status == 200, "Existing driver must sign in without re-registering")
+        session = pending.value.json()
+        require(session["user"]["id"] == user["id"] and session["user"]["full_name"] == user["full_name"], "Sign-in must preserve the original account and locked name")
+        self.passed("Required first/family names persist and existing driver signs in without registration names")
         self.driver_token, self.driver_id = session["access_token"], user["id"]
         self.expect(self.page.get_by_text("Профиль на проверке", exact=True)).to_be_visible()
         self.expect(self.control("driver-route-picker")).to_have_count(0)
