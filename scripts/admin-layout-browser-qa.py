@@ -80,6 +80,8 @@ class AdminLayoutQA:
         self.order_network_failure_path = None
         self.order_cancel_requests = []
         self.audit_network_failure = False
+        self.monitor_network_failure = False
+        self.admin_requests = []
         self.token = None
         self.route_id = None
         self.last_otp_accepted_at = None
@@ -103,6 +105,8 @@ class AdminLayoutQA:
             self.map_tiles.append({"url": request.url, "failure": redact(request.failure)})
 
     def on_request(self, request):
+        if urlparse(request.url).path.startswith("/api/admin/"):
+            self.admin_requests.append({"method": request.method, "path": urlparse(request.url).path, "query": urlparse(request.url).query})
         if request.method == "POST" and re.fullmatch(r"/api/admin/orders/[^/]+/cancel", urlparse(request.url).path):
             self.order_cancel_requests.append(urlparse(request.url).path)
         if request.method == "PUT" and urlparse(request.url).path.endswith("/layout"):
@@ -694,6 +698,127 @@ class AdminLayoutQA:
         self.expect(event_card).to_contain_text(first["id"])
         self.screenshot("mobile-390-order-cancellation-audit")
         self.passed("Actual administrative cancellation appears in the real journal UI with the correct order and exactly one event")
+        self.admin_monitoring(passenger_token, route, choice, start, destination)
+
+    def admin_monitoring(self, passenger_token, route, choice, start, destination):
+        # All data below is persisted by the actual API. No monitoring response
+        # is fabricated; one genuine transport failure and one delayed real
+        # response exercise recovery and unmount fencing.
+        driver_token = self.reviewed_driver_token
+        expect_status(api_request(self.args.api_url, "/queue/leave", "DELETE", token=driver_token), 204, "Leave completed origin enrollment before monitoring fixture")
+        expect_status(api_request(self.args.api_url, "/driver/route", "PUT", choice, driver_token), 200, "Retain real monitoring route choice")
+        location = {**start["location"], "timestamp": int(time.time() * 1000)}
+        expect_status(api_request(self.args.api_url, "/queue/join", "POST", {"route_choice": choice, "available_seats": 4, "location": location}, driver_token), 201, "Enroll actual monitoring FIFO driver")
+        body = {**choice, "pickup_stop_id": start["id"], "destination_stop_id": destination["id"], "pickup_location": location, "seats": 2}
+        order = expect_status(api_request(self.args.api_url, "/orders/route", "POST", body, passenger_token), 201, "Create real active monitoring order")["order"]
+        require(order["offered_driver_id"] == self.reviewed_driver_id, "Monitoring fixture must be offered through actual FIFO")
+        before = len(self.admin_requests)
+        self.page.set_viewport_size({"width": 1440, "height": 1000})
+        with self.response_for("/admin/queue", "GET") as pending:
+            self.page.get_by_role("button", name="Мониторинг", exact=True).click()
+        require(pending.value.status == 200 and "include_lanes=true" in pending.value.url, "Monitoring must explicitly request safe actual lane metadata")
+        panel = self.page.get_by_test_id("admin-monitoring")
+        snapshot = panel.get_by_test_id("monitor-snapshot")
+        self.expect(snapshot).to_be_visible()
+        card = panel.get_by_test_id("monitor-order-" + order["id"])
+        driver = panel.get_by_test_id("monitor-driver-" + self.reviewed_driver_id)
+        self.expect(card).to_contain_text("Поиск водителя")
+        self.expect(card).to_contain_text("Мест: 2")
+        self.expect(card).to_contain_text("сум")
+        require(str(order["fare"]["total"]) in re.sub(r"\s", "", card.inner_text()), "Monitor must show frozen real server UZS fare")
+        self.expect(driver).to_contain_text(route["name"])
+        self.expect(driver).to_contain_text("A → B")
+        self.expect(driver).to_contain_text("Питак A")
+        self.expect(driver).to_contain_text("Место в очереди: 1")
+        self.expect(driver).to_contain_text("Свободных мест: 2")
+        self.expect(panel.get_by_role("checkbox", name="Автообновление каждые 10 секунд", exact=True)).to_be_checked()
+        require(all(item["method"] == "GET" for item in self.admin_requests[before:]), "Opening monitoring may only issue reads")
+        self.identity()
+        self.screenshot("desktop-admin-monitoring")
+        self.passed("Actual monitoring displays protected active orders, frozen UZS fare and the correct durable FIFO lane without writes")
+
+        accepted = expect_status(api_request(self.args.api_url, "/orders/" + order["id"] + "/accept", "POST", {}, driver_token), 200, "Accept real monitored offer")["order"]
+        require(accepted["status"] == "en_route_to_c", "Real acceptance must change the monitored order")
+        self.expect(card).to_contain_text("Едет к точке посадки", timeout=25_000)
+        cancelled = expect_status(api_request(self.args.api_url, "/admin/orders/" + order["id"] + "/cancel", "POST", {"expected_status": "en_route_to_c"}, self.token), 200, "Cancel real monitored assigned order")["order"]
+        require(cancelled["status"] == "cancelled", "Actual monitored cancellation must commit")
+        self.expect(card).to_have_count(0, timeout=25_000)
+        self.expect(snapshot).to_be_visible()
+        self.expect(card).to_have_count(0)
+        active = expect_status(api_request(self.args.api_url, "/admin/orders?status=active", token=self.token), 200, "Authoritative active order comparison")["orders"]
+        if not active:
+            self.expect(panel.get_by_text("Активных заказов нет.", exact=True)).to_be_visible()
+        self.expect(panel.get_by_test_id("monitor-driver-" + self.reviewed_driver_id)).to_contain_text("Свободных мест: 4")
+        self.passed("Completion-based auto refresh observes real acceptance and committed cancellation, removes closed orders and restores actual seat counts")
+
+        toggle = panel.get_by_role("checkbox", name="Автообновление каждые 10 секунд", exact=True)
+        with self.response_for("/admin/queue", "GET"):
+            toggle.uncheck()
+        self.expect(snapshot).to_be_visible()
+        self.expect(panel.get_by_role("button", name="Обновить мониторинг", exact=True)).to_be_enabled()
+        reads_before_pause = len([item for item in self.admin_requests if item["path"] in {"/api/admin/queue", "/api/admin/orders"}])
+        self.page.wait_for_timeout(11_000)
+        reads_after_pause = len([item for item in self.admin_requests if item["path"] in {"/api/admin/queue", "/api/admin/orders"}])
+        require(reads_before_pause == reads_after_pause, "Unchecked auto refresh must not keep polling")
+        self.expect(snapshot).to_be_visible()
+        self.passed("Administrator can pause monitoring updates without silently issuing overlapping or continuing polls")
+
+        pattern = "**/api/admin/queue?include_lanes=true"
+        def disconnect(request_route):
+            self.monitor_network_failure = True
+            request_route.abort("connectionfailed")
+        self.page.route(pattern, disconnect)
+        try:
+            panel.get_by_role("button", name="Обновить мониторинг", exact=True).click()
+            self.expect(panel.get_by_role("alert")).to_contain_text("Не удалось обновить мониторинг")
+            self.expect(snapshot).to_have_count(0)
+            self.expect(panel.get_by_text("Активных заказов нет.", exact=True)).to_have_count(0)
+            self.expect(panel.get_by_text("В очереди нет водителей.", exact=True)).to_have_count(0)
+        finally:
+            self.page.unroute(pattern, disconnect)
+        with self.response_for("/admin/queue", "GET") as pending:
+            panel.get_by_role("button", name="Обновить мониторинг", exact=True).click()
+        require(pending.value.status == 200, "Monitoring retry must use the actual recovered API")
+        self.expect(snapshot).to_be_visible()
+        self.expect(panel.get_by_role("alert")).to_have_count(0)
+        self.expect(panel.get_by_test_id("monitor-driver-" + self.reviewed_driver_id)).to_contain_text("Свободных мест: 4")
+        self.passed("Actual monitoring transport failure clears stale snapshots, stays distinct from empty data and recovers by explicit reload")
+
+        # Hold only the promise for one already received genuine queue response.
+        # No body/status is mocked, and the browser's original fetch is restored.
+        self.page.evaluate("""() => {
+          const original = window.fetch;
+          window.__restoreMonitoringFetch = () => { window.fetch = original; delete window.__restoreMonitoringFetch; };
+          let hold = true;
+          window.fetch = async (...args) => {
+            const response = await original(...args);
+            const target = new URL(typeof args[0] === 'string' ? args[0] : args[0].url, location.href);
+            if (hold && target.pathname === '/api/admin/queue' && target.searchParams.get('include_lanes') === 'true') {
+              hold = false;
+              return new Promise(resolve => { window.__releaseMonitoringResponse = () => { delete window.__releaseMonitoringResponse; resolve(response); }; });
+            }
+            return response;
+          };
+        }""")
+        try:
+            panel.get_by_role("button", name="Обновить мониторинг", exact=True).click()
+            self.page.wait_for_function("typeof window.__releaseMonitoringResponse === 'function'")
+            self.page.get_by_role("button", name="Пользователи", exact=True).click()
+            self.expect(self.page.get_by_test_id("admin-monitoring")).to_have_count(0)
+            self.page.evaluate("() => window.__releaseMonitoringResponse()")
+            self.page.wait_for_timeout(100)
+            self.expect(self.page.get_by_test_id("admin-monitoring")).to_have_count(0)
+        finally:
+            self.page.evaluate("() => { window.__releaseMonitoringResponse?.(); window.__restoreMonitoringFetch?.(); }")
+        with self.response_for("/admin/queue", "GET"):
+            self.page.get_by_role("button", name="Мониторинг", exact=True).click()
+        self.expect(panel.get_by_test_id("monitor-snapshot")).to_be_visible()
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        self.identity()
+        require(self.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "390px monitoring must wrap IDs, lane names and controls without horizontal overflow")
+        self.screenshot("mobile-390-admin-monitoring")
+        require(all(item["method"] == "GET" for item in self.admin_requests[before:]), "Every browser monitoring interaction must remain read-only")
+        self.passed("Unmount discards a delayed genuine monitoring response and fresh mobile390px mounting renders safely without overflow")
 
     def run(self):
         expect_status(api_request(self.args.api_url, "/healthz"), 200, "Actual API health")
@@ -841,6 +966,8 @@ class AdminLayoutQA:
         expect_status(api_request(self.args.api_url, "/admin/routes/" + self.route_id, token=self.token), 401, "Logged-out token rejected")
         self.expect(self.page.get_by_test_id("admin-audit-journal")).to_have_count(0)
         self.expect(self.page.get_by_test_id("admin-orders")).to_have_count(0)
+        self.expect(self.page.get_by_test_id("admin-monitoring")).to_have_count(0)
+        self.expect(self.page.get_by_test_id("monitor-snapshot")).to_have_count(0)
         self.screenshot("mobile-390-logged-out")
         self.passed("UI logout returns to login and invalidates the admin token")
         self.assert_console_health()
@@ -859,7 +986,8 @@ class AdminLayoutQA:
             expected_audit = self.audit_network_failure and urlparse(entry["url"]).path == "/api/admin/audit-events" and bool(re.fullmatch(r"Failed to load resource: net::ERR_CONNECTION_FAILED", entry["text"]))
             expected_order_conflict = urlparse(entry["url"]).path in self.order_conflict_paths and bool(re.fullmatch(r"Failed to load resource: the server responded with a status of 409 \(Conflict\)", entry["text"]))
             expected_order_network = self.order_network_failure_path and urlparse(entry["url"]).path == self.order_network_failure_path and bool(re.fullmatch(r"Failed to load resource: net::ERR_CONNECTION_FAILED", entry["text"]))
-            if not expected and not expected_vehicle and not expected_audit and not expected_order_conflict and not expected_order_network:
+            expected_monitor = self.monitor_network_failure and urlparse(entry["url"]).path == "/api/admin/queue" and bool(re.fullmatch(r"Failed to load resource: net::ERR_CONNECTION_FAILED", entry["text"]))
+            if not expected and not expected_vehicle and not expected_audit and not expected_order_conflict and not expected_order_network and not expected_monitor:
                 errors.append(entry)
         require(not errors and not self.page_errors, f"Browser errors: {redact(errors)}; page errors: {self.page_errors}")
 
@@ -919,4 +1047,5 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
 
