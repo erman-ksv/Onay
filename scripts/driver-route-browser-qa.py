@@ -187,8 +187,16 @@ class DriverRouteQA:
         self.page.get_by_placeholder("+998 90 123 45 67", exact=True).fill(phone)
         with self.response_for("/auth/request-otp", "POST") as pending:
             self.page.get_by_role("button", name="Получить код", exact=True).click()
-        require(pending.value.status == 202, "Existing account must request OTP without name fields")
         require("full_name" not in pending.value.request.post_data_json, "Sign-in must omit registration names")
+        if pending.value.status == 429:
+            require(pending.value.json().get("error", {}).get("code") == "OTP_RATE_LIMITED", "Immediate second OTP must retain the real resend protection")
+            retry_after = int(pending.value.headers.get("retry-after", "0"))
+            require(1 <= retry_after <= 60, "Real OTP cooldown must provide a bounded Retry-After")
+            self.page.wait_for_timeout(retry_after * 1000 + 250)
+            with self.response_for("/auth/request-otp", "POST") as pending:
+                self.page.get_by_role("button", name="Получить код", exact=True).click()
+        require(pending.value.status == 202, "Existing account must request OTP without name fields after the real cooldown")
+        require("full_name" not in pending.value.request.post_data_json, "Sign-in retry must omit registration names")
         self.page.get_by_placeholder("Код подтверждения", exact=True).fill(pending.value.json()["demo_code"])
         with self.response_for("/auth/verify-otp", "POST") as pending:
             self.page.get_by_role("button", name="Продолжить как водитель", exact=True).click()
