@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real admin layout QA against the CI API/PostgreSQL and Vite dev proxy.
+"""Real admin layout QA against the CI API/PostgreSQL and compiled admin UI.
 
 Browser plugin not available; this explicit CI task uses Python Playwright.
 API responses are not mocked. The journal recovery check deliberately aborts one transport request; retry uses the real API. CI's nonproduction NODE_ENV exposes the existing
@@ -822,11 +822,11 @@ class AdminLayoutQA:
 
     def run(self):
         expect_status(api_request(self.args.api_url, "/healthz"), 200, "Actual API health")
-        expect_status(api_request(self.args.base_url, "/healthz"), 200, "Vite development API proxy health")
+        expect_status(api_request(self.args.base_url, "/healthz"), 200, "Same-origin API health")
         self.page.goto(self.args.base_url.rstrip("/") + "/admin", wait_until="domcontentloaded")
         self.login()
         self.open_routes()
-        self.passed("Real admin OTP login and same-origin API proxy")
+        self.passed("Real admin OTP login and same-origin API access")
 
         name = "CI route " + uuid.uuid4().hex[:10]
         self.page.get_by_role("button", name="Новый маршрут", exact=True).click()
@@ -1047,5 +1047,6 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
 
 

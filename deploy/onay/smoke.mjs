@@ -41,6 +41,77 @@ export async function runStagingSmoke(env = process.env) {
     check('postgres-ready', () => command(['up', '-d', '--wait', '--wait-timeout', '120', 'db']));
     check('migrate-and-repeat-safely', () => { command(['run', '--rm', 'migrate']); command(['run', '--rm', 'migrate']); });
     check('production-api-healthy', () => command(['up', '-d', '--wait', '--wait-timeout', '120', 'api']));
+    check('production-admin-html-and-built-assets-available', () => command(['exec', '-T', 'api', 'node', '--input-type=module', '-e', String.raw`
+      import assert from 'node:assert/strict';
+      const origin='http://127.0.0.1:8080';
+      const read=path=>fetch(origin+path,{redirect:'error',signal:AbortSignal.timeout(5000)});
+      const page=await read('/admin');
+      assert.equal(page.status,200);
+      assert.match(page.headers.get('content-type')??'',/^text\/html(?:;|$)/i);
+      assert.equal(page.headers.get('cache-control'),'no-store');
+      const html=await page.text();
+      assert.match(html,/<div[^>]*id=["']root["']/i);
+      assert.equal(html.includes('/@vite/client'),false);
+      const trailing=await read('/admin/');
+      assert.equal(trailing.status,200);
+      assert.equal(await trailing.text(),html);
+      const head=await fetch(origin+'/admin',{method:'HEAD',redirect:'error',signal:AbortSignal.timeout(5000)});
+      assert.equal(head.status,200);
+      assert.match(head.headers.get('content-type')??'',/^text\/html(?:;|$)/i);
+      assert.equal(head.headers.get('cache-control'),'no-store');
+      assert.equal(await head.text(),'');
+      const assets=[...html.matchAll(/(?:src|href)=["'](\/assets\/[^"']+)["']/g)].map(match=>match[1]);
+      assert.ok(assets.some(path=>path.endsWith('.js')),'ADMIN_SCRIPT_REFERENCE_MISSING');
+      assert.ok(assets.some(path=>path.endsWith('.css')),'ADMIN_STYLESHEET_REFERENCE_MISSING');
+      for(const path of new Set(assets)){
+        assert.equal(new URL(path,origin).origin,origin);
+        const response=await read(path);
+        assert.equal(response.status,200,'ADMIN_ASSET_UNAVAILABLE');
+        const mime=response.headers.get('content-type')??'';
+        if(path.endsWith('.js'))assert.match(mime,/^(?:text|application)\/javascript(?:;|$)/i);
+        if(path.endsWith('.css'))assert.match(mime,/^text\/css(?:;|$)/i);
+        assert.doesNotMatch(mime,/text\/html/i);
+        assert.equal(response.headers.get('cache-control'),'no-store');
+        const body=await response.text();
+        assert.ok(body.length>0,'ADMIN_ASSET_EMPTY');
+        assert.equal(body.trimStart().startsWith('<'),false,'ADMIN_ASSET_REPLACED_BY_HTML');
+      }
+    `]));
+    check('production-admin-rejects-source-files-traversal-and-missing-assets', () => command(['exec', '-T', 'api', 'node', '--input-type=module', '-e', String.raw`
+      import assert from 'node:assert/strict';
+      import http from 'node:http';
+      const read=path=>new Promise((resolve,reject)=>{
+        const request=http.request({hostname:'127.0.0.1',port:8080,path,method:'GET'},response=>{
+          let body='';response.setEncoding('utf8');response.on('data',chunk=>body+=chunk);
+          response.on('end',()=>resolve({status:response.statusCode,headers:response.headers,body}));
+          response.on('error',reject);
+        });
+        request.setTimeout(5000,()=>request.destroy(new Error('ADMIN_PATH_CHECK_TIMEOUT')));
+        request.on('error',reject);request.end();
+      });
+      for(const path of ['/', '/admin/package.json', '/admin/.env', '/admin/api-source', '/assets/no-such-admin-file.js',
+        '/assets/.env', '/assets/%2e%2e/%2e%2e/package.json', '/assets/%2e%2e/%2e%2e/.env']){
+        const response=await read(path);
+        assert.equal(response.status,404,'ADMIN_PRIVATE_OR_UNKNOWN_PATH_EXPOSED');
+        assert.doesNotMatch(response.headers['content-type']??'',/text\/html/i);
+        const body=JSON.parse(response.body);
+        assert.equal(body.error?.code,'NOT_FOUND');
+      }
+    `]));
+    check('production-admin-apis-remain-authenticated-and-health-unchanged', () => command(['exec', '-T', 'api', 'node', '--input-type=module', '-e', String.raw`
+      import assert from 'node:assert/strict';
+      const read=path=>fetch('http://127.0.0.1:8080'+path,{redirect:'error',signal:AbortSignal.timeout(5000)});
+      for(const path of ['/api/admin/drivers','/api/admin/orders?status=active','/api/admin/queue?include_lanes=true']){
+        const response=await read(path);
+        assert.equal(response.status,401);
+        assert.equal(response.headers.get('cache-control'),'no-store');
+        const body=await response.json();
+        assert.equal(body.orders,undefined);assert.equal(body.drivers,undefined);assert.equal(body.queue,undefined);
+        assert.ok(body.error);
+      }
+      const health=await read('/api/healthz');
+      assert.equal(health.status,200);assert.equal((await health.json()).status,'ok');
+    `]));
     check('reject-weak-secret-before-boot', () => command(['run', '--rm', '--no-deps', '-e', 'SESSION_SECRET=weak', 'api'], { expected: 78 }));
     check('reject-memory-storage-before-boot', () => command(['run', '--rm', '--no-deps', '-e', 'TEZJET_STORAGE_ADAPTER=memory', 'api'], { expected: 78 }));
     const id = '11111111-1111-4111-8111-111111111111';

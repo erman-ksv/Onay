@@ -6,6 +6,8 @@ import { logger } from "./lib/logger";
 import { errorHandler } from "./middleware/errorHandler";
 import { protectOtpRequests } from "./middleware/otpProtection";
 import { AppError, serializeSafeError } from "./utils/errors";
+import { fileURLToPath } from "node:url";
+import { mountAdminUi } from "./middleware/adminUi";
 import { generateRequestId, markApiRequest, requestContext } from "./utils/requestContext";
 
 const app: Express = express();
@@ -54,9 +56,13 @@ app.use("/api", (request, _response, next) => {
   markApiRequest(request);
   next();
 }, router);
+if (process.env.TEZJET_SERVE_ADMIN_UI === "true") {
+  mountAdminUi(app, fileURLToPath(new URL("../../mockup-sandbox/dist/", import.meta.url)));
+}
 app.use((_request, _response, next) => {
   next(new AppError(404, "API endpoint not found", "NOT_FOUND"));
 });
 app.use(errorHandler);
 
 export default app;
+
