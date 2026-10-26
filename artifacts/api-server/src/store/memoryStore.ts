@@ -134,7 +134,9 @@ class MemoryStore implements Store {
 
   saveOtp(challenge: OtpChallenge): void {
     this.cleanupOtp(Date.now());
-    this.otpChallenges.set(challenge.phoneNumber, structuredClone(challenge));
+    const saved = structuredClone(challenge);
+    if (!saved.deliveryId) delete saved.deliveryId;
+    this.otpChallenges.set(challenge.phoneNumber, saved);
   }
 
   private cleanupOtp(now: number): void {
@@ -189,9 +191,9 @@ class MemoryStore implements Store {
     const budget = takeOtpSend(this.otpState(sendKey), now);
     this.saveOtpState("send", sendKey, budget.state);
     if (budget.result.allowed) {
-      this.otpChallenges.set(phoneNumber, structuredClone({
-        ...challenge, phoneNumber, expiresAt: now + OTP_TTL_MS,
-      }));
+      const saved = structuredClone({ ...challenge, phoneNumber, expiresAt: now + OTP_TTL_MS });
+      if (!saved.deliveryId) delete saved.deliveryId;
+      this.otpChallenges.set(phoneNumber, saved);
     }
     return budget.result;
   }
@@ -214,6 +216,15 @@ class MemoryStore implements Store {
     this.saveOtpState("verify", verifyKey, failure);
     const limit = otpPhoneBlock(failure, now);
     return limit.allowed ? { status: "invalid" } : { status: "limited", retryAfterMs: limit.retryAfterMs };
+  }
+
+  discardOtpDelivery(phone: string, deliveryId: string): boolean {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(deliveryId)) return false;
+    const phoneNumber = normalizePhone(phone);
+    const current = this.otpChallenges.get(phoneNumber);
+    if (!current || current.deliveryId !== deliveryId) return false;
+    this.otpChallenges.delete(phoneNumber);
+    return true;
   }
 
   activateUserRole(userId: string, nextRole: "passenger" | "driver", expectedSessionVersion?: number): User {

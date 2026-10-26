@@ -43,7 +43,13 @@ services:
       context: ../..
       dockerfile: deploy/onay/Dockerfile
     restart: unless-stopped
-    environment: *api-environment
+    environment:
+      <<: *api-environment
+      TEZJET_SMS_PROVIDER: ${TEZJET_SMS_PROVIDER:-}
+      TEZJET_SMS_SEND_ENABLED: ${TEZJET_SMS_SEND_ENABLED:-false}
+      DEVSMS_API_KEY: ${DEVSMS_API_KEY:-}
+      TEZJET_SMS_SERVICE_NAME: ${TEZJET_SMS_SERVICE_NAME:-Onay}
+      TEZJET_SMS_TIMEOUT_MS: ${TEZJET_SMS_TIMEOUT_MS:-8000}
     depends_on:
       db:
         condition: service_healthy

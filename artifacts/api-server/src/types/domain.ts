@@ -226,6 +226,8 @@ export interface User {
 }
 
 export interface OtpChallenge {
+  /** Identity of this exact provider attempt; absent on legacy/development challenges. */
+  deliveryId?: string;
   phoneNumber: string;
   code: string;
   role: UserRole;

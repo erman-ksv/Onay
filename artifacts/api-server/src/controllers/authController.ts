@@ -10,6 +10,7 @@ import { translate } from "../utils/i18n";
 import { AppError } from "../utils/errors";
 import { ADMIN_PHONE, OTP_TTL_MS } from "../utils/config";
 import { optionalString, pickEnum, requiredString } from "../utils/validation";
+import { getSmsConfiguration, OtpSmsError, sendOtpSms } from "../services/otpSms";
 
 const roles = ["passenger", "driver", "admin"] as const;
 const locales = ["kk", "uz", "ru"] as const;
@@ -43,7 +44,13 @@ export async function requestOtp(request: Request, response: Response): Promise<
   }
   const locale = getLocale(request, request.body?.locale);
   const fullName = optionalString(request.body?.full_name, "full_name", 120);
+  // Production must never report a sent code when no real sender is configured.
+  const sms = getSmsConfiguration();
+  if (sms.kind === "devsms" && !/^\+998\d{9}$/.test(phoneNumber)) {
+    throw new AppError(422, "SMS login currently supports Uzbekistan numbers only", "SMS_UNSUPPORTED_COUNTRY");
+  }
   const code = String(randomInt(100000, 1_000_000));
+  const deliveryId = sms.kind === "devsms" ? randomUUID() : undefined;
 
   const admission = await otpStorageOperation(() => store.saveOtpProtected({
     phoneNumber,
@@ -52,6 +59,7 @@ export async function requestOtp(request: Request, response: Response): Promise<
     locale,
     fullName,
     expiresAt: Date.now() + OTP_TTL_MS,
+    ...(deliveryId ? { deliveryId } : {}),
   }));
 
   if (!admission.allowed) {
@@ -59,10 +67,25 @@ export async function requestOtp(request: Request, response: Response): Promise<
     return;
   }
 
+  if (sms.kind === "devsms" && deliveryId) {
+    try {
+      await sendOtpSms(sms, { phoneNumber, code, deliveryId });
+    } catch (error) {
+      if (error instanceof OtpSmsError && error.definitive) {
+        // Do not erase a newer challenge or refund an abuse-control budget.
+        await otpStorageOperation(() => store.discardOtpDelivery(phoneNumber, deliveryId));
+      }
+      // Unknown outcomes may have delivered the code: retain its bounded TTL,
+      // but never claim a successful send or automatically send another SMS.
+      if (error instanceof OtpSmsError) throw error;
+      throw new AppError(503, "SMS outcome is not confirmed", "SMS_OUTCOME_UNKNOWN");
+    }
+  }
+
   response.status(202).json({
     message: translate(locale, "otpSent"),
     expires_in_seconds: OTP_TTL_MS / 1000,
-    ...(process.env.NODE_ENV !== "production" ? { demo_code: code } : {}),
+    ...(sms.kind === "demo" ? { demo_code: code } : {}),
   });
 }
 
