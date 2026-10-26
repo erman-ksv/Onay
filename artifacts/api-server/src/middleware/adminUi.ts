@@ -14,7 +14,7 @@ export function mountAdminUi(app: Express, distDirectory: string): void {
   app.get("/admin", (_request, response) => {
     response.set("Cache-Control", "no-store");
     response.set("X-Content-Type-Options", "nosniff");
-    response.sendFile(index, { cacheControl: false, dotfiles: "deny" });
+    response.sendFile("index.html", { root, cacheControl: false, dotfiles: "deny" });
   });
   app.use("/assets", (_request, response, next) => {
     response.set("Cache-Control", "no-store");
