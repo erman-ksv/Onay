@@ -549,3 +549,73 @@ for (const kind of ['PostgreSQL', 'Memory']) test(`${kind} audited review refuse
   await adapter.invalidateSessions(f.admin.id);
   await assert.rejects(Promise.resolve().then(() => adapter.setDriverApprovalAsAdmin('missing-target', 'approved', undefined, f.admin.id, f.admin.sessionVersion)), error => error.code === 'UNAUTHORIZED');
 });
+
+const privateAdminPaths = [
+  '/admin/orders', '/admin/queue', '/admin/drivers', '/admin/passengers',
+  '/admin/statistics/trips', '/admin/audit-events', '/admin/queue-point', '/admin/routes',
+];
+async function privateAdminRead(pathname, token, options = {}) {
+  return fetch(baseUrl + pathname, {
+    ...options,
+    headers: { ...(token ? { authorization: 'Bearer ' + token } : {}), ...options.headers },
+    signal: AbortSignal.timeout(5000),
+  });
+}
+
+test('private admin snapshots explicitly forbid caching on every existing read endpoint', async t => {
+  const f = await fixture(t);
+  for (const pathname of privateAdminPaths) {
+    const response = await privateAdminRead(pathname, f.admin.token);
+    assert.equal(response.status, 200, pathname);
+    assert.equal(response.headers.get('cache-control'), 'no-store', pathname);
+    await response.json();
+  }
+});
+
+test('admin cache protection also covers anonymous, passenger, driver and revoked-session failures', async t => {
+  const f = await fixture(t);
+  for (const pathname of privateAdminPaths) {
+    for (const [token, status] of [[undefined, 401], [f.passenger.token, 403], [f.driver.token, 403]]) {
+      const response = await privateAdminRead(pathname, token);
+      assert.equal(response.status, status, pathname);
+      assert.equal(response.headers.get('cache-control'), 'no-store', pathname);
+      const body = await response.json();
+      assert.equal(body.orders, undefined);
+      assert.equal(body.passengers, undefined);
+      assert.equal(body.drivers, undefined);
+    }
+  }
+  await f.adapter.invalidateSessions(f.admin.id);
+  for (const pathname of privateAdminPaths) {
+    const response = await privateAdminRead(pathname, f.admin.token);
+    assert.equal(response.status, 401, pathname);
+    assert.equal(response.headers.get('cache-control'), 'no-store', pathname);
+    await response.json();
+  }
+});
+
+test('admin no-store survives validation, not-found and malformed JSON before the router', async t => {
+  const f = await fixture(t);
+  for (const [pathname, options, status] of [
+    ['/admin/orders?status=invalid', {}, 400],
+    ['/admin/no-such-resource', {}, 404],
+    ['/admin/routes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{' }, 400],
+  ]) {
+    const response = await privateAdminRead(pathname, f.admin.token, options);
+    assert.equal(response.status, status, pathname);
+    assert.equal(response.headers.get('cache-control'), 'no-store', pathname);
+    await response.json();
+  }
+});
+
+test('HEAD admin responses are protected without marking unrelated health data as private', async t => {
+  const f = await fixture(t);
+  const head = await privateAdminRead('/admin/drivers', f.admin.token, { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.equal(head.headers.get('cache-control'), 'no-store');
+  assert.equal(await head.text(), '');
+  const health = await fetch(baseUrl + '/healthz', { signal: AbortSignal.timeout(5000) });
+  assert.equal(health.status, 200);
+  assert.notEqual(health.headers.get('cache-control'), 'no-store');
+  await health.json();
+});
