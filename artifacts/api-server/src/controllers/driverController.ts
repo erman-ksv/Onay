@@ -1,3 +1,5 @@
+import { hasRequiredDriverApproval, readDriverVehicleInput } from "../utils/driverVehicle";
+import { serializeUser } from "../utils/serialize";
 import type { Request, Response } from "express";
 import { store } from "../store";
 import type { DriverRouteChoice, DriverRouteSelection, User } from "../types/domain";
@@ -13,7 +15,7 @@ async function currentDriver(request: Request): Promise<User> {
     throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
   }
   if (user.role !== "driver") throw new AppError(403, "driver mode is required", "FORBIDDEN");
-  if (REQUIRE_DRIVER_APPROVAL && user.driverApprovalStatus !== "approved") {
+  if (!hasRequiredDriverApproval(user, REQUIRE_DRIVER_APPROVAL)) {
     throw new AppError(403, "Driver approval is required", "DRIVER_APPROVAL_REQUIRED");
   }
   return user;
@@ -50,4 +52,19 @@ export async function clearDriverRoute(request: Request, response: Response): Pr
   const user = await currentDriver(request);
   await store.setDriverRouteChoice(user.id, null, request.auth!.user.sessionVersion);
   response.status(204).send();
+}
+
+/** Pending drivers must be able to submit a vehicle for administrator review. */
+export async function getDriverVehicle(request: Request, response: Response): Promise<void> {
+  response.setHeader("Cache-Control", "no-store");
+  const user = await store.getUser(request.auth!.userId);
+  if (!user || user.sessionVersion !== request.auth!.user.sessionVersion) throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+  response.json({ driver_vehicle: serializeUser(user).driver_vehicle ?? null, approval_status: user.driverApprovalStatus });
+}
+
+export async function setDriverVehicle(request: Request, response: Response): Promise<void> {
+  const input = readDriverVehicleInput(request.body);
+  const user = await store.setDriverVehicle(request.auth!.userId, input, request.auth!.user.sessionVersion);
+  response.setHeader("Cache-Control", "no-store");
+  response.json({ driver_vehicle: serializeUser(user).driver_vehicle, approval_status: user.driverApprovalStatus });
 }

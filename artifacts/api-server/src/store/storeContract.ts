@@ -1,10 +1,13 @@
 import type {
+  AdminAuditEvent,
   DeviceRegistration,
   Coordinates,
   DriverApprovalStatus,
+  DriverVehicleInput,
   DriverRouteChoice,
   DriverRouteDirection,
   FareQuote,
+  FareCurrency,
   ExternalPickupQuote,
   ExternalPickupSelectionInput,
   ExternalPickupSettings,
@@ -27,7 +30,20 @@ import type {
  * asynchronous in durable adapters; callers should await results before
  * switching production storage.
  */
+export interface RouteCreateInput {
+  id: string;
+  name: string;
+  currency?: FareCurrency;
+  pricePerStop?: number;
+  pricePerStopKzt?: number;
+  active: boolean;
+}
+export type RouteMetadataPatch = Partial<Pick<RouteDefinition, "name" | "currency" | "pricePerStop" | "pricePerStopKzt" | "active">>;
+
 export type MaybePromise<T> = T | Promise<T>;
+/** A closed key is durably fenced against every later booking attempt. */
+export type RouteOrderResolution = { state: "created"; order: Order } | { state: "closed"; requestKey: string };
+export interface AdminMutationActor { adminId: string; expectedSessionVersion: number }
 export type { OrderOfferChange } from "../types/domain";
 export type { ExternalPickupQuote, ExternalPickupSelectionInput, ExternalPickupSettings } from "../types/domain";
 
@@ -81,6 +97,11 @@ export interface RouteOrderInput {
   seats: number;
 }
 
+export interface RouteOrderReceipt {
+  order: Order;
+  requestHash: string;
+}
+
 export interface Store {
   initialize(): MaybePromise<void>;
   createUser(input: {
@@ -90,6 +111,7 @@ export interface Store {
     locale: Locale;
   }): MaybePromise<User>;
   getUser(userId: string): MaybePromise<User | undefined>;
+  setDriverVehicle(userId: string, input: DriverVehicleInput, expectedSessionVersion: number): MaybePromise<User>;
   getUserByPhone(phoneNumber: string): MaybePromise<User | undefined>;
   updateUser(
     userId: string,
@@ -111,6 +133,8 @@ export interface Store {
   saveOtpProtected(challenge: OtpChallenge): MaybePromise<OtpLimitResult>;
   /** Consume once or commit a failed attempt while holding the same phone locks as resend. */
   consumeOtpProtected(phoneNumber: string, code: string): MaybePromise<OtpVerifyResult>;
+  /** Discard only this failed provider attempt; retain all send/failure budgets. */
+  discardOtpDelivery(phoneNumber: string, deliveryId: string): MaybePromise<boolean>;
 
   getQueueEntry(driverId: string): MaybePromise<QueueEntry | undefined>;
   removeDriverFromFifo(driverId: string): MaybePromise<QueueEntry | undefined>;
@@ -130,6 +154,11 @@ export interface Store {
   getRouteOrderAvailability(selection: RouteOrderSelectionInput, seats: number): MaybePromise<RouteOrderAvailability>;
   /** Derive live route/fare and reserve one matching lane atomically. */
   createRouteOrderWithOffer(input: RouteOrderInput, selection: RouteOrderSelectionInput, expectedSessionVersion?: number): MaybePromise<Order | undefined>;
+  /** Resolve a passenger-owned booking without repeating GPS, fare or seat allocation. */
+  getRouteOrderRequest(passengerId: string, requestKey: string, expectedSessionVersion?: number): MaybePromise<RouteOrderReceipt | undefined>;
+  resolveRouteOrderRequest(passengerId: string, requestKey: string, expectedSessionVersion?: number): MaybePromise<RouteOrderResolution>;
+  /** Persist the receipt and reservation together; replay never reserves seats again. */
+  createRouteOrderOnce(input: RouteOrderInput, selection: RouteOrderSelectionInput, requestKey: string, expectedSessionVersion?: number): MaybePromise<{ order: Order; created: boolean } | undefined>;
   /** Advisory snapshot only; road routing happens outside transaction locks. */
   getExternalPickupCandidates(selection: ExternalPickupSelectionInput, seats: number, excludedDriverIds?: string[]): MaybePromise<{ route: RouteDefinition; candidates: QueueEntry[] }>;
   /** Confirm only the signed driver/price; initial quote ID is the order's immutable primary key. */
@@ -156,6 +185,9 @@ export interface Store {
     expectedStatus?: OrderStatus,
     expectedSessionVersion?: number,
   ): MaybePromise<Order | undefined>;
+  cancelOrderAsAdmin(orderId: string, adminId: string, expectedStatus: OrderStatus, expectedSessionVersion: number): MaybePromise<Order | undefined>;
+  listAdminAuditEvents(orderId?: string, limit?: number, driverId?: string, routeId?: string): MaybePromise<AdminAuditEvent[]>;
+  setDriverApprovalAsAdmin(userId: string, status: DriverApprovalStatus, expectedVehicleRevision: string | null | undefined, adminId: string, expectedSessionVersion: number): MaybePromise<User | undefined>;
   claimOrderForDriver(
     orderId: string,
     driverId: string,
@@ -169,6 +201,7 @@ export interface Store {
   setDriverApproval(
     userId: string,
     status: DriverApprovalStatus,
+    expectedVehicleRevision?: string | null,
   ): MaybePromise<User | undefined>;
 
   listRoutes(): MaybePromise<RouteDefinition[]>;
@@ -176,16 +209,8 @@ export interface Store {
   updateExternalPickupSettings(routeId: string, input: { expectedUpdatedAt: string; settings: ExternalPickupSettings }): MaybePromise<RouteDefinition | undefined>;
   /** Replace only the ordered static layout, rejecting a stale route version. */
   updateRouteLayout(routeId: string, input: RouteLayoutInput): MaybePromise<RouteDefinition | undefined>;
-  createRoute(input: {
-    id: string;
-    name: string;
-    pricePerStopKzt: number;
-    active: boolean;
-  }): MaybePromise<RouteDefinition>;
-  updateRoute(
-    routeId: string,
-    patch: Partial<Pick<RouteDefinition, "name" | "pricePerStopKzt" | "active">>,
-  ): MaybePromise<RouteDefinition | undefined>;
+  createRoute(input: RouteCreateInput): MaybePromise<RouteDefinition>;
+  updateRoute(routeId: string, patch: RouteMetadataPatch, audit?: AdminMutationActor): MaybePromise<RouteDefinition | undefined>;
   deleteRoute(routeId: string): MaybePromise<boolean>;
   addRouteStop(
     routeId: string,

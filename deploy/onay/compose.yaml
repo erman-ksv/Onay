@@ -1,0 +1,85 @@
+name: onay-staging
+x-api-environment: &api-environment
+  NODE_ENV: production
+  PORT: '8080'
+  TEZJET_STORAGE_ADAPTER: postgres
+  REQUIRE_DRIVER_APPROVAL: 'true'
+  DATABASE_URL: postgresql://onay:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/onay
+  SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET}
+  ADMIN_PHONE: ${ADMIN_PHONE:?Set ADMIN_PHONE}
+  ONAY_DOMAIN: ${ONAY_DOMAIN:?Set ONAY_DOMAIN}
+  LOG_LEVEL: info
+  TEZJET_REQUIRE_ROUTE_CONFIG: 'true'
+services:
+  db:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: onay
+      POSTGRES_DB: onay
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U onay -d onay']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  migrate:
+    image: onay-api:${ONAY_IMAGE_TAG:-staging}
+    profiles: [tools]
+    environment: *api-environment
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ['pnpm', '--filter', '@workspace/db', 'run', 'migrate']
+    init: true
+    read_only: true
+    tmpfs: ['/tmp']
+    cap_drop: [ALL]
+  api:
+    image: onay-api:${ONAY_IMAGE_TAG:-staging}
+    build:
+      context: ../..
+      dockerfile: deploy/onay/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *api-environment
+      TEZJET_SMS_PROVIDER: ${TEZJET_SMS_PROVIDER:-}
+      TEZJET_SMS_SEND_ENABLED: ${TEZJET_SMS_SEND_ENABLED:-false}
+      DEVSMS_API_KEY: ${DEVSMS_API_KEY:-}
+      TEZJET_SMS_SERVICE_NAME: ${TEZJET_SMS_SERVICE_NAME:-Onay}
+      TEZJET_SMS_TIMEOUT_MS: ${TEZJET_SMS_TIMEOUT_MS:-8000}
+    depends_on:
+      db:
+        condition: service_healthy
+    expose: ['8080']
+    init: true
+    read_only: true
+    tmpfs: ['/tmp']
+    cap_drop: [ALL]
+  edge:
+    image: caddy:2-alpine
+    profiles: [edge]
+    restart: unless-stopped
+    environment:
+      ONAY_DOMAIN: ${ONAY_DOMAIN:?Set ONAY_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    read_only: true
+    tmpfs: ['/tmp']
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

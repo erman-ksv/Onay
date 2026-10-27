@@ -12,7 +12,7 @@ import { build } from "esbuild";
 const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const schema = `external_pickup_${randomUUID().replaceAll("-", "")}`;
 const applicationName = `external-pickup-${randomUUID()}`;
-const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes"];
+const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes", "tezjet_admin_audit_events"];
 const envKeys = ["DATABASE_URL", "TEZJET_STORAGE_ADAPTER", "NODE_ENV", "SESSION_SECRET", "LOG_LEVEL", "REQUIRE_DRIVER_APPROVAL", "PYATAK_CENTER_LAT", "PYATAK_CENTER_LNG", "TEZJET_OFFER_TIMEOUT_SECONDS", "TEZJET_OSRM_URL"];
 const originalEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
 let moduleDirectory, production, database, adminPool, store, otherStore, server, baseUrl;
@@ -76,7 +76,7 @@ before(async () => {
         'export { createAccessToken } from "./src/utils/token";',
         'import jwt from "jsonwebtoken"; export const signJwt = jwt.sign;',
         'export { routePickupCandidates } from "./src/services/externalPickupRouting";',
-        'export { driverLocationFingerprint as externalPickupLocationFingerprint } from "./src/store/externalPickup";',
+        'export { driverLocationFingerprint as externalPickupLocationFingerprint, normalizeExternalPickupSettings, externalPickupSurcharge, externalPickupSurchargeKzt, validateExternalPickupQuote } from "./src/store/externalPickup";',
         'export { createExternalPickupQuoteToken, verifyExternalPickupQuoteToken } from "./src/services/externalPickupQuoteToken";',
       ].join("\n"),
       resolveDir: apiRoot, loader: "ts",
@@ -150,9 +150,10 @@ async function fixture(t, adapter = store) {
     if (role === "driver" && approval) { await adapter.setDriverApproval(user.id, approval); user = await adapter.getUser(user.id); }
     return { user: structuredClone(user), token: production.createAccessToken({ sub: user.id, role: user.role, locale: user.locale, sessionVersion: user.sessionVersion, sessionId: randomUUID() }) };
   };
-  const configured = async () => {
+  const configured = async (currency = "KZT") => {
     const id = `external-${randomUUID()}`; routes.push(id);
-    const empty = await adapter.createRoute({ id, name: "A↔B collection", pricePerStopKzt: 500, active: true });
+    const empty = await adapter.createRoute({ id, name: "A↔B collection", active: true,
+      ...(currency === "UZS" ? { currency: "UZS", pricePerStop: 10000 } : { pricePerStopKzt: 500 }) });
     return adapter.updateRouteLayout(id, { expectedUpdatedAt: empty.updatedAt, pitaks, stops: [
       { code: "A", name: "Питак A", location: { lat: 42.9, lng: 71.3 } },
       { code: "C", name: "Остановка C", location: { lat: 42.91, lng: 71.34 } },
@@ -252,8 +253,10 @@ const policy = {
 const externalTarget = { lat: 42.905, lng: 71.31 };
 async function configure(f, route, overrides = {}) {
   const admin = await f.createUser("admin");
+  const { price_per_km_kzt: _legacyRate, ...commonPolicy } = policy;
+  const currentPolicy = route.currency === "UZS" ? { ...commonPolicy, currency: "UZS", price_per_km: 2000, fare_rounding: "ceil" } : policy;
   const result = await request(`/admin/routes/${route.id}/external-pickup`, {
-    token: admin.token, method: "PUT", body: { expected_updated_at: route.updatedAt, settings: { ...policy, ...overrides } },
+    token: admin.token, method: "PUT", body: { expected_updated_at: route.updatedAt, settings: { ...currentPolicy, ...overrides } },
   });
   assert.equal(result.status, 200, JSON.stringify(result.body));
   return { route: await f.adapter.getRoute(route.id), admin };
@@ -269,8 +272,8 @@ async function quote(passenger, route, extra = {}) {
 function confirm(passenger, quoted) {
   return request("/orders/external/confirm", { token: passenger.token, method: "POST", body: { quote_token: quoted.quote_token } });
 }
-async function setup(t, { seats = 4, settings = {} } = {}) {
-  const f = await fixture(t), initial = await f.configured();
+async function setup(t, { seats = 4, settings = {}, currency = "KZT" } = {}) {
+  const f = await fixture(t), initial = await f.configured(currency);
   const configured = await configure(f, initial, settings), route = configured.route;
   const driver = await enroll(f, route, seats), passenger = await f.createUser("passenger");
   return { f, route, driver, passenger, admin: configured.admin };
@@ -904,15 +907,17 @@ async function signedStoreQuote(adapter, driver, passenger, route, options = {})
   // adapter parity below does not bypass quote validation or reservation logic.
   const selected = await adapter.getExternalPickupCandidates({ routeId: route.id, direction, expectedUpdatedAt: route.updatedAt }, options.seats ?? 1);
   assert.equal(selected.candidates[0].driverId, driver.user.id);
+  const baseFare = route.currency === "UZS" ? 30000 : 1500;
+  const pickupSurcharge = Math.ceil(distance * (route.currency === "UZS" ? settings.pricePerKm : settings.pricePerKmKzt) / 1000);
   const quoted = {
-    version: 1, quoteId: randomUUID(), passengerId: passenger.user.id, sessionVersion: passenger.user.sessionVersion,
+    version: route.currency === "UZS" ? 2 : 1, quoteId: randomUUID(), passengerId: passenger.user.id, sessionVersion: passenger.user.sessionVersion,
     selection: { routeId: route.id, direction, expectedUpdatedAt: route.updatedAt },
     pickupLocation: { ...pickupLocation, timestamp: now }, seats: options.seats ?? 1,
     driverId: driver.user.id, driverEnrollmentId: live.collectionState.enrollmentId,
     driverLocationFingerprint: production.externalPickupLocationFingerprint(live),
-    roadDistanceMeters: distance, roadDurationSeconds: duration, baseFareKzt: 1500,
-    pickupSurchargeKzt: Math.ceil(distance * settings.pricePerKmKzt / 1000),
-    totalKzt: 1500 + Math.ceil(distance * settings.pricePerKmKzt / 1000), settings,
+    roadDistanceMeters: distance, roadDurationSeconds: duration,
+    ...(route.currency === "UZS" ? { currency: "UZS", baseFare, pickupSurcharge, total: baseFare + pickupSurcharge }
+      : { baseFareKzt: baseFare, pickupSurchargeKzt: pickupSurcharge, totalKzt: baseFare + pickupSurcharge }), settings,
     quotedAt: now, expiresAt: now + settings.quoteTtlSeconds * 1000,
   };
   return production.verifyExternalPickupQuoteToken(production.createExternalPickupQuoteToken(quoted));
@@ -1202,4 +1207,211 @@ test("missing or unsafe routing configuration fails closed and never leaks the c
       await assertNoPassengerOrders(passenger);
     }
   } finally { process.env.TEZJET_OSRM_URL = configured; }
+});
+
+
+function assertCanonicalExternalFare(fare, total = 1750) {
+  assert.equal(fare.currency, "KZT");
+  assert.equal(fare.totalKzt, total);
+  assert.equal(fare.total, total, "Canonical total must include the one-way pickup surcharge, not only the base fare.");
+  assert.equal(fare.pricePerStopKzt, 500);
+  assert.equal(fare.pricePerStop, 500);
+}
+
+test("canonical external totals include surcharge once and survive replay and the ride lifecycle in both adapters", async t => {
+  for (const adapter of [store, new production.MemoryStore()]) await t.test(adapter.constructor.name, async child => {
+    const f = await fixture(child, adapter), initial = await f.configured();
+    const settings = {
+      enabled: true, serviceRadiusMeters: policy.service_radius_meters, pricePerKmKzt: policy.price_per_km_kzt,
+      gpsMaxAgeSeconds: policy.gps_max_age_seconds, quoteTtlSeconds: policy.quote_ttl_seconds,
+      pickupGraceSeconds: policy.pickup_grace_seconds, maxPickupSeconds: policy.max_pickup_seconds, fareRounding: policy.fare_rounding,
+    };
+    const route = await adapter.updateExternalPickupSettings(initial.id, { expectedUpdatedAt: initial.updatedAt, settings });
+    const driver = await f.planned(route), passenger = await f.createUser("passenger");
+    const joined = await f.storedJoin(driver, route);
+    const quoted = await signedStoreQuote(adapter, driver, passenger, route, { seats: 2 });
+    assert.equal(quoted.baseFareKzt, 1500);
+    assert.equal(quoted.pickupSurchargeKzt, 250);
+    const first = await adapter.confirmExternalPickupQuote(quoted, passenger.user.id, passenger.user.sessionVersion);
+    assert.equal(first.created, true);
+    assertCanonicalExternalFare(first.order.fare);
+    const duplicate = await adapter.confirmExternalPickupQuote(quoted, passenger.user.id, passenger.user.sessionVersion);
+    assert.equal(duplicate.created, false);
+    assert.equal(duplicate.changed, false);
+    assert.equal(duplicate.order.id, first.order.id);
+    assert.deepEqual(duplicate.order.fare, first.order.fare);
+    const observer = adapter instanceof production.PostgresStore ? otherStore : adapter;
+    assertCanonicalExternalFare((await observer.getOrder(first.order.id)).fare);
+    assert.ok(await adapter.acceptOrderOffer(first.order.id, driver.user.id));
+    assert.ok(await adapter.transitionOrder(first.order.id, driver.user.id, "arrived_at_c"));
+    assert.ok(await adapter.transitionOrder(first.order.id, driver.user.id, "boarded_waiting"));
+    await adapter.departQueue(driver.user.id, joined.collectionState.enrollmentId, driver.user.sessionVersion);
+    assert.ok(await adapter.transitionOrder(first.order.id, driver.user.id, "completed"));
+    const historical = await observer.getOrder(first.order.id);
+    assert.equal(historical.status, "completed");
+    assert.deepEqual(historical.fare, first.order.fare);
+    assertCanonicalExternalFare(historical.fare);
+    assert.equal((await capacityInvariant(observer, driver, 4)).availableSeats, 4);
+  });
+});
+
+test("HTTP external quote and frozen order history expose identical canonical and legacy totals after policy edits", async t => {
+  const { f, route, driver, passenger } = await setup(t);
+  const quoted = await quote(passenger, route, { seats: 2 });
+  assert.equal(quoted.quote.base_fare_kzt, 1500);
+  assert.equal(quoted.quote.pickup_surcharge_kzt, 250);
+  assert.equal(quoted.quote.total_kzt, 1750);
+  assert.equal(quoted.quote.total, 1750);
+  assert.equal(quoted.quote.currency, "KZT");
+  const confirmed = await confirm(passenger, quoted);
+  assert.equal(confirmed.status, 201, JSON.stringify(confirmed.body));
+  const order = confirmed.body.order;
+  assertCanonicalExternalFare(order.fare);
+  await accept(driver, order);
+  const frozen = structuredClone((await otherStore.getOrder(order.id)).fare);
+  await configure(f, route, { price_per_km_kzt: 900, enabled: false });
+  const replay = await confirm(passenger, quoted);
+  assert.equal(replay.status, 200, JSON.stringify(replay.body));
+  assert.deepEqual(replay.body.order.fare, frozen);
+  await move(driver, externalTarget);
+  await arrive(driver, order); await board(driver, order);
+  assert.equal((await depart(driver)).status, 200);
+  const completed = await request(`/orders/${order.id}/status`, { token: driver.token, method: "PATCH", body: { status: "completed" } });
+  assert.equal(completed.status, 200, JSON.stringify(completed.body));
+  assertCanonicalExternalFare(completed.body.order.fare);
+  const historical = await request(`/orders/${order.id}`, { token: passenger.token });
+  assert.equal(historical.status, 200, JSON.stringify(historical.body));
+  assert.deepEqual(historical.body.order.fare, frozen);
+  const listed = await request("/orders", { token: passenger.token });
+  assert.equal(listed.status, 200, JSON.stringify(listed.body));
+  assert.deepEqual(listed.body.orders.find(value => value.id === order.id).fare, frozen);
+  assert.deepEqual((await otherStore.getOrder(order.id)).fare, frozen);
+  assert.equal((await capacityInvariant(otherStore, driver, 4)).availableSeats, 4);
+});
+
+
+const uzsPickupSettings = {
+  enabled: true, currency: "UZS", serviceRadiusMeters: 5000, pricePerKm: 2000,
+  gpsMaxAgeSeconds: 120, quoteTtlSeconds: 120, pickupGraceSeconds: 120, maxPickupSeconds: 3600, fareRounding: "ceil",
+};
+function assertUzsExternalFare(fare, total = 35000) {
+  assert.equal(fare.currency, "UZS"); assert.equal(fare.total, total); assert.equal(fare.pricePerStop, 10000);
+  assert.equal(Object.hasOwn(fare, "totalKzt"), false); assert.equal(Object.hasOwn(fare, "pricePerStopKzt"), false);
+}
+function jwtBody(token) { return JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8")); }
+function conflictingKztQuote(uzs) {
+  const { currency, baseFare, pickupSurcharge, total, ...common } = uzs;
+  const { currency: _settingsCurrency, pricePerKm, ...settings } = uzs.settings;
+  return { ...common, version: 1, baseFareKzt: baseFare, pickupSurchargeKzt: pickupSurcharge, totalKzt: total,
+    settings: { ...settings, pricePerKmKzt: pricePerKm, fareRounding: "ceil_kzt" } };
+}
+
+test("external UZS policy requires explicit neutral pricing and cannot be applied to KZT routes", async t => {
+  const normalized = production.normalizeExternalPickupSettings(uzsPickupSettings, "UZS");
+  assert.deepEqual(normalized, uzsPickupSettings);
+  for (const candidate of [
+    { ...uzsPickupSettings, pricePerKmKzt: 2000 },
+    { ...uzsPickupSettings, pricePerKm: undefined },
+    { ...uzsPickupSettings, fareRounding: "ceil_kzt" },
+    { ...uzsPickupSettings, currency: "USD" },
+    { ...uzsPickupSettings, currency: undefined },
+  ]) assert.throws(() => production.normalizeExternalPickupSettings(candidate, "UZS"));
+  assert.throws(() => production.normalizeExternalPickupSettings(uzsPickupSettings, "KZT"));
+  assert.equal(production.externalPickupSurcharge(2500, normalized), 5000);
+  assert.equal(production.externalPickupSurcharge(1, { ...normalized, pricePerKm: 1 }), 1);
+  assert.equal(production.externalPickupSurcharge(1000, { ...normalized, pricePerKm: 1 }), 1);
+  assert.equal(production.externalPickupSurcharge(500, { ...normalized, pricePerKm: 1, fareRounding: "nearest" }), 1);
+  assert.equal(production.externalPickupSurcharge(499, { ...normalized, pricePerKm: 1, fareRounding: "nearest" }), 0);
+  assert.throws(() => production.externalPickupSurchargeKzt(2500, normalized));
+  for (const adapter of [store, new production.MemoryStore()]) await t.test(adapter.constructor.name, async child => {
+    const f = await fixture(child, adapter), kzt = await f.configured(), uzs = await f.configured("UZS");
+    await assert.rejects(() => Promise.resolve().then(() => adapter.updateExternalPickupSettings(kzt.id, { expectedUpdatedAt: kzt.updatedAt, settings: normalized })));
+    assert.equal((await adapter.getRoute(kzt.id)).externalPickup, undefined);
+    const legacy = { ...normalized, currency: "KZT", pricePerKm: undefined, pricePerKmKzt: 100, fareRounding: "ceil_kzt" };
+    delete legacy.currency; delete legacy.pricePerKm;
+    await assert.rejects(() => Promise.resolve().then(() => adapter.updateExternalPickupSettings(uzs.id, { expectedUpdatedAt: uzs.updatedAt, settings: legacy })));
+    assert.equal((await adapter.getRoute(uzs.id)).externalPickup, undefined);
+  });
+});
+
+test("UZS v2 signed external quotes reserve once and retain neutral currency through replay and completion", async t => {
+  for (const adapter of [store, new production.MemoryStore()]) await t.test(adapter.constructor.name, async child => {
+    const f = await fixture(child, adapter), initial = await f.configured("UZS");
+    const route = await adapter.updateExternalPickupSettings(initial.id, { expectedUpdatedAt: initial.updatedAt, settings: uzsPickupSettings });
+    const driver = await f.planned(route), passenger = await f.createUser("passenger"), joined = await f.storedJoin(driver, route);
+    const claims = await signedStoreQuote(adapter, driver, passenger, route, { seats: 2 });
+    assert.equal(claims.version, 2); assert.equal(claims.currency, "UZS"); assert.equal(claims.baseFare, 30000);
+    assert.equal(claims.pickupSurcharge, 5000); assert.equal(claims.total, 35000); assert.equal(Object.hasOwn(claims, "totalKzt"), false);
+    const token = production.createExternalPickupQuoteToken(claims), payload = jwtBody(token);
+    assert.equal(payload.purpose, "external-pickup-v2"); assert.equal(payload.aud, "external-pickup-v2");
+    assert.deepEqual(production.verifyExternalPickupQuoteToken(token), claims);
+    for (const invalid of [{ ...claims, currency: "KZT" }, { ...claims, totalKzt: 35000 },
+      { ...claims, version: 1 }, { ...claims, total: 30000 }, { ...claims, settings: { ...claims.settings, pricePerKmKzt: 2000 } }]) {
+      assert.throws(() => production.createExternalPickupQuoteToken(invalid), error => error.code === "INVALID_PICKUP_QUOTE");
+    }
+    const first = await adapter.confirmExternalPickupQuote(claims, passenger.user.id, passenger.user.sessionVersion);
+    assert.equal(first.created, true); assertUzsExternalFare(first.order.fare);
+    const repeat = await adapter.confirmExternalPickupQuote(claims, passenger.user.id, passenger.user.sessionVersion);
+    assert.equal(repeat.created, false); assert.equal(repeat.changed, false); assert.deepEqual(repeat.order.fare, first.order.fare);
+    const otherCurrency = conflictingKztQuote(claims);
+    const checkedOtherCurrency = production.verifyExternalPickupQuoteToken(production.createExternalPickupQuoteToken(otherCurrency));
+    await assert.rejects(() => Promise.resolve().then(() => adapter.confirmExternalPickupQuote(checkedOtherCurrency, passenger.user.id, passenger.user.sessionVersion)), error => error.code === "PICKUP_QUOTE_CHANGED");
+    const observer = adapter instanceof production.PostgresStore ? otherStore : adapter;
+    assert.equal((await capacityInvariant(observer, driver, 4)).availableSeats, 2);
+    assert.ok(await adapter.acceptOrderOffer(first.order.id, driver.user.id));
+    assert.ok(await adapter.transitionOrder(first.order.id, driver.user.id, "arrived_at_c"));
+    assert.ok(await adapter.transitionOrder(first.order.id, driver.user.id, "boarded_waiting"));
+    await adapter.updateExternalPickupSettings(route.id, { expectedUpdatedAt: route.updatedAt, settings: { ...uzsPickupSettings, pricePerKm: 9000, enabled: false } });
+    const replay = await adapter.confirmExternalPickupQuote(claims, passenger.user.id, passenger.user.sessionVersion);
+    assertUzsExternalFare(replay.order.fare); assert.equal(replay.created, false);
+    await adapter.departQueue(driver.user.id, joined.collectionState.enrollmentId, driver.user.sessionVersion);
+    assert.ok(await adapter.transitionOrder(first.order.id, driver.user.id, "completed"));
+    const historical = await observer.getOrder(first.order.id);
+    assert.deepEqual(historical.fare, first.order.fare); assertUzsExternalFare(historical.fare);
+    assert.equal(historical.externalPickup.version, 2); assert.equal(historical.externalPickup.currency, "UZS");
+    assert.equal(Object.hasOwn(historical.externalPickup, "baseFareKzt"), false);
+    assert.equal((await capacityInvariant(observer, driver, 4)).availableSeats, 4);
+  });
+});
+
+test("HTTP UZS pickup quotes, catalog and frozen ride history expose sums without KZT aliases", async t => {
+  const { f, route, driver, passenger } = await setup(t, { currency: "UZS" });
+  const listed = await request("/orders/routes", { token: passenger.token });
+  assert.equal(listed.status, 200, JSON.stringify(listed.body));
+  const listedRoute = listed.body.routes.find(value => value.id === route.id);
+  assert.equal(listedRoute.currency, "UZS"); assert.equal(listedRoute.pricePerStop, 10000);
+  assert.equal(Object.hasOwn(listedRoute, "pricePerStopKzt"), false);
+  assert.equal(listedRoute.external_pickup.currency, "UZS"); assert.equal(listedRoute.external_pickup.price_per_km, 2000);
+  assert.equal(Object.hasOwn(listedRoute.external_pickup, "price_per_km_kzt"), false);
+  const quoted = await quote(passenger, route, { seats: 2 });
+  assert.equal(quoted.quote.currency, "UZS"); assert.equal(quoted.quote.base_fare, 30000);
+  assert.equal(quoted.quote.pickup_surcharge, 5000); assert.equal(quoted.quote.total, 35000); assert.equal(quoted.quote.price_per_km, 2000);
+  for (const key of ["base_fare_kzt", "pickup_surcharge_kzt", "total_kzt", "price_per_km_kzt"]) assert.equal(Object.hasOwn(quoted.quote, key), false);
+  assert.equal(jwtBody(quoted.quote_token).purpose, "external-pickup-v2");
+  const confirmed = await confirm(passenger, quoted); assert.equal(confirmed.status, 201, JSON.stringify(confirmed.body));
+  const order = confirmed.body.order; assertUzsExternalFare(order.fare);
+  assert.equal(order.external_pickup.currency, "UZS"); assert.equal(order.external_pickup.total, 35000);
+  for (const key of ["base_fare_kzt", "pickup_surcharge_kzt", "total_kzt", "price_per_km_kzt"]) assert.equal(Object.hasOwn(order.external_pickup, key), false);
+  await accept(driver, order); const frozen = structuredClone((await otherStore.getOrder(order.id)).fare);
+  await configure(f, route, { price_per_km: 9000, enabled: false });
+  const replay = await confirm(passenger, quoted); assert.equal(replay.status, 200, JSON.stringify(replay.body));
+  assert.deepEqual(replay.body.order.fare, frozen);
+  await move(driver, externalTarget); await arrive(driver, order); await board(driver, order);
+  assert.equal((await depart(driver)).status, 200);
+  const finished = await request(`/orders/${order.id}/status`, { token: driver.token, method: "PATCH", body: { status: "completed" } });
+  assert.equal(finished.status, 200, JSON.stringify(finished.body)); assertUzsExternalFare(finished.body.order.fare);
+  const read = await request(`/orders/${order.id}`, { token: passenger.token }); assert.equal(read.status, 200);
+  assert.deepEqual(read.body.order.fare, frozen);
+  assert.equal((await capacityInvariant(otherStore, driver, 4)).availableSeats, 4);
+});
+
+test("KZT external pickup still signs and verifies the legacy v1 purpose and claims", async t => {
+  const { route, passenger } = await setup(t);
+  const quoted = await quote(passenger, route), payload = jwtBody(quoted.quote_token);
+  assert.equal(payload.purpose, "external-pickup-v1"); assert.equal(payload.aud, "external-pickup-v1");
+  const claims = production.verifyExternalPickupQuoteToken(quoted.quote_token);
+  assert.equal(claims.version, 1); assert.equal(Object.hasOwn(claims, "currency"), false);
+  assert.equal(claims.totalKzt, quoted.quote.total_kzt); assert.equal(Object.hasOwn(claims, "total"), false);
+  const confirmed = await confirm(passenger, quoted); assert.equal(confirmed.status, 201, JSON.stringify(confirmed.body));
+  assertCanonicalExternalFare(confirmed.body.order.fare);
 });

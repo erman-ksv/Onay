@@ -1,6 +1,8 @@
 import type { FareQuote, RouteDefinition, RouteStop } from "../types/domain";
 import { store } from "../store";
 import { AppError } from "./errors";
+import { fareMoneyFields } from "./fareMoney";
+import { routePricePerStop } from "./routePricing";
 
 export interface FareRequest {
   routeId?: unknown;
@@ -102,19 +104,17 @@ export async function calculateRouteFare(input: FareRequest = {}): Promise<FareQ
   const destinationStop = nearestStop(route, destinationPosition);
 
   return {
-    currency: route.currency,
+    ...fareMoneyFields(route, distanceStops * routePricePerStop(route)),
     routeId: route.id,
     pickupStop,
     destinationStop,
     pickupPosition,
     destinationPosition,
     distanceStops,
-    pricePerStopKzt: route.pricePerStopKzt,
     minimumFareApplied: rawDistance < 1,
     stops: pickupStop.id === destinationStop.id
       ? [pickupStop]
       : [pickupStop, destinationStop],
-    totalKzt: distanceStops * route.pricePerStopKzt,
     calculatedAt: new Date().toISOString(),
   };
 }

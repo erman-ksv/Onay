@@ -9,6 +9,23 @@ import { serializeOrder, serializeUser } from "../utils/serialize";
 import { readRouteLayoutInput } from "../utils/routeLayout";
 import { boundedInteger, optionalString, pickEnum, requiredString } from "../utils/validation";
 import { normalizeExternalPickupSettings } from "../store/externalPickup";
+import { processOrderDispatch, publishOrderOfferChanges } from "../services/orderDispatchService";
+import type { RouteMetadataPatch } from "../store/storeContract";
+
+export async function listAdminAuditEvents(request: Request, response: Response): Promise<void> {
+  if (Object.keys(request.query).some(key => !["order_id", "driver_id", "route_id", "limit"].includes(key))) {
+    throw new AppError(400, "Unsupported audit filter", "VALIDATION_ERROR");
+  }
+  const orderId = request.query["order_id"] === undefined ? undefined : requiredString(request.query["order_id"], "order_id", 100);
+  const driverId = request.query["driver_id"] === undefined ? undefined : requiredString(request.query["driver_id"], "driver_id", 100);
+  const routeIdFilter = request.query["route_id"] === undefined ? undefined : requiredString(request.query["route_id"], "route_id", 100);
+  const rawLimit = request.query["limit"];
+  if (rawLimit !== undefined && (typeof rawLimit !== "string" || !/^\d+$/.test(rawLimit))) {
+    throw new AppError(400, "limit must be an integer", "VALIDATION_ERROR");
+  }
+  const limit = boundedInteger(rawLimit === undefined ? 50 : Number(rawLimit), "limit", 1, 100);
+  response.set("Cache-Control", "no-store").json({ events: await store.listAdminAuditEvents(orderId, limit, driverId, routeIdFilter) });
+}
 
 function routeId(value: unknown): string {
   const raw = value === undefined ? randomUUID() : requiredString(value, "route_id", 80);
@@ -106,7 +123,7 @@ export async function updateExternalPickupSettings(request: Request, response: R
   const input = body as Record<string, unknown>;
   const raw = input.settings;
   const mapping = {
-    enabled: "enabled", service_radius_meters: "serviceRadiusMeters", price_per_km_kzt: "pricePerKmKzt",
+    enabled: "enabled", currency: "currency", service_radius_meters: "serviceRadiusMeters", price_per_km_kzt: "pricePerKmKzt", price_per_km: "pricePerKm",
     gps_max_age_seconds: "gpsMaxAgeSeconds", quote_ttl_seconds: "quoteTtlSeconds",
     pickup_grace_seconds: "pickupGraceSeconds", max_pickup_seconds: "maxPickupSeconds", fare_rounding: "fareRounding",
   } as const;
@@ -136,10 +153,13 @@ export async function updateRouteLayout(request: Request, response: Response): P
 export async function createRoute(request: Request, response: Response): Promise<void> {
   let route;
   try {
+    const currency = pickEnum(request.body?.currency ?? "KZT", "currency", ["KZT", "UZS"] as const);
+    if (currency === "UZS" && request.body?.price_per_stop === undefined) throw new AppError(400, "UZS requires an explicit tariff", "INVALID_ROUTE_PRICE");
     route = await store.createRoute({
       id: routeId(request.body?.route_id),
       name: requiredString(request.body?.name, "name", 120),
-      pricePerStopKzt: boundedInteger(
+      currency,
+      pricePerStop: boundedInteger(
         request.body?.price_per_stop ?? 500,
         "price_per_stop",
         0,
@@ -157,17 +177,15 @@ export async function createRoute(request: Request, response: Response): Promise
 }
 
 export async function updateRoute(request: Request, response: Response): Promise<void> {
+  if (!request.auth || request.auth.role !== "admin") throw new AppError(403, "Administrator role is required", "FORBIDDEN");
   const routeIdParam = requiredString(request.params["routeId"], "route_id", 80);
-  const patch: {
-    name?: string;
-    pricePerStopKzt?: number;
-    active?: boolean;
-  } = {};
+  const patch: RouteMetadataPatch = {};
+  if (request.body?.currency !== undefined) patch.currency = pickEnum(request.body.currency, "currency", ["KZT", "UZS"] as const);
   if (request.body?.name !== undefined) {
     patch.name = requiredString(request.body.name, "name", 120);
   }
   if (request.body?.price_per_stop !== undefined) {
-    patch.pricePerStopKzt = boundedInteger(
+    patch.pricePerStop = boundedInteger(
       request.body.price_per_stop,
       "price_per_stop",
       0,
@@ -177,7 +195,7 @@ export async function updateRoute(request: Request, response: Response): Promise
   if (request.body?.active !== undefined) {
     patch.active = optionalBoolean(request.body.active, "active", true);
   }
-  const route = await store.updateRoute(routeIdParam, patch);
+  const route = await store.updateRoute(routeIdParam, patch, { adminId: request.auth.userId, expectedSessionVersion: request.auth.user.sessionVersion });
   if (!route) {
     throw new AppError(404, "Route not found", "ROUTE_NOT_FOUND");
   }
@@ -249,6 +267,27 @@ export async function deleteStop(request: Request, response: Response): Promise<
   response.status(204).send();
 }
 
+/** Explicit administrator cancellation; storage rechecks authority under its locks. */
+export async function cancelAdminOrder(request: Request, response: Response): Promise<void> {
+  if (!request.auth || request.auth.role !== "admin") throw new AppError(403, "Administrator role is required", "FORBIDDEN");
+  if (!request.body || typeof request.body !== "object" || Array.isArray(request.body) ||
+      Object.keys(request.body).some(key => key !== "expected_status")) {
+    throw new AppError(400, "Only expected_status is accepted", "VALIDATION_ERROR");
+  }
+  const expected = pickEnum(request.body.expected_status, "expected_status", [
+    "searching", "en_route_to_c", "arrived_at_c", "boarded_waiting", "in_transit", "completed", "cancelled",
+  ] as const);
+  const id = requiredString(request.params["orderId"], "order_id", 100);
+  const before = await store.getOrder(id);
+  if (!before) throw new AppError(404, "Order not found", "ORDER_NOT_FOUND");
+  const order = await store.cancelOrderAsAdmin(id, request.auth.userId, expected, request.auth.user.sessionVersion);
+  if (!order) throw new AppError(409, "Order changed or is already closed", "ORDER_UNAVAILABLE");
+  const io = request.app.locals.io;
+  await publishOrderOfferChanges(io, [{ order, previousDriverId: order.offeredDriverId }]);
+  await processOrderDispatch(io);
+  response.set("Cache-Control", "no-store").json({ order: serializeOrder(order) });
+}
+
 /** View existing orders without changing dispatch or trip state. */
 export async function listAdminOrders(request: Request, response: Response): Promise<void> {
   const status = request.query["status"] === undefined
@@ -268,7 +307,12 @@ export async function listAdminOrders(request: Request, response: Response): Pro
 }
 
 /** Read the current FIFO snapshot without exposing driver GPS or private queue locks. */
-export async function listAdminQueue(_request: Request, response: Response): Promise<void> {
+export async function listAdminQueue(request: Request, response: Response): Promise<void> {
+  const rawIncludeLanes = request.query["include_lanes"];
+  if (rawIncludeLanes !== undefined && rawIncludeLanes !== "true" && rawIncludeLanes !== "false") {
+    throw new AppError(400, "include_lanes must be true or false", "VALIDATION_ERROR");
+  }
+  const includeLanes = rawIncludeLanes === "true";
   const entries = await store.queueSnapshot();
   response.json({
     total_queued: entries.length,
@@ -278,6 +322,17 @@ export async function listAdminQueue(_request: Request, response: Response): Pro
       joined_at: entry.joinedAt,
       status: entry.status,
       available_seats: entry.availableSeats,
+      // Position is lane-local; expose its identity without private GPS/locks.
+      ...(includeLanes ? { lane: entry.routeContext ? {
+        kind: "configured",
+        route_id: entry.routeContext.routeId,
+        route_name: entry.routeContext.routeName,
+        direction: entry.routeContext.direction,
+        pitak: entry.routeContext.pitak,
+        stop_code: entry.routeContext.stopCode,
+        stop_name: entry.routeContext.stopName,
+        route_updated_at: entry.routeContext.routeUpdatedAt,
+      } : { kind: "legacy" } } : {}),
     })),
   });
 }
@@ -322,14 +377,18 @@ export async function listDrivers(_request: Request, response: Response): Promis
 }
 
 export async function updateDriverApproval(request: Request, response: Response): Promise<void> {
+  if (!request.auth || request.auth.role !== "admin") throw new AppError(403, "Administrator role is required", "FORBIDDEN");
   const status = pickEnum(
     request.body?.status,
     "status",
     ["pending", "approved", "rejected"] as const,
   ) as DriverApprovalStatus;
-  const user = await store.setDriverApproval(
+  const user = await store.setDriverApprovalAsAdmin(
     requiredString(request.params["driverId"], "driver_id", 80),
     status,
+    request.body?.expected_vehicle_revision,
+    request.auth.userId,
+    request.auth.user.sessionVersion,
   );
   if (!user) {
     throw new AppError(404, "Driver not found", "DRIVER_NOT_FOUND");

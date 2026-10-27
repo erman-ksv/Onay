@@ -1,0 +1,41 @@
+name: Onay staging runtime smoke
+on:
+  pull_request:
+    paths:
+      - 'deploy/onay/**'
+      - 'artifacts/api-server/**'
+      - 'lib/db/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.dockerignore'
+      - '.github/workflows/staging-runtime.yml'
+permissions:
+  contents: read
+concurrency:
+  group: staging-runtime-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate staging configuration guards
+        run: node --test deploy/onay/verify-env.test.mjs deploy/onay/backup.test.mjs deploy/onay/backup-schedule.test.mjs
+      - name: Validate daily backup service and timer
+        run: systemd-analyze verify deploy/onay/systemd/onay-backup.service deploy/onay/systemd/onay-backup.timer
+      - name: Build and verify isolated API/PostgreSQL runtime
+        run: node deploy/onay/smoke.mjs
+      - name: Preserve source-free staging verification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onay-staging-runtime
+          path: artifacts/staging-runtime/report.json
+          if-no-files-found: warn

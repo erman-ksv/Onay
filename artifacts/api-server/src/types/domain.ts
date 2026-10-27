@@ -51,11 +51,14 @@ export interface RouteStop {
   location?: Coordinates;
 }
 
+export type FareCurrency = "KZT" | "UZS";
+
 export interface RouteDefinition {
   id: string;
   name: string;
-  currency: "KZT";
-  pricePerStopKzt: number;
+  currency: FareCurrency;
+  pricePerStop?: number;
+  pricePerStopKzt?: number;
   active: boolean;
   stops: RouteStop[];
   pitaks?: {
@@ -72,12 +75,14 @@ export interface RouteDefinition {
 export interface ExternalPickupSettings {
   enabled: boolean;
   serviceRadiusMeters: number;
-  pricePerKmKzt: number;
+  currency?: FareCurrency;
+  pricePerKm?: number;
+  pricePerKmKzt?: number;
   gpsMaxAgeSeconds: number;
   quoteTtlSeconds: number;
   pickupGraceSeconds: number;
   maxPickupSeconds: number;
-  fareRounding: "ceil_kzt" | "nearest_kzt";
+  fareRounding: "ceil_kzt" | "nearest_kzt" | "ceil" | "nearest";
 }
 
 export interface ExternalPickupSelectionInput {
@@ -89,7 +94,11 @@ export interface ExternalPickupSelectionInput {
 
 /** Authenticated server quote; precise driver coordinates never enter its token. */
 export interface ExternalPickupQuote {
-  version: 1;
+  version: 1 | 2;
+  currency?: FareCurrency;
+  baseFare?: number;
+  pickupSurcharge?: number;
+  total?: number;
   quoteId: string;
   passengerId: string;
   sessionVersion: number;
@@ -101,9 +110,9 @@ export interface ExternalPickupQuote {
   driverLocationFingerprint: string;
   roadDistanceMeters: number;
   roadDurationSeconds: number;
-  baseFareKzt: number;
-  pickupSurchargeKzt: number;
-  totalKzt: number;
+  baseFareKzt?: number;
+  pickupSurchargeKzt?: number;
+  totalKzt?: number;
   settings: ExternalPickupSettings;
   quotedAt: number;
   expiresAt: number;
@@ -114,15 +123,18 @@ export interface ExternalPickupQuote {
 }
 
 export interface ExternalPickupSnapshot {
-  version: 1;
+  version: 1 | 2;
+  currency?: FareCurrency;
+  baseFare?: number;
+  pickupSurcharge?: number;
   quoteId: string;
   requiresPriceConfirmation: boolean;
   driverEnrollmentId: string;
   driverLocationFingerprint: string;
   roadDistanceMeters: number;
   roadDurationSeconds: number;
-  baseFareKzt: number;
-  pickupSurchargeKzt: number;
+  baseFareKzt?: number;
+  pickupSurchargeKzt?: number;
   settings: ExternalPickupSettings;
   quotedAt: number;
   quoteExpiresAt: number;
@@ -160,18 +172,39 @@ export interface DriverRouteSelection {
 }
 
 export interface FareQuote {
-  currency: "KZT";
+  currency: FareCurrency;
+  /** Neutral aliases may be absent in historical persisted quotes. */
+  total?: number;
+  pricePerStop?: number;
   routeId: string;
   pickupStop: RouteStop;
   destinationStop: RouteStop;
   pickupPosition: number;
   destinationPosition: number;
   distanceStops: number;
-  pricePerStopKzt: number;
+  pricePerStopKzt?: number;
   minimumFareApplied: boolean;
   stops: RouteStop[];
-  totalKzt: number;
+  totalKzt?: number;
   calculatedAt: string;
+}
+
+export interface DriverVehicle {
+  version: 1;
+  revision: string;
+  make: string;
+  model: string;
+  plateNumber: string;
+  seatCapacity: number;
+  updatedAt: string;
+}
+
+export interface DriverVehicleInput {
+  make: string;
+  model: string;
+  plateNumber: string;
+  seatCapacity: number;
+  expectedRevision: string | null;
 }
 
 export interface User {
@@ -185,6 +218,7 @@ export interface User {
   profileLocked: boolean;
   sessionVersion: number;
   driverApprovalStatus?: DriverApprovalStatus;
+  driverVehicle?: DriverVehicle;
   /** Exposed only through the authenticated driver's route endpoint. */
   driverRouteChoice?: DriverRouteChoice;
   lastLocation?: Coordinates;
@@ -192,6 +226,8 @@ export interface User {
 }
 
 export interface OtpChallenge {
+  /** Identity of this exact provider attempt; absent on legacy/development challenges. */
+  deliveryId?: string;
   phoneNumber: string;
   code: string;
   role: UserRole;
@@ -270,6 +306,22 @@ export interface Order {
 export interface OrderOfferChange {
   order: Order;
   previousDriverId?: string;
+}
+
+export interface AdminAuditEvent {
+  id: string;
+  actorId: string;
+  action: "order.cancelled" | "driver.approval_changed" | "route.updated";
+  orderId?: string;
+  driverId?: string;
+  vehicleRevision?: string;
+  routeId?: string;
+  changedFields?: string[];
+  previousVersion?: string;
+  nextVersion?: string;
+  fromStatus?: OrderStatus | DriverApprovalStatus;
+  toStatus?: "cancelled" | DriverApprovalStatus;
+  createdAt: string;
 }
 
 export interface DeviceRegistration {

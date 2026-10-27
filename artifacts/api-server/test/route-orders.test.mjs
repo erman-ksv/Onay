@@ -12,7 +12,7 @@ import { build } from "esbuild";
 const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const schema = `route_orders_${randomUUID().replaceAll("-", "")}`;
 const applicationName = `route-orders-${randomUUID()}`;
-const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes"];
+const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes", "tezjet_admin_audit_events", "tezjet_route_order_requests", "tezjet_closed_route_order_requests"];
 const envKeys = ["DATABASE_URL", "TEZJET_STORAGE_ADAPTER", "NODE_ENV", "SESSION_SECRET", "LOG_LEVEL", "REQUIRE_DRIVER_APPROVAL", "PYATAK_CENTER_LAT", "PYATAK_CENTER_LNG", "TEZJET_OFFER_TIMEOUT_SECONDS"];
 const originalEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
 let moduleDirectory, production, database, adminPool, store, otherStore, server, baseUrl;
@@ -44,6 +44,8 @@ before(async () => {
         'export { pool } from "../../lib/db/src/index";',
         'export { store as runtimeStore } from "./src/store";',
         'export { createAccessToken } from "./src/utils/token";',
+        'export { serializeOrder } from "./src/utils/serialize";',
+        'export { withCanonicalKztFare } from "./src/utils/fareMoney";',
       ].join("\n"),
       resolveDir: apiRoot, loader: "ts",
     },
@@ -127,6 +129,8 @@ async function request(pathname, { token, method = "GET", body } = {}) {
 async function fixture(t, adapter = store) {
   const users = [], routes = [];
   if (adapter instanceof production.PostgresStore) t.after(async () => {
+    await database.query("DELETE FROM tezjet_closed_route_order_requests WHERE passenger_id = ANY($1::text[])", [users]);
+    await database.query("DELETE FROM tezjet_route_order_requests WHERE passenger_id = ANY($1::text[])", [users]);
     await database.query("DELETE FROM tezjet_orders WHERE passenger_id = ANY($1::text[]) OR driver_id = ANY($1::text[]) OR offered_driver_id = ANY($1::text[])", [users]);
     await database.query("DELETE FROM tezjet_driver_queue WHERE driver_id = ANY($1::text[])", [users]);
     await database.query("DELETE FROM tezjet_device_registrations WHERE user_id = ANY($1::text[])", [users]);
@@ -1316,4 +1320,235 @@ test("real HTTP intermediate creation and acceptance recheck revoked sessions af
     await blocker.query("ROLLBACK"); blocker.release();
     if (pending) await pending;
   }
+});
+
+
+function assertCanonicalKztFare(fare, total = 1470, pricePerStop = 735) {
+  assert.equal(fare.currency, "KZT");
+  assert.equal(fare.total, total);
+  assert.equal(fare.totalKzt, total, "Legacy readers retain the identical KZT total.");
+  assert.equal(fare.pricePerStop, pricePerStop);
+  assert.equal(fare.pricePerStopKzt, pricePerStop, "Legacy tariff readers remain compatible.");
+}
+
+test("canonical KZT aliases reject contradictions and invalid amounts without changing a frozen fare", () => {
+  const legacy = Object.freeze({ currency: "KZT", totalKzt: 1470, pricePerStopKzt: 735 });
+  const enriched = production.withCanonicalKztFare(legacy);
+  assertCanonicalKztFare(enriched);
+  assert.notEqual(enriched, legacy);
+  assert.deepEqual(legacy, { currency: "KZT", totalKzt: 1470, pricePerStopKzt: 735 });
+  assert.deepEqual(production.withCanonicalKztFare(enriched), enriched);
+  for (const patch of [
+    { currency: "UZS" }, { currency: "USD" }, { total: 1471 }, { pricePerStop: 736 },
+    { total: null }, { pricePerStop: "735" },
+    ...[-1, 0.1, Number.MAX_SAFE_INTEGER + 1, NaN, Infinity, "1470"].map(totalKzt => ({ totalKzt })),
+    ...[-1, 0.1, Number.MAX_SAFE_INTEGER + 1, NaN, Infinity, "735"].map(pricePerStopKzt => ({ pricePerStopKzt })),
+  ]) assert.throws(() => production.withCanonicalKztFare({ ...legacy, ...patch }), error => error.code === "INVALID_FARE");
+  const zero = production.withCanonicalKztFare({ currency: "KZT", totalKzt: 0, pricePerStopKzt: 0 });
+  assertCanonicalKztFare(zero, 0, 0);
+});
+
+test("canonical KZT totals agree across legacy estimate, configured availability and persisted orders", async t => {
+  await t.test("HTTP legacy estimate", async child => {
+    const f = await fixture(child), route = await f.configured(), passenger = await f.createUser("passenger");
+    const result = await request("/fares/estimate", { token: passenger.token, method: "POST", body: {
+      route_id: route.id, pickup_stop: "A", destination_stop: "B",
+    } });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assertCanonicalKztFare(result.body.fare);
+    await f.enqueue(route);
+    const available = await availabilityHttp(passenger, route);
+    assert.equal(available.status, 200, JSON.stringify(available.body));
+    assertCanonicalKztFare(available.body.fare);
+    const created = await createHttp(passenger, route);
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    assertCanonicalKztFare(created.body.order.fare);
+    assertCanonicalKztFare((await otherStore.getOrder(created.body.order.id)).fare);
+  });
+  for (const adapter of [store, new production.MemoryStore()]) await t.test(adapter.constructor.name, async child => {
+    await adapter.initialize();
+    const f = await fixture(child, adapter), route = await f.configured(), passenger = await f.createUser("passenger");
+    await f.enqueue(route);
+    const available = await adapter.getRouteOrderAvailability(choiceInput(route), 2);
+    assert.equal(available.available, true);
+    assertCanonicalKztFare(available.fare);
+    const created = await createStored(f, passenger, route);
+    assert.ok(created);
+    assertCanonicalKztFare(created.fare);
+    const observer = adapter instanceof production.PostgresStore ? otherStore : adapter;
+    assert.deepEqual((await observer.getOrder(created.id)).fare, created.fare);
+  });
+});
+
+test("historical KZT reads add neutral aliases from the frozen fare without rewriting data or repricing", async t => {
+  for (const adapter of [store, new production.MemoryStore()]) await t.test(adapter.constructor.name, async child => {
+    await adapter.initialize();
+    const f = await fixture(child, adapter), route = await f.configured(), passenger = await f.createUser("passenger");
+    const pickupStop = route.stops[0], destinationStop = route.stops.at(-1);
+    const legacyFare = { currency: "KZT", routeId: route.id, pickupStop, destinationStop,
+      pickupPosition: pickupStop.position, destinationPosition: destinationStop.position,
+      distanceStops: 2, pricePerStopKzt: 735, minimumFareApplied: false,
+      stops: [pickupStop, destinationStop], totalKzt: 1470, calculatedAt: "2026-01-01T00:00:00.000Z" };
+    // Insert an actual legacy-shaped terminal row, as an older application did;
+    // do not mock SQL or use the current fare calculator to manufacture aliases.
+    const historical = await adapter.createOrder({ passengerId: passenger.user.id,
+      passengerPhone: passenger.user.phoneNumber, pickupPoint: "C", pickupLocation: legacyLocation,
+      routeStops: legacyFare.stops, fare: structuredClone(legacyFare), destination: destinationStop.name,
+      seats: 1, status: "completed" }, passenger.user.sessionVersion);
+    await adapter.updateRoute(route.id, { pricePerStopKzt: 9999 });
+    assert.equal((await adapter.getRoute(route.id)).pricePerStopKzt, 9999);
+    const observer = adapter instanceof production.PostgresStore ? otherStore : adapter;
+    const before = structuredClone(await observer.getOrder(historical.id));
+    const response = production.serializeOrder(before);
+    assertCanonicalKztFare(response.fare);
+    assert.equal(response.fare.calculatedAt, legacyFare.calculatedAt);
+    assert.deepEqual(before.fare, legacyFare, "Serialization must not mutate even a MemoryStore reference.");
+    assert.deepEqual((await observer.getOrder(historical.id)).fare, legacyFare);
+    if (adapter instanceof production.PostgresStore) {
+      const read = await request(`/orders/${historical.id}`, { token: passenger.token });
+      assert.equal(read.status, 200, JSON.stringify(read.body));
+      assertCanonicalKztFare(read.body.order.fare);
+      const listed = await request("/orders", { token: passenger.token });
+      assert.equal(listed.status, 200, JSON.stringify(listed.body));
+      assertCanonicalKztFare(listed.body.orders.find(order => order.id === historical.id).fare);
+      const { rows } = await database.query("SELECT payload->'fare' AS fare FROM tezjet_orders WHERE id=$1", [historical.id]);
+      assert.deepEqual(rows[0].fare, legacyFare, "HTTP reads must not silently migrate or reprice the stored JSON snapshot.");
+    }
+  });
+});
+
+function assertUzbekFare(fare, total = 24000, pricePerStop = 12000) {
+  assert.equal(fare.currency, "UZS");
+  assert.equal(fare.total, total); assert.equal(fare.pricePerStop, pricePerStop);
+  assert.equal(Object.hasOwn(fare, "totalKzt"), false);
+  assert.equal(Object.hasOwn(fare, "pricePerStopKzt"), false);
+}
+
+test("administrator explicitly creates and updates UZS tariffs without relabelling legacy KZT or changing currency", async t => {
+  const f = await fixture(t), admin = await f.createUser("admin"), passenger = await f.createUser("passenger");
+  const id = `uzs-http-${randomUUID()}`, oldId = `kzt-http-${randomUUID()}`;
+  t.after(async () => { await store.deleteRoute(id); await store.deleteRoute(oldId); });
+  const created = await request("/admin/routes", { token: admin.token, method: "POST", body: {
+    route_id: id, name: "UZS explicit tariff", currency: "UZS", price_per_stop: 12000,
+  } });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  assert.equal(created.body.route.currency, "UZS"); assert.equal(created.body.route.pricePerStop, 12000);
+  assert.equal(Object.hasOwn(created.body.route, "pricePerStopKzt"), false);
+  const updated = await request(`/admin/routes/${id}`, { token: admin.token, method: "PATCH", body: { price_per_stop: 15000 } });
+  assert.equal(updated.status, 200, JSON.stringify(updated.body)); assert.equal(updated.body.route.pricePerStop, 15000);
+  const changed = await request(`/admin/routes/${id}`, { token: admin.token, method: "PATCH", body: { currency: "KZT", price_per_stop: 1 } });
+  assertError(changed, 409, "ROUTE_CURRENCY_IMMUTABLE");
+  assert.equal((await otherStore.getRoute(id)).pricePerStop, 15000);
+  assert.equal((await otherStore.getRoute(id)).currency, "UZS");
+  const legacy = await request("/admin/routes", { token: admin.token, method: "POST", body: { route_id: oldId, name: "Legacy API", price_per_stop: 700 } });
+  assert.equal(legacy.status, 201, JSON.stringify(legacy.body));
+  assert.equal(legacy.body.route.currency, "KZT"); assert.equal(legacy.body.route.pricePerStopKzt, 700);
+  for (const body of [{ currency: "UZS" }, { currency: "USD", price_per_stop: 10000 }]) {
+    const invalid = await request("/admin/routes", { token: admin.token, method: "POST", body: { route_id: `invalid-${randomUUID()}`, name: "Invalid currency tariff", ...body } });
+    assert.equal(invalid.status, 400, JSON.stringify(invalid.body));
+  }
+  assertError(await request(`/admin/routes/${id}`, { token: passenger.token, method: "PATCH", body: { price_per_stop: 1 } }), 403);
+  assert.equal((await otherStore.getRoute(id)).pricePerStop, 15000);
+});
+
+test("UZS survives real HTTP FIFO booking, concurrent idempotent retry, boarding, departure and frozen history", async t => {
+  const f = await fixture(t), route = await f.configured({ currency: "UZS", pricePerStop: 12000, pricePerStopKzt: undefined });
+  const passenger = await f.createUser("passenger");
+  const opposite = await enrollHttp(f, route, "b_to_a", true);
+  const oppositeJoinedAt = (await otherStore.getQueueEntry(opposite.user.id)).joinedAt;
+  async function afterEnrollment(joinedAt) {
+    for (let attempt = 0; Date.now() <= joinedAt && attempt < 1000; attempt++) await new Promise(resolve => setTimeout(resolve, 1));
+    assert.ok(Date.now() > joinedAt, "Server enrollment timestamp must be observable before the next registration.");
+  }
+  await afterEnrollment(oppositeJoinedAt);
+  const first = await enrollHttp(f, route, "a_to_b", true);
+  const firstJoinedAt = (await otherStore.getQueueEntry(first.user.id)).joinedAt;
+  await afterEnrollment(firstJoinedAt);
+  const second = await enrollHttp(f, route, "a_to_b", true);
+  const secondJoinedAt = (await otherStore.getQueueEntry(second.user.id)).joinedAt;
+  assert.ok(oppositeJoinedAt < firstJoinedAt && firstJoinedAt < secondJoinedAt, "Use real server enrollment order; never rewrite a collecting driver's FIFO receipt.");
+  const quote = await availabilityHttp(passenger, route);
+  assert.equal(quote.status, 200, JSON.stringify(quote.body)); assert.equal(quote.body.eligible_driver_count, 2);
+  assertUzbekFare(quote.body.fare);
+  const estimated = await request("/fares/estimate", { token: passenger.token, method: "POST", body: { route_id: route.id, pickup_stop: "A", destination_stop: "B" } });
+  assert.equal(estimated.status, 200, JSON.stringify(estimated.body)); assertUzbekFare(estimated.body.fare);
+  const minted = await request("/orders/route/request-key", { token: passenger.token });
+  assert.equal(minted.status, 200, JSON.stringify(minted.body));
+  const key = minted.body.request_key;
+  async function post() {
+    const response = await fetch(`${baseUrl}/orders/route`, { method: "POST", headers: {
+      "content-type": "application/json", authorization: `Bearer ${passenger.token}`, "Idempotency-Key": key,
+    }, body: JSON.stringify({ ...selection(route), pickup_location: at(route), seats: 2 }) });
+    return { status: response.status, body: await response.json() };
+  }
+  const results = await Promise.all([post(), post()]);
+  assert.deepEqual(results.map(value => value.status).sort(), [200, 201], JSON.stringify(results));
+  assert.equal(results[0].body.order.id, results[1].body.order.id);
+  const order = results[0].body.order;
+  assertUzbekFare(order.fare); assert.equal(order.offered_driver_id, first.user.id);
+  assert.equal((await otherStore.getQueueEntry(first.user.id)).availableSeats, 2);
+  assert.equal((await otherStore.getQueueEntry(second.user.id)).availableSeats, 4);
+  assert.equal((await otherStore.getQueueEntry(opposite.user.id)).availableSeats, 4);
+  const accepted = await request(`/orders/${order.id}/accept`, { token: first.token, method: "POST" });
+  assert.equal(accepted.status, 200, JSON.stringify(accepted.body)); assertUzbekFare(accepted.body.order.fare);
+  const arrived = await request(`/orders/${order.id}/status`, { token: first.token, method: "PATCH", body: { status: "arrived_at_c" } });
+  assert.equal(arrived.status, 200, JSON.stringify(arrived.body));
+  const boarded = await request(`/orders/${order.id}/board`, { token: first.token, method: "POST", body: {} });
+  assert.equal(boarded.status, 200, JSON.stringify(boarded.body)); assert.equal(boarded.body.order.status, "boarded_waiting");
+  const enrollment = (await otherStore.getQueueEntry(first.user.id)).collectionState.enrollmentId;
+  const departed = await request("/queue/depart", { token: first.token, method: "POST", body: { expected_enrollment_id: enrollment } });
+  assert.equal(departed.status, 200, JSON.stringify(departed.body));
+  const frozen = structuredClone((await otherStore.getOrder(order.id)).fare);
+  assertUzbekFare(frozen);
+  const edited = await store.updateRoute(route.id, { pricePerStop: 19000 });
+  assert.equal(edited.pricePerStop, 19000);
+  assertError(await availabilityHttp(passenger, route), 409, "ROUTE_CHANGED");
+  const finished = await request(`/orders/${order.id}/status`, { token: first.token, method: "PATCH", body: { status: "completed" } });
+  assert.equal(finished.status, 200, JSON.stringify(finished.body));
+  assert.deepEqual(finished.body.order.fare, frozen);
+  assert.equal((await otherStore.getQueueEntry(first.user.id)).availableSeats, 4);
+  assert.equal(await store.transitionOrder(order.id, first.user.id, "completed"), undefined);
+  assert.equal((await otherStore.getQueueEntry(first.user.id)).availableSeats, 4);
+  const listed = await request("/orders", { token: passenger.token });
+  assert.equal(listed.status, 200, JSON.stringify(listed.body));
+  assert.deepEqual(listed.body.orders.find(value => value.id === order.id).fare, frozen);
+  const replay = await request(`/orders/route/requests/${key}`, { token: passenger.token });
+  assert.equal(replay.status, 200, JSON.stringify(replay.body)); assert.deepEqual(replay.body.order.fare, frozen);
+  const durable = await new production.PostgresStore().getOrder(order.id);
+  assert.equal(durable.status, "completed"); assert.deepEqual(durable.fare, frozen);
+  const { rows } = await database.query("SELECT payload->'fare' AS fare FROM tezjet_orders WHERE id=$1", [order.id]);
+  assert.deepEqual(rows[0].fare, frozen);
+});
+
+test("both adapters keep UZS fares through FIFO reject, cancellation and completion without releasing seats twice", async t => {
+  for (const adapter of [store, new production.MemoryStore()]) await t.test(adapter.constructor.name, async child => {
+    await adapter.initialize();
+    const f = await fixture(child, adapter), route = await f.configured({ currency: "UZS", pricePerStop: 12000, pricePerStopKzt: undefined });
+    const passenger = await f.createUser("passenger"), first = await f.enqueue(route, "a_to_b", 4, 1), second = await f.enqueue(route, "a_to_b", 4, 2);
+    const toCancel = await createStored(f, passenger, route);
+    assertUzbekFare(toCancel.fare);
+    assert.equal(toCancel.offeredDriverId, first.user.id);
+    assert.ok(await adapter.transitionOrder(toCancel.id, passenger.user.id, "cancelled"));
+    assert.equal((await adapter.getQueueEntry(first.user.id)).availableSeats, 4);
+    assert.equal(await adapter.transitionOrder(toCancel.id, passenger.user.id, "cancelled"), undefined);
+    assert.equal((await adapter.getQueueEntry(first.user.id)).availableSeats, 4);
+    const order = await createStored(f, passenger, route);
+    assertUzbekFare(order.fare); assert.equal(order.offeredDriverId, first.user.id);
+    const rejected = await adapter.rejectOrderOffer(order.id, first.user.id);
+    assert.ok(rejected);
+    assert.equal(rejected.order.offeredDriverId, second.user.id, "Rejection atomically offers the next suitable FIFO driver.");
+    assert.equal((await adapter.getQueueEntry(first.user.id)).availableSeats, 4);
+    const accepted = await adapter.acceptOrderOffer(order.id, second.user.id);
+    assert.ok(accepted); const frozen = structuredClone(accepted.fare);
+    await adapter.updateRoute(route.id, { pricePerStop: 19000 });
+    for (const status of ["arrived_at_c", "in_transit", "completed"]) {
+      const current = await adapter.transitionOrder(order.id, second.user.id, status);
+      assert.equal(current.status, status); assert.deepEqual(current.fare, frozen);
+    }
+    assert.equal((await adapter.getQueueEntry(second.user.id)).availableSeats, 4);
+    assert.equal(await adapter.transitionOrder(order.id, second.user.id, "completed"), undefined);
+    assert.equal((await adapter.getQueueEntry(second.user.id)).availableSeats, 4);
+    const observer = adapter instanceof production.PostgresStore ? new production.PostgresStore() : adapter;
+    assert.deepEqual((await observer.listOrdersForUser(passenger.user.id)).find(value => value.id === order.id).fare, frozen);
+  });
 });

@@ -1,4 +1,6 @@
+import { publicDriverVehicle } from "../utils/driverVehicle";
 import type { NextFunction, Request, Response } from "express";
+import { randomUUID } from "node:crypto";
 import type { Server } from "socket.io";
 import { store } from "../store";
 import { statusTransitions } from "../store/orderLifecycle";
@@ -16,7 +18,10 @@ import type { RouteOrderSelectionInput } from "../store/storeContract";
 import { driverRouteOption, readDriverRouteChoiceInput } from "../utils/driverRoute";
 import { isValidCoordinates } from "../utils/geo";
 import { validateRouteOrderSelectionInput } from "../utils/routeOrder";
+import { assertRouteOrderRequestHash, requireRouteOrderRequestKey, routeOrderRequestHash } from "../utils/routeOrderRequest";
 import { logger } from "../lib/logger";
+import { routePricePerStop } from "../utils/routePricing";
+import { publicExternalSettings } from "../utils/externalMoney";
 
 function getSocket(request: Request): Server | undefined {
   return request.app.locals.io as Server | undefined;
@@ -119,7 +124,64 @@ function readRouteOrderBody(request: Request) {
 /** Validate the new contract before GPS middleware reads or persists any location. */
 export function validateRouteOrderRequest(request: Request, _response: Response, next: NextFunction): void {
   readRouteOrderBody(request);
+  if (request.headers["idempotency-key"] !== undefined) requireRouteOrderRequestKey(request.headers["idempotency-key"]);
   next();
+}
+
+async function sendRouteOrder(response: Response, order: Order, replayed?: boolean): Promise<void> {
+  response.set("Cache-Control", "no-store").status(replayed === true ? 200 : 201).json({
+    order: serializeOrder(order),
+    offer: order.offeredDriverId ? {
+      driver_id: order.offeredDriverId,
+      queue_position: await store.getQueuePosition(order.offeredDriverId),
+      smart_pooling: false,
+      expires_at: order.offerExpiresAt,
+    } : null,
+    ...(replayed === undefined ? {} : { replayed }),
+  });
+}
+
+/** Recover before GPS middleware: reading an existing order must not move the user. */
+export async function replayRouteOrderRequest(request: Request, response: Response, next: NextFunction): Promise<void> {
+  const header = request.headers["idempotency-key"];
+  if (header === undefined) { next(); return; }
+  const passengerId = assertPassenger(request);
+  const { selection, seats } = readRouteOrderBody(request);
+  const receipt = await store.getRouteOrderRequest(passengerId, requireRouteOrderRequestKey(header), request.auth?.user.sessionVersion);
+  if (!receipt) { next(); return; }
+  assertRouteOrderRequestHash(receipt.requestHash, routeOrderRequestHash(selection, seats));
+  await sendRouteOrder(response, receipt.order, true);
+}
+
+export async function getRouteOrderRequest(request: Request, response: Response): Promise<void> {
+  response.set("Cache-Control", "no-store");
+  const passengerId = assertPassenger(request);
+  const receipt = await store.getRouteOrderRequest(passengerId,
+    requireRouteOrderRequestKey(request.params["requestKey"]), request.auth?.user.sessionVersion);
+  if (!receipt) throw new AppError(404, "Booking request was not found", "ORDER_REQUEST_NOT_FOUND");
+  // Absence is only a snapshot: an earlier POST may still be in flight.
+  response.json({ order: serializeOrder(receipt.order) });
+}
+
+/** Resolve transport uncertainty without cancelling an already created ride. */
+export async function resolveRouteOrderRequest(request: Request, response: Response): Promise<void> {
+  response.set("Cache-Control", "no-store");
+  const passengerId = assertPassenger(request);
+  if (request.body !== undefined && (request.body === null || typeof request.body !== "object" ||
+      Array.isArray(request.body) || Object.keys(request.body).length !== 0)) {
+    throw new AppError(400, "Recovery accepts no editable booking fields", "VALIDATION_ERROR");
+  }
+  const key = requireRouteOrderRequestKey(request.params["requestKey"]);
+  const result = await store.resolveRouteOrderRequest(passengerId, key, request.auth?.user.sessionVersion);
+  response.json(result.state === "created"
+    ? { state: "created", request_key: key, order: serializeOrder(result.order) }
+    : { state: "closed", request_key: result.requestKey });
+}
+
+/** Mint an unreserved intent ID without requiring a native random-number dependency. */
+export function newRouteOrderRequestKey(request: Request, response: Response): void {
+  assertPassenger(request);
+  response.set("Cache-Control", "no-store").json({ request_key: randomUUID() });
 }
 
 export async function listOrderRoutes(request: Request, response: Response): Promise<void> {
@@ -127,12 +189,13 @@ export async function listOrderRoutes(request: Request, response: Response): Pro
   const routes = (await store.listRoutes()).flatMap(route => {
     if (route.active !== true) return [];
     const option = driverRouteOption(route);
-    return option ? [{ ...option, currency: route.currency, pricePerStopKzt: route.pricePerStopKzt,
-      ...(route.externalPickup?.enabled ? { external_pickup: {
-        enabled: true, service_radius_meters: route.externalPickup.serviceRadiusMeters,
-        price_per_km_kzt: route.externalPickup.pricePerKmKzt, fare_rounding: route.externalPickup.fareRounding,
-      } } : {}),
-    }] : [];
+    if (!option) return [];
+    let price: number;
+    try { price = routePricePerStop(route); } catch { return []; }
+    return [{ ...option, currency: route.currency, pricePerStop: price,
+      ...(route.currency === "KZT" ? { pricePerStopKzt: price } : {}),
+      ...(route.externalPickup?.enabled ? { external_pickup: publicExternalSettings(route.externalPickup) } : {}),
+    }];
   });
   response.json({ routes });
 }
@@ -158,25 +221,24 @@ export async function getRouteOrderAvailability(request: Request, response: Resp
 export async function createRouteOrder(request: Request, response: Response): Promise<void> {
   const passengerId = assertPassenger(request);
   const { selection, pickupLocation, seats } = readRouteOrderBody(request);
-  const order = await store.createRouteOrderWithOffer({
+  const input = {
     passengerId,
     passengerPhone: request.auth?.user.phoneNumber ?? "",
     pickupLocation,
     seats,
-  }, selection, request.auth?.user.sessionVersion);
+  };
+  const header = request.headers["idempotency-key"];
+  const result = header === undefined
+    ? undefined
+    : await store.createRouteOrderOnce(input, selection, requireRouteOrderRequestKey(header), request.auth?.user.sessionVersion);
+  const order = header === undefined
+    ? await store.createRouteOrderWithOffer(input, selection, request.auth?.user.sessionVersion)
+    : result?.order;
   if (!order) {
     throw new AppError(409, "Водителей пока нет", "NO_DRIVERS");
   }
-  await publishOrderOfferChanges(getSocket(request), [{ order }]);
-  response.status(201).json({
-    order: serializeOrder(order),
-    offer: order.offeredDriverId ? {
-      driver_id: order.offeredDriverId,
-      queue_position: await store.getQueuePosition(order.offeredDriverId),
-      smart_pooling: false,
-      expires_at: order.offerExpiresAt,
-    } : null,
-  });
+  if (header === undefined || result?.created) await publishOrderOfferChanges(getSocket(request), [{ order }]);
+  await sendRouteOrder(response, order, header === undefined ? undefined : !result?.created);
 }
 
 async function getOrderForActor(request: Request, orderId: string): Promise<Order> {
@@ -282,6 +344,29 @@ export async function getOrder(request: Request, response: Response): Promise<vo
   response.json({
     order: serializeOrder(order, request.auth?.role === "driver"),
   });
+}
+
+/** Contact details are scoped to this passenger's current accepted ride.
+ * Never serialize the driver's full account or publish contact data to rooms. */
+export async function getAssignedDriver(request: Request, response: Response): Promise<void> {
+  response.setHeader("Cache-Control", "no-store");
+  const order = await store.getOrder(String(request.params["orderId"]));
+  if (!order || order.passengerId !== request.auth?.userId) {
+    throw new AppError(404, "Order not found", "ORDER_NOT_FOUND");
+  }
+  const active = (value: Order) => value.passengerId === request.auth?.userId &&
+    !!value.driverId && ["en_route_to_c", "arrived_at_c", "boarded_waiting", "in_transit"].includes(value.status);
+  if (!active(order)) throw new AppError(404, "Driver contact is unavailable", "DRIVER_CONTACT_UNAVAILABLE");
+  const driver = await store.getUser(order.driverId!);
+  // Recheck after the account read: a cancellation or reassignment must not
+  // turn an earlier assignment into permission to disclose contact details.
+  const current = await store.getOrder(order.id);
+  if (!driver || !driver.roles.includes("driver") || !current || !active(current) || current.driverId !== driver.id) {
+    throw new AppError(404, "Driver contact is unavailable", "DRIVER_CONTACT_UNAVAILABLE");
+  }
+  response.json({ driver: { id: driver.id, full_name: driver.fullName, phone_number: driver.phoneNumber,
+    ...(driver.driverVehicle && driver.driverApprovalStatus === "approved" ? { vehicle: publicDriverVehicle(driver.driverVehicle) } : {}),
+  } });
 }
 
 export async function acceptOrder(request: Request, response: Response): Promise<void> {

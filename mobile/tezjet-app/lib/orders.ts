@@ -1,9 +1,11 @@
-export type RideStatus = "searching" | "en_route_to_c" | "arrived_at_c" | "in_transit" | "completed" | "cancelled";
+export type RideStatus = "searching" | "en_route_to_c" | "arrived_at_c" | "boarded_waiting" | "in_transit" | "completed" | "cancelled";
 export type RideOrder = {
   id: string;
   status: RideStatus;
   pickup_point: string;
   destination?: string;
+  pickup_address?: string;
+  fare?: { pickupStop?: { name?: string }; destinationStop?: { name?: string } };
   seats: number;
   passenger_id?: string;
   driver_id?: string;
@@ -13,6 +15,20 @@ export type RideOrder = {
   created_at?: string;
   updated_at?: string;
 };
+
+function stopLabel(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/** pickup_point identifies the dispatch lane; it can differ from the booked stop. */
+export function ridePickupLabel(order: RideOrder): string {
+  return stopLabel(order.pickup_address) ?? stopLabel(order.fare?.pickupStop?.name) ??
+    stopLabel(order.pickup_point) ?? "Место посадки";
+}
+
+export function rideDestinationLabel(order: RideOrder): string {
+  return stopLabel(order.destination) ?? stopLabel(order.fare?.destinationStop?.name) ?? "По маршруту";
+}
 
 export function isClosed(order: RideOrder): boolean {
   return order.status === "completed" || order.status === "cancelled";
@@ -44,15 +60,26 @@ export const statusLabels: Record<RideStatus, string> = {
   searching: "Ищем водителя",
   en_route_to_c: "Водитель едет к точке подачи",
   arrived_at_c: "Водитель прибыл",
+  boarded_waiting: "Ты в машине. Ожидаем отправления водителя",
   in_transit: "Поездка началась",
   completed: "Поездка завершена",
   cancelled: "Заказ отменён",
 };
 
+/** For line collection, boarding is recorded separately by /orders/:id/board;
+ * departure is a queue-level action. Never advance boarded_waiting using
+ * the legacy per-order status button. */
 export function nextTripStatus(order: RideOrder): RideStatus | null {
   return order.status === "en_route_to_c" ? "arrived_at_c"
     : order.status === "arrived_at_c" ? "in_transit"
     : order.status === "in_transit" ? "completed" : null;
+}
+
+/** Suppress the legacy start-trip action while a line is collecting passengers.
+ * The server's /queue/depart owns the collecting-line departure. */
+export function nextDriverTripStatus(linePhase: "collecting" | "departed" | null, order: RideOrder): RideStatus | null {
+  const next = nextTripStatus(order);
+  return linePhase === "collecting" && next === "in_transit" ? null : next;
 }
 
 export function nextTripLabel(order: RideOrder): string {

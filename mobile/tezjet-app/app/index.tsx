@@ -1,19 +1,30 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { parseServerFareMoney, formatFareMoney, type FareMoney } from "../lib/fare-money";
 import * as Location from "expo-location";
 import { io } from "socket.io-client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { API, ApiError, errorMessage, request, setApiEndpoint, validateApiEndpoint, type Availability } from "../lib/api";
-import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextTripLabel, nextTripStatus, statusLabels, type RideOrder } from "../lib/orders";
+import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextDriverTripStatus, nextTripLabel, ridePickupLabel, rideDestinationLabel, statusLabels, type RideOrder } from "../lib/orders";
+import { registrationFullName } from "../lib/registration";
 import DriverRoutePicker from "../components/DriverRoutePicker";
+import PassengerRouteOrder from "../components/PassengerRouteOrder";
+import { createPassengerBookingGate } from "../lib/passenger-booking-gate";
+import { routeBookingRecoveryKey, saveRouteBookingRecovery, clearRouteBookingRecovery, routeBookingDefinitivelyRejected } from "../lib/passenger-route-orders";
+import PassengerDriverCard from "../components/PassengerDriverCard";
+import DriverVehicleForm from "../components/DriverVehicleForm";
+import type { DriverVehicleSnapshot } from "../lib/driver-vehicle";
+import { canBoardLinePassenger, canDepartLine, lineDepartBody, parseLineCollectionState, type LineCollectionState } from "../lib/driver-line";
+import { createQueueMutationGuard, driverQueueMembership, parseDriverQueueMembership, type DriverQueueSnapshot } from "../lib/driver-queue";
+import { passengerAvailabilityDisplay, verifiedDriverCount, type PassengerAvailability } from "../lib/passenger-availability";
 import { canJoinDriverQueue, driverQueueChoiceInput, driverRouteSessionKey, type DriverQueueContext, type DriverRouteGate } from "../lib/driver-routes";
 
 const TOKEN = "tezjet_access_token";
 const API_ENDPOINT = "tezjet_api_endpoint";
 type Mode = "passenger" | "driver";
 type Stop = { id: string; code: string; name: string; sequence: number; position: number };
-type Fare = { totalKzt: number; currency: string; distanceStops: number };
-type Profile = { id: string; role: string; active_role?: string; roles?: string[]; driver_approval_status?: "pending" | "approved" | "rejected"; full_name?: string };
+type Fare = FareMoney;
+type Profile = { id: string; role: string; active_role?: string; roles?: string[]; driver_approval_status?: "pending" | "approved" | "rejected"; full_name?: string; driver_vehicle?: { seat_capacity: number } };
 
 function Button({ title, onPress, disabled = false, secondary = false, testID }: { title: string; onPress: () => void; disabled?: boolean; secondary?: boolean; testID?: string }) {
   return <Pressable accessibilityRole="button" accessibilityState={{ disabled }} testID={testID} onPress={onPress} disabled={disabled} style={[s.button, secondary && s.buttonSecondary, disabled && s.disabled]}><Text style={[s.buttonText, secondary && s.buttonSecondaryText]}>{title}</Text></Pressable>;
@@ -32,6 +43,8 @@ export default function Home() {
   const [token, setToken] = useState("");
   const [profile, setProfile] = useState<Profile | null>(null);
   const [name, setName] = useState("");
+  const [surname, setSurname] = useState("");
+  const [registering, setRegistering] = useState(false);
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [demoCode, setDemoCode] = useState("");
@@ -42,12 +55,17 @@ export default function Home() {
   const [fare, setFare] = useState<(Fare & { pickup: string; destination: string }) | null>(null);
   const [address, setAddress] = useState("");
   const [seats, setSeats] = useState(1);
-  const [busy, setBusy] = useState(false);
+  const [actionBusy, setBusy] = useState(false);
+  const [vehicleBusySession, setVehicleBusySession] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [driverSeats, setDriverSeats] = useState(3);
   const [queuePosition, setQueuePosition] = useState<number | null>(null);
   const [driverInQueue, setDriverInQueue] = useState(false);
   const [driverQueueContext, setDriverQueueContext] = useState<DriverQueueContext | null>(null);
+  const [lineState, setLineState] = useState<LineCollectionState | null>(null);
+  const [queueSnapshot, setQueueSnapshot] = useState<DriverQueueSnapshot | null>(null);
+  const queueSnapshotRef = useRef<DriverQueueSnapshot | null>(null);
+  const [departureConfirmation, setDepartureConfirmation] = useState<{ sessionKey: string; enrollmentId: string } | null>(null);
   const [driverRouteGate, setDriverRouteGate] = useState<DriverRouteGate>({ sessionKey: "", ready: false, hasChoice: false, mutating: false });
   const driverRouteGateRef = useRef(driverRouteGate);
   const updateDriverRouteGate = useCallback((next: DriverRouteGate) => {
@@ -64,30 +82,54 @@ export default function Home() {
   const [routeError, setRouteError] = useState("");
   const [availabilityError, setAvailabilityError] = useState("");
   const [profileRefresh, setProfileRefresh] = useState(0);
-  const [availability, setAvailability] = useState<{ pickup: string; seats: number; available: boolean; checkedAt: number } | null>(null);
+  const [availability, setAvailability] = useState<PassengerAvailability | null>(null);
   const [checkingAvailability, setCheckingAvailability] = useState(false);
   const [now, setNow] = useState(Date.now());
   const activeRole = profile?.active_role ?? profile?.role;
   const currentToken = useRef(token);
   currentToken.current = token;
+  const driverRouteSession = driverRouteSessionKey(apiBase, token);
+  const [, updateBookingAdmission] = useState(0);
+  const bookingGate = useMemo(() => createPassengerBookingGate(() => updateBookingAdmission(value => value + 1)), [driverRouteSession]);
   const availabilityGeneration = useRef(0);
   const ordersRequestInFlight = useRef<string | null>(null);
   const trackedOrders = useRef<RideOrder[]>([]);
   const orderRevision = useRef(0);
   const orderChanges = useRef(new Map<string, number>());
   const queueRevision = useRef(0);
+  // Position events do not prove that an enrollment was removed. Local write
+  // acknowledgements invalidate older GET snapshots independently of sockets.
+  const queueEnrollmentRevision = useRef(0);
+  const queuePresenceRevision = useRef(0);
+  const queueMutationGuard = useRef(createQueueMutationGuard());
+  const updateQueueSnapshot = useCallback((next: DriverQueueSnapshot | null, acknowledgedWrite = false) => {
+    if (acknowledgedWrite) queueEnrollmentRevision.current += 1;
+    queueSnapshotRef.current = next;
+    setQueueSnapshot(next);
+  }, []);
   const applyOrder = useCallback((incoming: RideOrder) => {
     orderChanges.current.set(incoming.id, ++orderRevision.current);
     trackedOrders.current = mergeOrder(trackedOrders.current, incoming);
+    bookingGate.setActiveOrder(trackedOrders.current.some(order => order.passenger_id === profile?.id && !isClosed(order)));
     setOrders(trackedOrders.current);
-  }, []);
+  }, [bookingGate, profile?.id]);
   const driverApproved = activeRole === "driver" && profile?.driver_approval_status === "approved";
-  const driverRouteSession = driverRouteSessionKey(apiBase, token);
+  const busy = actionBusy || vehicleBusySession === driverRouteSession;
+  const vehicleBusyChange = useCallback((value: boolean) => {
+    setVehicleBusySession(previous => value ? driverRouteSession : previous === driverRouteSession ? null : previous);
+  }, [driverRouteSession]);
+  const queueMembership = driverQueueMembership(queueSnapshot, driverRouteSession);
   const canJoinQueue = canJoinDriverQueue(driverRouteGate, driverRouteSession);
+  const maxDriverSeats = profile?.driver_vehicle?.seat_capacity ?? 8;
+  const vehicleSaved = useCallback((value: DriverVehicleSnapshot) => {
+    setProfile(current => current ? { ...current, driver_approval_status: value.approval_status, driver_vehicle: value.driver_vehicle ?? undefined } : current);
+  }, []);
+  useEffect(() => { if (queueMembership === "absent") setDriverSeats(value => Math.min(value, maxDriverSeats)); }, [maxDriverSeats, queueMembership]);
   const activeDriverOrders = orders.filter(order => !isClosed(order) && order.driver_id === profile?.id);
   const passengerOrders = orders.filter(order => order.passenger_id === profile?.id);
   const passengerHasActiveOrder = passengerOrders.some(order => !isClosed(order));
-  const availabilityFresh = availability?.pickup === a && availability?.seats === seats && now - availability.checkedAt < 15_000;
+  const availabilityFresh = availability?.pickup === a && availability?.seats === seats && now >= availability.checkedAt && now - availability.checkedAt < 15_000;
+  const availabilityDisplay = passengerAvailabilityDisplay({ availability, pickup: a, seats, now, checking: checkingAvailability, error: availabilityError });
   const canOrder = activeRole === "passenger" && availabilityFresh && availability?.available === true;
   const fareFresh = fare?.pickup === a && fare?.destination === b;
   const visibleError = dataError || routeError || (profile ? profileError : "");
@@ -101,7 +143,7 @@ export default function Home() {
             const endpoint = setApiEndpoint(savedEndpoint);
             setApiBase(endpoint); setEndpointInput(endpoint); setShowEndpointSettings(false);
           } catch (e) {
-            setEndpointError(errorMessage(e, "Проверь адрес сервера TezJet."));
+            setEndpointError(errorMessage(e, "Проверь адрес сервера Onay."));
             setShowEndpointSettings(true);
             return;
           }
@@ -126,13 +168,14 @@ export default function Home() {
     currentToken.current = "";
     trackedOrders.current = [];
     orderChanges.current.clear(); orderRevision.current += 1; queueRevision.current += 1;
+    updateQueueSnapshot(null, true); setDepartureConfirmation(null);
     setToken(""); setProfile(null); setOrders([]); setIncomingOrder(null);
     setProfileLoading(false); setProfileError("");
-    setStops([]); setFare(null); setAvailability(null); setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null);
+    setStops([]); setFare(null); setAvailability(null); setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null); setLineState(null);
     setDataError(""); setRouteError(""); setAvailabilityError("");
     try { await AsyncStorage.removeItem(TOKEN); return true; }
     catch { setProfileError("Не удалось удалить сохранённый вход на устройстве. Попробуй выйти ещё раз."); return false; }
-  }, []);
+  }, [updateQueueSnapshot]);
 
   async function saveEndpoint() {
     setBusy(true);
@@ -192,8 +235,8 @@ export default function Home() {
     if (!token || activeRole !== "passenger" || !a || !b || a === b) { setFare(null); return; }
     let active = true;
     setFare(null);
-    request<{ fare: Fare }>("/api/fares/estimate", token, { method: "POST", body: JSON.stringify({ route_id: "pyatak", pickup_stop: a, destination_stop: b }) })
-      .then(r => { if (active) { setFare({ ...r.fare, pickup: a, destination: b }); setRouteError(""); } })
+    request<{ fare: unknown }>("/api/fares/estimate", token, { method: "POST", body: JSON.stringify({ route_id: "pyatak", pickup_stop: a, destination_stop: b }) })
+      .then(r => { if (active) { setFare({ ...parseServerFareMoney(r.fare), pickup: a, destination: b }); setRouteError(""); } })
       .catch(e => { if (active) { setFare(null); setRouteError(errorMessage(e, "Не удалось рассчитать цену.")); } });
     return () => { active = false; };
   }, [token, activeRole, a, b, profileRefresh]);
@@ -202,11 +245,14 @@ export default function Home() {
     if (!token || !profile?.id || (activeRole !== "passenger" && !driverApproved)) return;
     if (ordersRequestInFlight.current === token) return;
     ordersRequestInFlight.current = token;
+    const bookingReadRevision = bookingGate.beginOrdersRead();
     const revisionAtStart = orderRevision.current;
     const queueRevisionAtStart = queueRevision.current;
+    const enrollmentRevisionAtStart = queueEnrollmentRevision.current;
+    const presenceRevisionAtStart = queuePresenceRevision.current;
     const results = await Promise.allSettled([
       request<{ orders: RideOrder[] }>("/api/orders", token),
-      driverApproved ? request<{ your_position: number | null; your_entry: { routeContext?: DriverQueueContext } | null }>("/api/queue", token) : Promise.resolve(undefined),
+      driverApproved ? request<{ your_position: number | null; your_entry: { routeContext?: DriverQueueContext; collectionState?: unknown } | null }>("/api/queue", token) : Promise.resolve(undefined),
     ]);
     const ordersResult = results[0];
     const queueResult = results[1];
@@ -216,22 +262,39 @@ export default function Home() {
       const list = (ordersResult.value as { orders: RideOrder[] }).orders || [];
       const changedAfterRequest = new Set([...orderChanges.current].filter(([, revision]) => revision > revisionAtStart).map(([id]) => id));
       trackedOrders.current = mergeOrderSnapshot(trackedOrders.current, list, changedAfterRequest);
+      bookingGate.applyOrdersSnapshot(bookingReadRevision, trackedOrders.current.some(order => order.passenger_id === profile.id && !isClosed(order)));
       setOrders(trackedOrders.current);
       if (driverApproved) {
         setIncomingOrder(trackedOrders.current.find(order => isLiveOffer(order, profile.id)) ?? null);
       }
     }
-    if (queueResult.status === "fulfilled" && queueResult.value && queueRevision.current === queueRevisionAtStart) {
-      const position = (queueResult.value as { your_position: number | null }).your_position;
-      setQueuePosition(position); setDriverInQueue(position !== null);
-      setDriverQueueContext((queueResult.value as { your_entry?: { routeContext?: DriverQueueContext } }).your_entry?.routeContext ?? null);
+    if (queueResult.status === "fulfilled" && queueResult.value && queueEnrollmentRevision.current === enrollmentRevisionAtStart) {
+      try {
+        const membership = parseDriverQueueMembership(queueResult.value);
+        const line = parseLineCollectionState(queueResult.value.your_entry);
+        // An older GET cannot erase a newer positive socket proof. Enrolled
+        // snapshots may still hydrate the line receipt after a position event.
+        if (membership !== "absent" || queuePresenceRevision.current === presenceRevisionAtStart) {
+          updateQueueSnapshot({ sessionKey: driverRouteSessionKey(apiBase, token), membership });
+          setLineState(line);
+          if (queueRevision.current === queueRevisionAtStart) {
+            const position = queueResult.value.your_position;
+            setQueuePosition(position); setDriverInQueue(position !== null);
+            setDriverQueueContext(queueResult.value.your_entry?.routeContext ?? null);
+          }
+          setRouteError("");
+        }
+      } catch {
+        updateQueueSnapshot({ sessionKey: driverRouteSessionKey(apiBase, token), membership: "unknown" });
+        setLineState(null); setRouteError("Не удалось подтвердить состояние очереди. Повтори обновление.");
+      }
     }
     const failed = results.find(result => result.status === "rejected");
     if (failed?.status === "rejected") {
       setDataError(errorMessage(failed.reason, "Не удалось обновить заказы."));
       if (results.some(result => result.status === "rejected" && result.reason instanceof ApiError && result.reason.status === 401)) await clearSession();
     } else setDataError("");
-  }, [token, apiBase, profile?.id, activeRole, driverApproved, clearSession]);
+  }, [token, apiBase, profile?.id, activeRole, driverApproved, clearSession, updateQueueSnapshot, bookingGate]);
 
   const refreshAvailability = useCallback(async () => {
     if (!token || activeRole !== "passenger" || !a) return null;
@@ -242,7 +305,8 @@ export default function Home() {
       if (typeof result?.available !== "boolean") throw new ApiError("Не удалось проверить наличие водителей. Повтори обновление.", undefined, "INVALID_RESPONSE");
       if (currentToken.current !== token) return null;
       if (availabilityGeneration.current === generation) {
-        setAvailability({ pickup: a, seats, available: result.available === true, checkedAt: Date.now() });
+        setAvailability({ pickup: a, seats, available: result.available === true,
+          eligibleDriverCount: verifiedDriverCount(result.eligible_driver_count), checkedAt: Date.now() });
         setAvailabilityError("");
       }
       return result.available === true;
@@ -305,17 +369,26 @@ export default function Home() {
       setQueuePosition(payload.position ?? null);
       setDriverInQueue(payload.position != null);
       setDriverQueueContext(payload.route_context ?? null);
+      if (payload.position != null || payload.route_context != null) {
+        queuePresenceRevision.current += 1;
+        updateQueueSnapshot({ sessionKey: driverRouteSessionKey(apiBase, token), membership: "enrolled" });
+      }
     });
-    socket.on("queue:update", () => { void availabilityRef.current(); });
+    socket.on("queue:update", () => { void availabilityRef.current(); if (driverApproved) void refreshOrders(); });
     return () => { socket.disconnect(); setSocketConnected(false); };
-  }, [token, profile?.id, activeRole, driverApproved, refreshOrders, applyOrder]);
+  }, [token, apiBase, profile?.id, activeRole, driverApproved, refreshOrders, applyOrder, updateQueueSnapshot]);
 
   async function login(verify: boolean) {
+    const fullName = registering ? registrationFullName(name, surname) : null;
+    if (registering && !fullName) {
+      Alert.alert("Имя и фамилия", "Укажи имя и фамилию. Общая длина — не более 120 символов.");
+      return;
+    }
     setBusy(true);
     try {
       const r = await request<{ access_token?: string; demo_code?: string }>(verify ? "/api/auth/verify-otp" : "/api/auth/request-otp", undefined, {
         method: "POST",
-        body: JSON.stringify({ phone_number: phone.trim(), full_name: name.trim(), code: otp.trim(), role: mode, locale: "ru" })
+        body: JSON.stringify({ phone_number: phone.trim(), ...(registering ? { full_name: fullName } : {}), code: otp.trim(), role: mode, locale: "ru" })
       });
       if (verify && r.access_token) {
         await AsyncStorage.setItem(TOKEN, r.access_token);
@@ -338,13 +411,14 @@ export default function Home() {
       currentToken.current = result.access_token;
       setToken(result.access_token); setProfile(result.user); setMode(next);
       trackedOrders.current = []; orderChanges.current.clear(); orderRevision.current += 1; queueRevision.current += 1;
-      setOrders([]); setIncomingOrder(null); setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null); setAvailability(null); setFare(null);
+      updateQueueSnapshot(null, true); setDepartureConfirmation(null);
+      setOrders([]); setIncomingOrder(null); setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null); setLineState(null); setAvailability(null); setFare(null);
       setRequested(false); setOtp(""); setDemoCode(""); setMessage(""); setDataError("");
       try { await AsyncStorage.setItem(TOKEN, result.access_token); }
       catch { setProfileError("Вход выполнен, но не сохранён на устройстве. При следующем запуске потребуется код."); }
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) await clearSession();
-      Alert.alert("Режим TezJet", e instanceof ApiError && e.code === "ROLE_BUSY" ? "Сначала заверши или отмени поездку. Водителю также нужно выйти из очереди." : errorMessage(e, "Не удалось переключить режим."));
+      Alert.alert("Режим Onay", e instanceof ApiError && e.code === "ROLE_BUSY" ? "Сначала заверши или отмени поездку. Водителю также нужно выйти из очереди." : errorMessage(e, "Не удалось переключить режим."));
     } finally { setBusy(false); }
   }
 
@@ -368,32 +442,55 @@ export default function Home() {
     const from = stops.find(v => v.code === a), to = stops.find(v => v.code === b);
     if (!from || !to || a === b) return Alert.alert("Маршрут", "Выбери разные точки А и Б.");
     if (!fareFresh) return Alert.alert("Стоимость", "Дождись расчёта стоимости выбранного маршрута.");
+    if (busy || activeRole !== "passenger" || passengerHasActiveOrder || !bookingGate.tryStart("legacy")) return;
+    const requestToken = token, requestEndpoint = apiBase;
+    const recoveryKey = routeBookingRecoveryKey(requestEndpoint, profile!.id);
+    let recoveryPrepared = false, postStarted = false;
     setBusy(true);
     try {
       const available = await refreshAvailability();
       if (available !== true) {
         if (available === false) setMessage("Водителей пока нет. Попробуй проверить наличие позже.");
-        else Alert.alert("Связь с TezJet", "Не удалось проверить наличие водителей. Проверь интернет и повтори попытку.");
+        else Alert.alert("Связь с Onay", "Не удалось проверить наличие водителей. Проверь интернет и повтори попытку.");
         return;
       }
       const coords = await getCoordinates();
-      const r = await request<{ order: RideOrder; offer?: unknown }>("/api/orders", token, { method: "POST", body: JSON.stringify({
+      if (currentToken.current !== requestToken || API !== requestEndpoint) return;
+      // Both booking forms share this durable record. Legacy has no request-key
+      // receipt API: an uncertain POST remains fail-closed, never guessed from404.
+      recoveryPrepared = true;
+      await saveRouteBookingRecovery(AsyncStorage, recoveryKey, { status: "in_flight", orderId: null });
+      bookingGate.recoveryChanged();
+      if (currentToken.current !== requestToken || API !== requestEndpoint) throw new Error("Подключение изменилось до отправки заказа.");
+      postStarted = true;
+      const r = await request<{ order: RideOrder; offer?: unknown }>("/api/orders", requestToken, { method: "POST", body: JSON.stringify({
         route_id: "pyatak", pickup_point: from.code, pickup_stop: from.code, destination_stop: to.code,
         pickup_location: coords, pickup_address: address.trim() || from.name, destination: to.name, seats
       }) });
+      bookingGate.setActiveOrder(true);
+      await saveRouteBookingRecovery(AsyncStorage, recoveryKey, { status: "confirmed", orderId: r.order.id });
+      bookingGate.recoveryChanged();
+      if (currentToken.current !== requestToken || API !== requestEndpoint) return;
       applyOrder(r.order);
       setMessage(r.offer ? "Заказ отправлен водителю. Ждём подтверждения." : "Заказ создан. Ищем водителя.");
       await refreshOrders();
     } catch (e) {
+      const rejected = postStarted && e instanceof ApiError && routeBookingDefinitivelyRejected(e);
+      if (recoveryPrepared && (!postStarted || rejected)) {
+        try { await clearRouteBookingRecovery(AsyncStorage, recoveryKey); } catch { /* Keep admission closed until storage can be read. */ }
+        bookingGate.recoveryChanged();
+      }
+      if (currentToken.current !== requestToken || API !== requestEndpoint) return;
       if (e instanceof ApiError && e.code === "NO_DRIVERS") {
-        setAvailability({ pickup: a, seats, available: false, checkedAt: Date.now() });
+        setAvailability({ pickup: a, seats, available: false, eligibleDriverCount: 0, checkedAt: Date.now() });
         setMessage("Водителей пока нет. Заказ не создан. Проверь наличие позже.");
       } else {
-        Alert.alert("Заказ", errorMessage(e, "Не удалось создать заказ."));
+        Alert.alert("Заказ", postStarted && !rejected
+          ? "Не удалось подтвердить результат заказа. Проверь его статус; повторное оформление заблокировано."
+          : errorMessage(e, "Не удалось создать заказ."));
         await refreshOrders();
       }
-    }
-    finally { setBusy(false); }
+    } finally { bookingGate.finish("legacy"); setBusy(false); }
   }
 
   async function refreshProfile() {
@@ -415,8 +512,10 @@ export default function Home() {
   async function joinQueue() {
     const requestToken = token;
     const requestSession = driverRouteSession;
-    if (!canJoinDriverQueue(driverRouteGateRef.current, requestSession)) return;
+    if (busy || driverQueueMembership(queueSnapshotRef.current, requestSession) !== "absent" ||
+        incomingOrder || activeDriverOrders.length || !canJoinDriverQueue(driverRouteGateRef.current, requestSession)) return;
     const routeChoice = driverQueueChoiceInput(driverRouteGateRef.current, requestSession);
+    if (!queueMutationGuard.current.tryStart()) return;
     setBusy(true);
     try {
       const location = await getCoordinates();
@@ -425,40 +524,144 @@ export default function Home() {
       const queueRevisionAtStart = queueRevision.current;
       const result = await request<{ position: number | null; entry?: { routeContext?: DriverQueueContext } }>("/api/queue/join", requestToken, { method: "POST", body: JSON.stringify({ location, available_seats: driverSeats, route_choice: routeChoice }) });
       if (currentToken.current !== requestToken) return;
+      updateQueueSnapshot({ sessionKey: requestSession, membership: "enrolled" }, true);
+      setLineState(parseLineCollectionState(result.entry));
       if (queueRevision.current === queueRevisionAtStart) {
         queueRevision.current += 1;
         setQueuePosition(result.position); setDriverInQueue(result.position !== null);
         setDriverQueueContext(result.entry?.routeContext ?? null);
       }
       await refreshOrders();
-      Alert.alert("TezJet Driver", `Ты в очереди. Позиция: ${result.position ?? "обновляется"}.`);
-    } catch (e) { Alert.alert("Не удалось встать в очередь", e instanceof Error ? e.message : "Проверь геолокацию и доступность."); }
-    finally { setBusy(false); }
+      Alert.alert("Onay Driver", `Ты в очереди. Позиция: ${result.position ?? "обновляется"}.`);
+    } catch (e) {
+      if (currentToken.current === requestToken) {
+        updateQueueSnapshot({ sessionKey: requestSession, membership: "unknown" }, true);
+        await refreshOrders();
+        Alert.alert("Не удалось встать в очередь", e instanceof Error ? e.message : "Проверь геолокацию и доступность.");
+      }
+    }
+    finally { queueMutationGuard.current.finish(); setBusy(false); }
+  }
+
+  async function joinLine() {
+    const requestToken = token;
+    const requestSession = driverRouteSession;
+    const gate = driverRouteGateRef.current;
+    if (busy || driverQueueMembership(queueSnapshotRef.current, requestSession) !== "absent" || lineState || incomingOrder || activeDriverOrders.length > 0 ||
+        !canJoinDriverQueue(gate, requestSession) || !gate.hasChoice) return;
+    const routeChoice = driverQueueChoiceInput(gate, requestSession);
+    if (!routeChoice || !queueMutationGuard.current.tryStart()) return;
+    setBusy(true);
+    try {
+      const location = await getCoordinates();
+      const refreshedGate = driverRouteGateRef.current;
+      if (currentToken.current !== requestToken || !canJoinDriverQueue(refreshedGate, requestSession) ||
+          JSON.stringify(driverQueueChoiceInput(refreshedGate, requestSession)) !== JSON.stringify(routeChoice)) return;
+      const queueRevisionAtStart = queueRevision.current;
+      const result = await request<{ position: number | null; entry: {
+        routeContext?: DriverQueueContext; collectionState?: unknown;
+      } }>("/api/queue/line", requestToken, { method: "POST",
+        body: JSON.stringify({ location, available_seats: driverSeats, route_choice: routeChoice }) });
+      if (currentToken.current !== requestToken) return;
+      const enrolled = parseLineCollectionState(result.entry);
+      if (!enrolled || enrolled.phase !== "collecting") throw new Error("Сервер не подтвердил начало сбора пассажиров.");
+      updateQueueSnapshot({ sessionKey: requestSession, membership: "enrolled" }, true);
+      setLineState(enrolled); setDepartureConfirmation(null);
+      if (queueRevision.current === queueRevisionAtStart) {
+        queueRevision.current += 1;
+        setQueuePosition(result.position); setDriverInQueue(result.position !== null);
+        setDriverQueueContext(result.entry?.routeContext ?? null);
+      }
+      await refreshOrders();
+      Alert.alert("Сбор пассажиров", "Линия активна. Можно принимать пассажиров до отправления.");
+    } catch (e) {
+      if (currentToken.current === requestToken) {
+        updateQueueSnapshot({ sessionKey: requestSession, membership: "unknown" }, true);
+        await refreshOrders();
+        Alert.alert("Сбор пассажиров", errorMessage(e, "Не удалось начать сбор пассажиров."));
+      }
+    }
+    finally { queueMutationGuard.current.finish(); setBusy(false); }
+  }
+
+  async function boardLinePassenger(order: RideOrder) {
+    if (busy || !canBoardLinePassenger(lineState, order) || order.driver_id !== profile?.id) return;
+    const requestToken = token;
+    setBusy(true);
+    try {
+      const result = await request<{ order: RideOrder }>(`/api/orders/${order.id}/board`, requestToken,
+        { method: "POST", body: JSON.stringify({}) });
+      if (currentToken.current !== requestToken) return;
+      applyOrder(result.order);
+      await refreshOrders();
+    } catch (e) {
+      Alert.alert("Посадка пассажира", errorMessage(e, "Не удалось подтвердить посадку."));
+      await refreshOrders();
+    } finally { setBusy(false); }
+  }
+
+  function confirmLineDeparture() {
+    if (busy || incomingOrder || queueMembership !== "enrolled" || !canDepartLine(lineState)) return;
+    const receipt = lineDepartBody(lineState);
+    setDepartureConfirmation({ sessionKey: driverRouteSession, enrollmentId: receipt.expected_enrollment_id });
+  }
+
+  async function departLine(enrollmentId: string) {
+    if (busy || incomingOrder || queueMembership !== "enrolled" || !canDepartLine(lineState) || lineState?.enrollmentId !== enrollmentId ||
+        departureConfirmation?.sessionKey !== driverRouteSession || departureConfirmation.enrollmentId !== enrollmentId ||
+        !queueMutationGuard.current.tryStart()) return;
+    const requestToken = token;
+    setBusy(true);
+    try {
+      const result = await request<{ entry: { collectionState?: unknown }; orders: RideOrder[] }>(
+        "/api/queue/depart", requestToken, { method: "POST",
+          body: JSON.stringify({ expected_enrollment_id: enrollmentId }) });
+      if (currentToken.current !== requestToken) return;
+      queueRevision.current += 1;
+      updateQueueSnapshot({ sessionKey: driverRouteSession, membership: "enrolled" }, true);
+      setDepartureConfirmation(null);
+      setLineState(parseLineCollectionState(result.entry));
+      setDriverInQueue(false); setQueuePosition(null);
+      for (const order of result.orders ?? []) applyOrder(order);
+      await refreshOrders();
+      Alert.alert("Линия", "Отправление подтверждено сервером.");
+    } catch (e) {
+      Alert.alert("Отправление", errorMessage(e, "Не удалось отправиться. Обнови очередь."));
+      await refreshOrders();
+    } finally { queueMutationGuard.current.finish(); setBusy(false); }
   }
 
   async function updateDriverLocation() {
     const requestToken = token, requestSession = driverRouteSession;
+    if (busy || driverQueueMembership(queueSnapshotRef.current, requestSession) !== "enrolled" ||
+        !queueMutationGuard.current.tryStart()) return;
     setBusy(true);
     try {
       const location = await getCoordinates();
       if (currentToken.current !== requestToken || driverRouteGateRef.current.sessionKey !== requestSession) return;
       await request("/api/queue/location", requestToken, { method: "PATCH", body: JSON.stringify({ location }) });
       if (currentToken.current !== requestToken) return;
-      Alert.alert("Местоположение обновлено", "Координаты переданы TezJet.");
+      Alert.alert("Местоположение обновлено", "Координаты переданы Onay.");
     } catch (e) { Alert.alert("Геолокация водителя", e instanceof Error ? e.message : "Не удалось обновить координаты."); }
-    finally { setBusy(false); }
+    finally { queueMutationGuard.current.finish(); setBusy(false); }
   }
 
   async function leaveQueue() {
     const requestToken = token;
+    const requestSession = driverRouteSession;
+    if (busy || incomingOrder || activeDriverOrders.length ||
+        driverQueueMembership(queueSnapshotRef.current, requestSession) !== "enrolled" ||
+        !queueMutationGuard.current.tryStart()) return;
     setBusy(true);
     try {
       await request<void>("/api/queue/leave", requestToken, { method: "DELETE" });
       if (currentToken.current !== requestToken) return;
       queueRevision.current += 1;
-      setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null);
+      updateQueueSnapshot({ sessionKey: requestSession, membership: "absent" }, true);
+      setDepartureConfirmation(null);
+      setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null); setLineState(null);
     } catch (e) { Alert.alert("Очередь", e instanceof Error ? e.message : "Не удалось выйти из очереди."); }
-    finally { setBusy(false); }
+    finally { queueMutationGuard.current.finish(); setBusy(false); }
   }
 
   async function acceptOrder() {
@@ -508,7 +711,7 @@ export default function Home() {
   }
 
   async function progressOrder(activeOrder: RideOrder) {
-    const next = nextTripStatus(activeOrder);
+    const next = nextDriverTripStatus(lineState?.phase ?? null, activeOrder);
     if (!next) return;
     setBusy(true);
     try {
@@ -520,56 +723,69 @@ export default function Home() {
   }
 
   return <ScrollView style={s.screen} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-    <View style={s.header}><Text style={s.logo}>T</Text><View style={s.brandWrap}><Text style={s.brand}>tez<Text style={s.brandAccent}>jet</Text></Text><Text style={s.tag}>ТВОЙ ГОРОД. ТВОЙ МАРШРУТ.</Text></View>{token ? <Pressable onPress={logout} disabled={busy}><Text style={s.logout}>Выйти</Text></Pressable> : null}</View>
-    <View style={s.hero}><Text style={s.kicker}>ОДНО ПРИЛОЖЕНИЕ · ANDROID + IOS</Text><Text style={s.title}>{mode === "passenger" ? "Куда едем?" : "TezJet Driver"}</Text><Text style={s.desc}>{mode === "passenger" ? "Выбери маршрут — остальное сделает TezJet." : "Подтверждённый водитель может встать в очередь и получать подходящие заказы."}</Text></View>
+    <View style={s.header}><Text style={s.logo}>O</Text><View style={s.brandWrap}><Text style={s.brand}>Onay</Text><Text style={s.tag}>ТВОЙ ГОРОД. ТВОЙ МАРШРУТ.</Text></View>{token ? <Pressable onPress={logout} disabled={busy}><Text style={s.logout}>Выйти</Text></Pressable> : null}</View>
+    <View style={s.hero}><Text style={s.kicker}>ОДНО ПРИЛОЖЕНИЕ · ANDROID + IOS</Text><Text style={s.title}>{mode === "passenger" ? "Куда едем?" : "Onay Driver"}</Text><Text style={s.desc}>{mode === "passenger" ? "Выбери маршрут — остальное сделает Onay." : "Подтверждённый водитель может встать в очередь и получать подходящие заказы."}</Text></View>
     <View style={s.switch}><Button title="Пассажир" onPress={() => switchMode("passenger")} disabled={busy || profileLoading} secondary={mode !== "passenger"} /><Button title="Водитель" onPress={() => switchMode("driver")} disabled={busy || profileLoading} secondary={mode !== "driver"} /></View>
-    {showEndpointSettings ? <View style={s.card}><Text style={s.heading}>Сервер TezJet</Text><Text style={s.descDark}>Укажи адрес сервера для подключения. При смене сервера потребуется вход по телефону.</Text><TextInput style={s.input} value={endpointInput} onChangeText={setEndpointInput} placeholder="https://api.tezjet…" autoCapitalize="none" autoCorrect={false} keyboardType="url" editable={!busy && !sessionLoading} />{endpointError ? <Text style={s.note}>{endpointError}</Text> : null}<Button title="Сохранить сервер" onPress={saveEndpoint} disabled={busy || sessionLoading || !endpointInput.trim()} />{apiBase ? <Button title="Закрыть настройки" onPress={() => setShowEndpointSettings(false)} secondary disabled={busy} /> : null}</View> : <Button title="Настройки сервера" onPress={() => setShowEndpointSettings(true)} secondary disabled={busy || sessionLoading} />}
+    {showEndpointSettings ? <View style={s.card}><Text style={s.heading}>Сервер Onay</Text><Text style={s.descDark}>Укажи адрес сервера для подключения. При смене сервера потребуется вход по телефону.</Text><TextInput style={s.input} value={endpointInput} onChangeText={setEndpointInput} placeholder="https://api.onay…" autoCapitalize="none" autoCorrect={false} keyboardType="url" editable={!busy && !sessionLoading} />{endpointError ? <Text style={s.note}>{endpointError}</Text> : null}<Button title="Сохранить сервер" onPress={saveEndpoint} disabled={busy || sessionLoading || !endpointInput.trim()} />{apiBase ? <Button title="Закрыть настройки" onPress={() => setShowEndpointSettings(false)} secondary disabled={busy} /> : null}</View> : <Button title="Настройки сервера" onPress={() => setShowEndpointSettings(true)} secondary disabled={busy || sessionLoading} />}
     {visibleError ? <View style={s.card}><Text style={s.heading}>Нет актуальных данных</Text><Text style={s.descDark}>{visibleError}</Text><Button title="Повторить обновление" onPress={() => { void refreshOrders(); void refreshAvailability(); setProfileRefresh(value => value + 1); }} secondary disabled={busy} /></View> : null}
 
+    {token && profile && activeRole === "driver" && mode === "driver" ? <DriverVehicleForm key={driverRouteSession} endpoint={apiBase} token={token} blocked={busy || queueMembership === "enrolled" || !!incomingOrder || activeDriverOrders.length > 0} onBusyChange={vehicleBusyChange} onSaved={vehicleSaved} /> : null}
     {sessionLoading ? <View style={s.card}><ActivityIndicator color="#0D735C" /><Text style={s.descDark}>Восстанавливаем вход…</Text></View> : !token ? <View style={s.card}>
-      <Text style={s.heading}>{mode === "driver" ? "Вход или регистрация водителя" : "Вход по телефону"}</Text>
-      <TextInput style={s.input} value={name} onChangeText={setName} placeholder="Твоё имя" autoCapitalize="words" />
-      <TextInput style={s.input} value={phone} onChangeText={setPhone} placeholder="+998 90 123 45 67" keyboardType="phone-pad" />
-      {requested ? <>{demoCode ? <Text style={s.note}>Тестовый код: {demoCode}</Text> : <Text style={s.note}>Введи код подтверждения, полученный через настроенный сервис авторизации.</Text>}<TextInput style={s.input} value={otp} onChangeText={setOtp} placeholder="Код подтверждения" keyboardType="number-pad" /><Button title={busy ? "Проверяем…" : mode === "driver" ? "Продолжить как водитель" : "Войти как пассажир"} onPress={() => login(true)} disabled={busy || !apiBase || !otp.trim()} /></> : <Button title={busy ? "Отправляем…" : "Получить код"} onPress={() => login(false)} disabled={busy || !apiBase || !phone.trim() || !name.trim()} />}
+      <Text style={s.heading}>{registering ? (mode === "driver" ? "Регистрация водителя" : "Регистрация пассажира") : "Вход по телефону"}</Text>
+      <View style={s.switch}>
+        <Button title="Войти" onPress={() => { setRegistering(false); setRequested(false); setOtp(""); setDemoCode(""); }} secondary={registering} disabled={busy} testID="auth-signin-mode" />
+        <Button title="Регистрация" onPress={() => { setRegistering(true); setRequested(false); setOtp(""); setDemoCode(""); }} secondary={!registering} disabled={busy} testID="auth-signup-mode" />
+      </View>
+      {registering ? <>
+        <TextInput style={s.input} value={name} onChangeText={setName} placeholder="Имя" autoCapitalize="words" autoCorrect={false} editable={!busy && !requested} testID="registration-given-name" />
+        <TextInput style={s.input} value={surname} onChangeText={setSurname} placeholder="Фамилия" autoCapitalize="words" autoCorrect={false} editable={!busy && !requested} testID="registration-family-name" />
+      </> : <Text style={s.note}>Первый раз в Onay? Выбери «Регистрация».</Text>}
+      <TextInput style={s.input} value={phone} onChangeText={setPhone} placeholder="+998 90 123 45 67" keyboardType="phone-pad" editable={!busy && !requested} />
+      {requested ? <>{demoCode ? <Text style={s.note}>Тестовый код: {demoCode}</Text> : <Text style={s.note}>Введи код подтверждения, полученный через настроенный сервис авторизации.</Text>}<TextInput style={s.input} value={otp} onChangeText={setOtp} placeholder="Код подтверждения" keyboardType="number-pad" /><Button title={busy ? "Проверяем…" : mode === "driver" ? "Продолжить как водитель" : "Войти как пассажир"} onPress={() => login(true)} disabled={busy || !apiBase || !otp.trim()} /></> : <Button title={busy ? "Отправляем…" : "Получить код"} onPress={() => login(false)} disabled={busy || !apiBase || !phone.trim() || (registering && !registrationFullName(name, surname))} />}
       {profileError ? <Text style={s.note}>{profileError}</Text> : null}
       {busy ? <ActivityIndicator style={s.loader} color="#0D735C" /> : null}
       {mode === "driver" ? <Text style={s.small}>Новый водительский профиль будет ожидать подтверждения администратора. До подтверждения заказы недоступны.</Text> : null}
-    </View> : !profile ? <View style={s.card}><Text style={s.heading}>{profileLoading ? "Загружаем профиль…" : "Нет связи с профилем"}</Text>{profileLoading ? <ActivityIndicator color="#0D735C" /> : null}<Text style={s.descDark}>{profileError || "Вход сохранён. Подключись к TezJet, чтобы продолжить."}</Text><Button title="Повторить" onPress={() => setProfileRefresh(value => value + 1)} disabled={profileLoading} secondary /></View> : mode === "driver" ? (
+    </View> : !profile ? <View style={s.card}><Text style={s.heading}>{profileLoading ? "Загружаем профиль…" : "Нет связи с профилем"}</Text>{profileLoading ? <ActivityIndicator color="#0D735C" /> : null}<Text style={s.descDark}>{profileError || "Вход сохранён. Подключись к Onay, чтобы продолжить."}</Text><Button title="Повторить" onPress={() => setProfileRefresh(value => value + 1)} disabled={profileLoading} secondary /></View> : mode === "driver" ? (
       activeRole !== "driver" ? <View style={s.card}><Text style={s.heading}>Переключение режима</Text><Text style={s.descDark}>Подключи водительский профиль к своему аккаунту.</Text><Button title="Войти в режим водителя" onPress={() => switchMode("driver")} disabled={busy} /></View>
-      : profile.driver_approval_status !== "approved" ? <View style={s.card}><Text style={s.heading}>{profile.driver_approval_status === "rejected" ? "Профиль отклонён" : "Профиль на проверке"}</Text><Text style={s.descDark}>{profile.driver_approval_status === "rejected" ? "Свяжись с поддержкой TezJet, чтобы узнать причину." : "Администратор должен подтвердить водительский профиль. До этого нельзя вставать в очередь или принимать заказы."}</Text><Button title="Проверить статус" onPress={refreshProfile} secondary disabled={busy} /></View>
+      : profile.driver_approval_status !== "approved" ? <View style={s.card}><Text style={s.heading}>{profile.driver_approval_status === "rejected" ? "Профиль отклонён" : "Профиль на проверке"}</Text><Text style={s.descDark}>{profile.driver_approval_status === "rejected" ? "Свяжись с поддержкой Onay, чтобы узнать причину." : "Администратор должен подтвердить водительский профиль. До этого нельзя вставать в очередь или принимать заказы."}</Text><Button title="Проверить статус" onPress={refreshProfile} secondary disabled={busy} /></View>
       : <>
-        <DriverRoutePicker key={driverRouteSession} endpoint={apiBase} token={token} busy={busy} queued={driverInQueue}
+        <DriverRoutePicker key={driverRouteSession} endpoint={apiBase} token={token} busy={busy} queued={queueMembership !== "absent"}
           activeTrip={activeDriverOrders.length > 0} pendingOffer={!!incomingOrder} onStatusChange={updateDriverRouteGate} />
         <View style={s.card}>
           <Text style={s.heading}>Рабочая смена</Text>
           <Text style={s.descDark}>Связь: {socketConnected ? "подключена" : "переподключение…"}</Text>
-          <Text style={s.descDark} testID="driver-queue-status">Очередь: {driverInQueue ? `позиция ${queuePosition ?? "—"}` : activeDriverOrders.length ? "активный маршрут" : "не в очереди"}</Text>
-          {driverInQueue && driverQueueContext ? <View testID="driver-queue-context"><Text style={s.descDark}>{driverQueueContext.routeName} · питак {driverQueueContext.pitak}: {driverQueueContext.stopName}</Text><Text style={s.note}>Вступление в очередь сохранено. Заказы для этого маршрута пока недоступны.</Text></View> : null}
-          <Text style={s.label}>МЕСТА ПРИ ВХОДЕ В ОЧЕРЕДЬ</Text><Stepper value={driverSeats} onChange={setDriverSeats} disabled={busy || driverInQueue || !!incomingOrder || activeDriverOrders.length > 0} />
-          {!driverInQueue && !activeDriverOrders.length ? <Button title={busy ? "Определяем местоположение…" : driverRouteGate.hasChoice ? `Встать в очередь питак ${driverRouteGate.pitak ?? "—"}` : "Встать в очередь"} testID="driver-queue-join" onPress={joinQueue} disabled={busy || !!incomingOrder || !canJoinQueue} /> : <><Button title={busy ? "Обновляем…" : "Обновить местоположение"} testID="driver-queue-location" onPress={updateDriverLocation} disabled={busy} secondary /><Button title="Выйти из очереди" testID="driver-queue-leave" onPress={leaveQueue} disabled={busy || !!incomingOrder || activeDriverOrders.length > 0} secondary /></>}
+          <Text style={s.descDark} testID="driver-queue-status">Очередь: {queueMembership === "unknown" ? "проверяем состояние…" : driverInQueue ? `позиция ${queuePosition ?? "—"}` : activeDriverOrders.length ? "активный маршрут" : queueMembership === "enrolled" ? "рейс сохранён, позиция FIFO завершена" : "не в очереди"}</Text>
+          {queueMembership === "enrolled" && driverQueueContext ? <View testID="driver-queue-context"><Text style={s.descDark}>{driverQueueContext.routeName} · питак {driverQueueContext.pitak}: {driverQueueContext.stopName}</Text><Text style={s.note}>{lineState?.phase === "departed" ? "Отправление подтверждено. После завершения поездок закрой рейс перед сменой направления." : "Маршрут и направление сохранены. Подходящие заказы распределяются по очереди и свободным местам."}</Text></View> : null}
+          <Text style={s.label}>МЕСТА ПРИ ВХОДЕ В ОЧЕРЕДЬ</Text><Stepper value={driverSeats} max={maxDriverSeats} onChange={setDriverSeats} disabled={busy || queueMembership !== "absent" || !!incomingOrder || activeDriverOrders.length > 0} />
+          {queueMembership === "absent" && !activeDriverOrders.length ? <Button title={busy ? "Определяем местоположение…" : driverRouteGate.hasChoice ? `Встать в очередь питак ${driverRouteGate.pitak ?? "—"}` : "Встать в очередь"} testID="driver-queue-join" onPress={joinQueue} disabled={busy || !!incomingOrder || !canJoinQueue} /> : null}
+          {queueMembership === "enrolled" ? <><Button title={busy ? "Обновляем…" : "Обновить местоположение"} testID="driver-queue-location" onPress={updateDriverLocation} disabled={busy} secondary /><Button title={lineState?.phase === "departed" ? "Завершить рейс и выйти с линии" : "Выйти из очереди"} testID="driver-queue-leave" onPress={leaveQueue} disabled={busy || !!incomingOrder || activeDriverOrders.length > 0} secondary /></> : null}
+          {queueMembership === "enrolled" && lineState?.phase === "departed" && !incomingOrder && !activeDriverOrders.length ? <Text style={s.note} testID="driver-line-finished">Поездки завершены. Выйди с линии, затем выбери направление и начни следующий рейс.</Text> : null}
+          {queueMembership === "absent" && !activeDriverOrders.length && driverRouteGate.hasChoice ? <Button title="Начать сбор пассажиров на линии" testID="driver-line-join" onPress={() => { void joinLine(); }} disabled={busy || !!incomingOrder || !canJoinQueue} secondary /> : null}
+          {queueMembership === "enrolled" && lineState?.phase === "collecting" ? <View testID="driver-line-collection"><Text style={s.note}>Сбор пассажиров · линия активна. Посадка и отправление подтверждаются сервером.</Text><Button title="Отправиться с питака" testID="driver-line-depart" onPress={confirmLineDeparture} disabled={busy || !!incomingOrder || !canDepartLine(lineState)} />{departureConfirmation?.sessionKey === driverRouteSession && departureConfirmation.enrollmentId === lineState.enrollmentId ? <View><Text style={s.note}>Подтвердить отправление машины? Это действие нельзя отменить.</Text><Button title="Подтвердить отправление" testID="driver-line-depart-confirm" onPress={() => { void departLine(departureConfirmation.enrollmentId); }} disabled={busy || !!incomingOrder} /><Button title="Не сейчас" testID="driver-line-depart-cancel" onPress={() => setDepartureConfirmation(null)} disabled={busy} secondary /></View> : null}</View> : null}
         </View>
-        {incomingOrder ? <View style={s.card}><Text style={s.heading}>Новый заказ</Text><Text style={s.descDark}>Точка подачи: {incomingOrder.pickup_point}</Text><Text style={s.descDark}>Куда: {incomingOrder.destination || "смотри маршрут"}</Text><Text style={s.descDark}>Пассажиров: {incomingOrder.seats}</Text><Text style={s.note}>Ответить за {Math.max(0, Math.ceil(((incomingOrder.offer_expires_at ?? now) - now) / 1_000))} сек.</Text><Button title={busy ? "Принимаем…" : "Принять заказ"} onPress={acceptOrder} disabled={busy || !isLiveOffer(incomingOrder, profile.id, now)} /><Button title="Отклонить" onPress={rejectOrder} disabled={busy || !isLiveOffer(incomingOrder, profile.id, now)} secondary /></View> : null}
-        {activeDriverOrders.map(activeOrder => <View key={activeOrder.id} style={s.card}><Text style={s.heading}>Текущая поездка</Text><Text style={s.descDark}>Статус: {statusLabels[activeOrder.status]}</Text><Text style={s.descDark}>Точка подачи: {activeOrder.pickup_point}</Text><Text style={s.descDark}>Назначение: {activeOrder.destination || "по маршруту"}</Text>{nextTripStatus(activeOrder) ? <Button title={busy ? "Обновляем…" : nextTripLabel(activeOrder)} onPress={() => progressOrder(activeOrder)} disabled={busy} /> : null}</View>)}
+        {incomingOrder ? <View style={s.card} testID="driver-incoming-order"><Text style={s.heading}>Новый заказ</Text><Text style={s.descDark}>Точка подачи: {ridePickupLabel(incomingOrder)}</Text><Text style={s.descDark}>Куда: {rideDestinationLabel(incomingOrder)}</Text><Text style={s.descDark}>Пассажиров: {incomingOrder.seats}</Text><Text style={s.note}>Ответить за {Math.max(0, Math.ceil(((incomingOrder.offer_expires_at ?? now) - now) / 1_000))} сек.</Text><Button title={busy ? "Принимаем…" : "Принять заказ"} testID="driver-order-accept" onPress={acceptOrder} disabled={busy || !isLiveOffer(incomingOrder, profile.id, now)} /><Button title="Отклонить" testID="driver-order-reject" onPress={rejectOrder} disabled={busy || !isLiveOffer(incomingOrder, profile.id, now)} secondary /></View> : null}
+        {activeDriverOrders.map(activeOrder => <View key={activeOrder.id} style={s.card} testID={`driver-trip-${activeOrder.id}`}><Text style={s.heading}>Текущая поездка</Text><Text style={s.descDark}>Статус: {statusLabels[activeOrder.status]}</Text><Text style={s.descDark}>Точка подачи: {ridePickupLabel(activeOrder)}</Text><Text style={s.descDark}>Назначение: {rideDestinationLabel(activeOrder)}</Text>{canBoardLinePassenger(lineState, activeOrder) ? <Button title="Пассажир сел в машину" testID="driver-line-board" onPress={() => { void boardLinePassenger(activeOrder); }} disabled={busy} /> : null}{nextDriverTripStatus(lineState?.phase ?? null, activeOrder) ? <Button title={busy ? "Обновляем…" : nextTripLabel(activeOrder)} testID={`driver-trip-progress-${activeOrder.id}`} onPress={() => progressOrder(activeOrder)} disabled={busy} /> : null}</View>)}
         {!driverRouteGate.hasChoice && !driverQueueContext && !incomingOrder && !activeDriverOrders.length ? <View style={s.card}><Text style={s.descDark}>Ожидаем подходящий заказ. Сервер выбирает водителя по очереди и доступным местам.</Text></View> : null}
       </>
     ) : <>
-    {passengerOrders.filter(order => !isClosed(order)).map(passengerOrder => <View key={passengerOrder.id} style={s.card}><Text style={s.heading}>Твоя поездка</Text><Text style={s.descDark}>{statusLabels[passengerOrder.status]}</Text><Text style={s.descDark}>Точка подачи: {passengerOrder.pickup_point}</Text><Text style={s.descDark}>Куда: {passengerOrder.destination || "по маршруту"}</Text><Text style={s.descDark}>Пассажиров: {passengerOrder.seats}</Text>{passengerOrder.status === "searching" && passengerOrder.offered_driver_id ? <Text style={s.note}>Ждём ответа водителя.</Text> : null}<Button title={busy ? "Отменяем…" : "Отменить заказ"} onPress={() => cancelOrder(passengerOrder)} disabled={busy} secondary /></View>)}
+    {passengerOrders.filter(order => !isClosed(order)).map(passengerOrder => <View key={passengerOrder.id} style={s.card} testID={`passenger-trip-${passengerOrder.id}`}><Text style={s.heading}>Твоя поездка</Text><Text style={s.descDark}>{statusLabels[passengerOrder.status]}</Text><Text style={s.descDark}>Точка подачи: {ridePickupLabel(passengerOrder)}</Text><Text style={s.descDark}>Куда: {rideDestinationLabel(passengerOrder)}</Text><Text style={s.descDark}>Пассажиров: {passengerOrder.seats}</Text>{passengerOrder.status === "searching" && passengerOrder.offered_driver_id ? <Text style={s.note}>Ждём ответа водителя.</Text> : null}<PassengerDriverCard key={`${driverRouteSession}:${passengerOrder.id}:${passengerOrder.driver_id ?? ""}:${passengerOrder.status}`} endpoint={apiBase} token={token} order={passengerOrder} /><Button title={busy ? "Отменяем…" : "Отменить заказ"} onPress={() => cancelOrder(passengerOrder)} disabled={busy} secondary /></View>)}
+    <PassengerRouteOrder key={driverRouteSession} endpoint={apiBase} userId={profile.id} token={token} busy={busy} activeOrder={passengerHasActiveOrder} bookingGate={bookingGate} onCreated={refreshOrders} />
     <View style={s.card}>
-      <Text style={s.heading}>Маршрут поездки</Text>
+      <Text style={s.heading}>Прежний маршрут C/D</Text>
       <Text style={s.label}>ТОЧКА А · ОТПРАВЛЕНИЕ</Text>{stops.filter(v => v.code === "C" || v.code === "D").map(v => <Pressable key={"a"+v.id} onPress={() => setA(v.code)} style={[s.stop, a===v.code && s.selected]}><Text style={s.stopText}>{v.name}</Text><Text>{v.code}</Text></Pressable>)}
       <Text style={s.label}>ТОЧКА Б · НАЗНАЧЕНИЕ</Text>{stops.map(v => <Pressable key={"b"+v.id} onPress={() => setB(v.code)} style={[s.stop, b===v.code && s.selected]}><Text style={s.stopText}>{v.name}</Text><Text>{v.code}</Text></Pressable>)}
       <TextInput style={s.input} value={address} onChangeText={setAddress} placeholder="Уточнение адреса подачи (необязательно)" />
-      <View style={s.fare}><Text style={s.label}>ПРЕДВАРИТЕЛЬНАЯ СТОИМОСТЬ</Text><Text style={s.price}>{fareFresh && fare ? new Intl.NumberFormat("ru-RU").format(fare.totalKzt)+" ₸" : "—"}</Text></View>
+      <View style={s.fare}><Text style={s.label}>ПРЕДВАРИТЕЛЬНАЯ СТОИМОСТЬ</Text><Text style={s.price}>{fareFresh && fare ? formatFareMoney(fare) : "—"}</Text></View>
       <View style={s.seatsRow}><Text style={s.descDark}>Пассажиры (до 8)</Text><Stepper value={seats} onChange={setSeats} /></View>
-      <Text style={s.descDark}>Наличие водителей: {checkingAvailability ? "проверяем…" : !availabilityFresh ? "нет актуальных данных" : availability?.available ? "есть свободный водитель" : "Водителей пока нет"}</Text>
+      <Text style={s.descDark}>Наличие водителей: {availabilityDisplay.label}</Text>
       {availabilityError ? <Text style={s.note}>{availabilityError}</Text> : null}
       <Button title="Проверить наличие водителей" onPress={() => { void refreshAvailability(); }} disabled={busy || checkingAvailability} secondary />
-      <Button title={busy ? "Оформляем…" : "Заказать поездку"} onPress={order} disabled={busy || !fareFresh || !canOrder || passengerHasActiveOrder} />
+      <Button title={busy ? "Оформляем…" : "Заказать поездку"} onPress={order} disabled={busy || !fareFresh || !canOrder || passengerHasActiveOrder || !bookingGate.canSubmit()} />
       {passengerHasActiveOrder ? <Text style={s.small}>Сначала заверши или отмени текущий заказ.</Text> : null}
       {message ? <Text style={s.note}>{message}</Text> : null}<Text style={s.small}>Геолокация запрашивается только при оформлении заказа.</Text>
     </View>
-    {availabilityFresh && availability?.available === false ? <View style={s.card}><Text style={s.heading}>Водителей пока нет</Text><Text style={s.descDark}>Для этой точки и количества пассажиров сейчас нет свободного водителя. Попробуй проверить наличие позже.</Text></View> : null}
-    {passengerOrders.some(isClosed) ? <View style={s.card}><Text style={s.heading}>Последние поездки</Text>{passengerOrders.filter(isClosed).slice(0, 3).map(previous => <Text key={previous.id} style={s.descDark}>{previous.pickup_point} → {previous.destination || "по маршруту"}: {statusLabels[previous.status]}</Text>)}</View> : null}
+    {availabilityDisplay.state === "unavailable" ? <View style={s.card}><Text style={s.heading}>Водителей пока нет</Text><Text style={s.descDark}>Для этой точки и количества пассажиров сейчас нет свободного водителя. Попробуй проверить наличие позже.</Text></View> : null}
+    {passengerOrders.some(isClosed) ? <View style={s.card}><Text style={s.heading}>Последние поездки</Text>{passengerOrders.filter(isClosed).slice(0, 3).map(previous => <Text key={previous.id} style={s.descDark}>{ridePickupLabel(previous)} → {rideDestinationLabel(previous)}: {statusLabels[previous.status]}</Text>)}</View> : null}
     </>}
     <Text style={s.footer}>TEZJET · ПАССАЖИР И ВОДИТЕЛЬ В ОДНОМ ПРИЛОЖЕНИИ</Text>
   </ScrollView>;

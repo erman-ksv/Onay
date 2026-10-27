@@ -7,6 +7,9 @@ on:
       - "artifacts/mockup-sandbox/**"
       - "lib/db/**"
       - "scripts/admin-layout-browser-qa.py"
+      - "scripts/admin-audit-client.test.mjs"
+      - "scripts/admin-orders-client.test.mjs"
+      - "scripts/admin-monitoring-client.test.mjs"
       - ".github/workflows/admin-layout-qa.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -21,6 +24,9 @@ on:
       - "artifacts/mockup-sandbox/**"
       - "lib/db/**"
       - "scripts/admin-layout-browser-qa.py"
+      - "scripts/admin-audit-client.test.mjs"
+      - "scripts/admin-orders-client.test.mjs"
+      - "scripts/admin-monitoring-client.test.mjs"
       - ".github/workflows/admin-layout-qa.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -87,6 +93,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Admin audit client contract regressions
+        run: node --experimental-transform-types --test-reporter=tap scripts/admin-audit-client.test.mjs
+      - name: Admin orders client regressions
+        run: node --experimental-transform-types --test-reporter=tap scripts/admin-orders-client.test.mjs
+      - name: Admin monitoring client regressions
+        run: node --experimental-transform-types --test-reporter=tap scripts/admin-monitoring-client.test.mjs
       - name: Typecheck
         run: pnpm run typecheck
 
@@ -98,6 +110,7 @@ jobs:
 
       - name: Build frontend
         env:
+          NODE_ENV: production
           PORT: "4173"
           BASE_PATH: /
         run: pnpm --filter @workspace/mockup-sandbox run build
@@ -112,6 +125,7 @@ jobs:
         env:
           NODE_ENV: development
           PORT: "5000"
+          TEZJET_SERVE_ADMIN_UI: "true"
         run: |
           mkdir -p "$GITHUB_WORKSPACE/artifacts/admin-layout-qa"
           setsid node --enable-source-maps ./dist/index.mjs > "$GITHUB_WORKSPACE/artifacts/admin-layout-qa/api.log" 2>&1 &
@@ -138,6 +152,7 @@ jobs:
           checks = (
               ("API", "http://127.0.0.1:5000/api/healthz", True),
               ("Admin frontend", "http://127.0.0.1:4173/admin", False),
+              ("Built admin served by API", "http://127.0.0.1:5000/admin", False),
               ("Frontend API proxy", "http://127.0.0.1:4173/api/healthz", True),
           )
           for label, url, health in checks:
@@ -164,7 +179,7 @@ jobs:
       - name: Run admin route layout browser QA
         run: |
           python scripts/admin-layout-browser-qa.py \
-            --base-url http://127.0.0.1:4173 \
+            --base-url http://127.0.0.1:5000 \
             --api-url http://127.0.0.1:5000 \
             --output-dir artifacts/admin-layout-qa \
             2>&1 | tee artifacts/admin-layout-qa/browser-qa.log
@@ -204,3 +219,4 @@ jobs:
           path: artifacts/admin-layout-qa
           if-no-files-found: warn
           retention-days: 14
+

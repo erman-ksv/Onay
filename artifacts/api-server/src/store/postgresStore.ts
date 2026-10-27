@@ -1,6 +1,8 @@
+import { applyRoutePricingPatch, normalizeRoutePricing, routePricePerStop } from "../utils/routePricing";
+import { assertVehicleQueueCapacity, assertVehicleReview, createDriverVehicle, hasRequiredDriverApproval } from "../utils/driverVehicle";
 import { createHmac, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
-import type { DriverRouteChoiceInput, ExternalPickupSelectionInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderSelectionInput, Store } from "./storeContract";
+import type { RouteCreateInput, RouteMetadataPatch, RouteOrderResolution, DriverRouteChoiceInput, ExternalPickupSelectionInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderReceipt, RouteOrderSelectionInput, Store } from "./storeContract";
 import { normalizePhone } from "../utils/phone";
 import { emptyOtpRateState, OTP_CLEANUP_BATCH_SIZE, otpFailureState, otpPhoneBlock, otpRateExpiresAt, otpRateKey, recordOtpFailure, takeOtpIp, takeOtpSend } from "./otpProtection";
 import type { OtpRateKind, OtpRateState } from "./otpProtection";
@@ -12,9 +14,11 @@ import { assertExternalQuoteCurrent, buildConfirmedExternalOrder, buildExternalP
 import { AppError } from "../utils/errors";
 import { assertRouteQueueLocation, assertRouteQueueTelemetry, resolveRouteQueue, routeQueueSnapshot, sameQueueLane } from "../utils/routeQueue";
 import type {
+  AdminAuditEvent,
   Coordinates,
   DeviceRegistration,
   DriverApprovalStatus,
+  DriverVehicleInput,
   DriverRouteChoice,
   ExternalPickupQuote,
   ExternalPickupSettings,
@@ -34,6 +38,9 @@ import { OFFER_TIMEOUT_MS, OTP_TTL_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS
 import { acceptQueueOffer, assertLegacyOrderInput, assertOrderOfferPatch, assertQueueOfferPatch, compareOfferDrivers, hasLiveOrderOffer, orderedOfferCandidates, releaseQueueOffer, reserveQueueOffer } from "./orderOffers";
 import { buildRouteOrder, validateRouteOrderSelectionInput } from "../utils/routeOrder";
 import { boundedInteger } from "../utils/validation";
+import type { AdminMutationActor } from "./storeContract";
+import { routeMetadataEvent } from "./routeAudit";
+import { MAX_CLOSED_ROUTE_REQUESTS_PER_DAY, ROUTE_REQUEST_CLOSURE_WINDOW_MS, assertRouteOrderRequestHash, requireRouteOrderRequestKey, routeOrderRequestHash } from "../utils/routeOrderRequest";
 
 type DbModule = typeof import("@workspace/db");
 type DbTransaction = Parameters<Parameters<DbModule["db"]["transaction"]>[0]>[0];
@@ -60,6 +67,7 @@ function asUser(row: Record<string, unknown>): User {
     ...(row.driverRouteChoice == null ? {} : {
       driverRouteChoice: structuredClone(row.driverRouteChoice) as DriverRouteChoice,
     }),
+    ...(row.driverVehicle == null ? {} : { driverVehicle: structuredClone(row.driverVehicle) as User["driverVehicle"] }),
     lastLocation: (row.lastLocation ?? undefined) as Coordinates | undefined,
     createdAt: String(row.createdAt),
   };
@@ -145,6 +153,8 @@ function queueOwnsEligibleOffer(entry: QueueEntry | undefined, order: Order, now
 }
 
 function asRoute(row: Record<string, unknown>): RouteDefinition {
+  // Payload is authoritative: a compatible older KZT writer may update its
+  // legacy tariff while leaving the new projection columns unchanged.
   return row.payload as RouteDefinition;
 }
 
@@ -190,6 +200,8 @@ export class PostgresStore implements Store {
             id: seededRoute.id,
             name: seededRoute.name,
             active: seededRoute.active,
+            currency: seededRoute.currency,
+            pricePerStop: routePricePerStop(seededRoute),
             pricePerStopKzt: seededRoute.pricePerStopKzt,
             createdAt: seededRoute.createdAt,
             updatedAt: seededRoute.updatedAt,
@@ -285,6 +297,7 @@ export class PostgresStore implements Store {
       role: challenge.role,
       locale: challenge.locale,
       fullName: challenge.fullName ?? null,
+      deliveryId: challenge.deliveryId ?? null,
       expiresAt: challenge.expiresAt,
     }).onConflictDoUpdate({
       target: otpChallengesTable.phoneNumber,
@@ -293,6 +306,7 @@ export class PostgresStore implements Store {
         role: challenge.role,
         locale: challenge.locale,
         fullName: challenge.fullName ?? null,
+        deliveryId: challenge.deliveryId ?? null,
         expiresAt: challenge.expiresAt,
       },
     });
@@ -402,6 +416,7 @@ export class PostgresStore implements Store {
           role: challenge.role,
           locale: challenge.locale,
           fullName: challenge.fullName ?? null,
+          deliveryId: challenge.deliveryId ?? null,
           expiresAt: now + OTP_TTL_MS,
         };
         await tx.insert(otpChallengesTable).values(values).onConflictDoUpdate({
@@ -441,12 +456,28 @@ export class PostgresStore implements Store {
           locale: row.locale as Locale,
           fullName: row.fullName ?? undefined,
           expiresAt: Number(row.expiresAt),
+          ...(row.deliveryId ? { deliveryId: row.deliveryId } : {}),
         } };
       }
       const failure = recordOtpFailure(verification, now);
       await this.saveOtpState(tx, otpRateLimitsTable, "verify", verifyKey, failure);
       const limit = otpPhoneBlock(failure, now);
       return limit.allowed ? { status: "invalid" } : { status: "limited", retryAfterMs: limit.retryAfterMs };
+    });
+  }
+
+  async discardOtpDelivery(phone: string, deliveryId: string): Promise<boolean> {
+    // Invalid identities must never turn a conditional delete into a phone-only delete.
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(deliveryId)) return false;
+    const phoneNumber = normalizePhone(phone);
+    const { db, otpRateLimitsTable, otpChallengesTable } = await this.database();
+    return db.transaction(async tx => {
+      await this.lockOtpStates(tx, otpRateLimitsTable, [otpRateKey("send", phoneNumber), otpRateKey("verify", phoneNumber)]);
+      const deleted = await tx.delete(otpChallengesTable).where(and(
+        eq(otpChallengesTable.phoneNumber, phoneNumber), eq(otpChallengesTable.deliveryId, deliveryId),
+      )).returning({ phoneNumber: otpChallengesTable.phoneNumber });
+      // Do not refund or reset budgets: a rejected provider request still consumed admission.
+      return deleted.length > 0;
     });
   }
 
@@ -494,6 +525,30 @@ export class PostgresStore implements Store {
     });
   }
 
+  async setDriverVehicle(userId: string, input: DriverVehicleInput, expectedSessionVersion: number): Promise<User> {
+    const { db, usersTable, driverQueueTable, ordersTable } = await this.database();
+    return db.transaction(async tx => {
+      // Match route/offer lock order: queue first, then user. No later locking
+      // order/queue reads while holding the user lock.
+      const [queued] = await tx.select({ id: driverQueueTable.driverId }).from(driverQueueTable)
+        .where(eq(driverQueueTable.driverId, userId)).for("update").limit(1);
+      const [row] = await tx.select().from(usersTable).where(eq(usersTable.id, userId)).for("update").limit(1);
+      if (!row || row.sessionVersion !== expectedSessionVersion) throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+      if (row.role !== "driver") throw new AppError(403, "driver mode is required", "FORBIDDEN");
+      const [newQueue] = queued ? [queued] : await tx.select({ id: driverQueueTable.driverId }).from(driverQueueTable)
+        .where(eq(driverQueueTable.driverId, userId)).limit(1);
+      const [active] = await tx.select({ id: ordersTable.id }).from(ordersTable).where(and(
+        sql`${ordersTable.status} NOT IN ('completed', 'cancelled')`,
+        or(eq(ordersTable.passengerId, userId), eq(ordersTable.driverId, userId), eq(ordersTable.offeredDriverId, userId)),
+      )).limit(1);
+      if (newQueue || active) throw new AppError(409, "Finish active orders and leave the queue before changing the vehicle", "DRIVER_VEHICLE_BUSY");
+      const vehicle = createDriverVehicle(input, asUser(row as unknown as Record<string, unknown>).driverVehicle);
+      const [updated] = await tx.update(usersTable).set({ driverVehicle: vehicle as unknown as Record<string, unknown>, driverApprovalStatus: "pending" })
+        .where(eq(usersTable.id, userId)).returning();
+      return asUser(updated as unknown as Record<string, unknown>);
+    });
+  }
+
   async setDriverRouteChoice(userId: string, input: DriverRouteChoiceInput | null, expectedSessionVersion: number): Promise<DriverRouteChoice | null> {
     const value = input === null ? null : validateDriverRouteChoiceInput(input);
     const { db, usersTable, driverQueueTable, ordersTable, routesTable } = await this.database();
@@ -508,7 +563,7 @@ export class PostgresStore implements Store {
         throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
       }
       if (userRow.role !== "driver") throw new AppError(403, "driver mode is required", "FORBIDDEN");
-      if (REQUIRE_DRIVER_APPROVAL && userRow.driverApprovalStatus !== "approved") {
+      if (!hasRequiredDriverApproval(userRow, REQUIRE_DRIVER_APPROVAL)) {
         throw new AppError(403, "Driver approval is required", "DRIVER_APPROVAL_REQUIRED");
       }
       // A join that acquired the user SHARE lock first has committed by now.
@@ -551,6 +606,7 @@ export class PostgresStore implements Store {
       locale: row.locale as Locale,
       fullName: row.fullName ?? undefined,
       expiresAt: Number(row.expiresAt),
+      ...(row.deliveryId ? { deliveryId: row.deliveryId } : {}),
     } : undefined;
   }
 
@@ -613,9 +669,10 @@ export class PostgresStore implements Store {
         throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
       }
       if (user.role !== "driver") throw new AppError(403, "driver mode is required", "FORBIDDEN");
-      if (user.driverRouteChoice && REQUIRE_DRIVER_APPROVAL && user.driverApprovalStatus !== "approved") {
+      if (user.driverRouteChoice && !hasRequiredDriverApproval(user, REQUIRE_DRIVER_APPROVAL)) {
         throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");
       }
+      assertVehicleQueueCapacity(asUser(user as unknown as Record<string, unknown>), entry.availableSeats);
       const choice = user.driverRouteChoice as DriverRouteChoice | null;
       const [routeRow] = choice ? await tx.select().from(routesTable).where(eq(routesTable.id, choice.routeId)).for("share").limit(1) : [];
       const routeContext = resolveRouteQueue(choice ?? undefined,
@@ -728,7 +785,7 @@ export class PostgresStore implements Store {
             throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
           }
           if (driver.role !== "driver") throw new AppError(403, "driver mode is required", "FORBIDDEN");
-          if (REQUIRE_DRIVER_APPROVAL && driver.driverApprovalStatus !== "approved") {
+          if (!hasRequiredDriverApproval(driver, REQUIRE_DRIVER_APPROVAL)) {
             throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");
           }
           const activeIds = new Set(lineOrderIds(entry));
@@ -807,7 +864,8 @@ export class PostgresStore implements Store {
         isNull(driverQueueTable.pendingOfferOrderId),
         pickupPoint === "D" ? eq(driverQueueTable.status, "in_transit") : eq(driverQueueTable.inFifo, true),
         eq(usersTable.role, "driver"),
-        REQUIRE_DRIVER_APPROVAL ? eq(usersTable.driverApprovalStatus, "approved") : undefined,
+        REQUIRE_DRIVER_APPROVAL ? eq(usersTable.driverApprovalStatus, "approved") :
+          or(isNull(usersTable.driverVehicle), eq(usersTable.driverApprovalStatus, "approved")),
       ));
     const eligibleDriverCount = orderedOfferCandidates(
       { pickupPoint, seats, attemptedDriverIds: [] },
@@ -834,7 +892,8 @@ export class PostgresStore implements Store {
           eq(driverQueueTable.inFifo, true), configuredOfferPhase(driverQueueTable),
           sql`${driverQueueTable.routeContext}->>'routeId' = ${choice.routeId} AND ${driverQueueTable.routeContext}->>'direction' = ${choice.direction} AND ${driverQueueTable.routeContext}->>'routeUpdatedAt' = ${choice.expectedUpdatedAt} AND ${driverQueueTable.routeContext}->>'pitak' = ${choice.direction === "a_to_b" ? "A" : "B"}`,
           eq(usersTable.role, "driver"),
-          REQUIRE_DRIVER_APPROVAL ? eq(usersTable.driverApprovalStatus, "approved") : undefined,
+          REQUIRE_DRIVER_APPROVAL ? eq(usersTable.driverApprovalStatus, "approved") :
+          or(isNull(usersTable.driverVehicle), eq(usersTable.driverApprovalStatus, "approved")),
         ));
       const eligibleDriverCount = orderedOfferCandidates(
         { ...details, seats }, rows.map(row => asQueueEntry(row.queue as unknown as Record<string, unknown>)), Date.now(), route,
@@ -866,7 +925,8 @@ export class PostgresStore implements Store {
           sql`${driverQueueTable.collectionState}->>'phase' = 'collecting'`,
           sql`${driverQueueTable.routeContext}->>'routeId' = ${choice.routeId} AND ${driverQueueTable.routeContext}->>'direction' = ${choice.direction} AND ${driverQueueTable.routeContext}->>'routeUpdatedAt' = ${choice.expectedUpdatedAt}`,
           eq(usersTable.role, "driver"),
-          REQUIRE_DRIVER_APPROVAL ? eq(usersTable.driverApprovalStatus, "approved") : undefined,
+          REQUIRE_DRIVER_APPROVAL ? eq(usersTable.driverApprovalStatus, "approved") :
+          or(isNull(usersTable.driverVehicle), eq(usersTable.driverApprovalStatus, "approved")),
         ));
       const now = Date.now();
       return {
@@ -917,6 +977,8 @@ export class PostgresStore implements Store {
           throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
         }
         if (passenger.role !== "passenger") throw new AppError(403, "passenger mode is required", "FORBIDDEN");
+        const currency = quote.version === 1 ? "KZT" : quote.version === 2 ? quote.currency : undefined;
+        if (currency !== existing.fare.currency) throw new AppError(409, "Pickup quote currency changed", "PICKUP_QUOTE_CHANGED");
         return { order: existing, created: false, changed: false };
       }
 
@@ -934,7 +996,7 @@ export class PostgresStore implements Store {
       }
       if (passenger.role !== "passenger") throw new AppError(403, "passenger mode is required", "FORBIDDEN");
       const driver = users.find(user => user.id === quote.driverId);
-      if (!driver || driver.role !== "driver" || (REQUIRE_DRIVER_APPROVAL && driver.driverApprovalStatus !== "approved")) {
+      if (!driver || driver.role !== "driver" || !hasRequiredDriverApproval(driver, REQUIRE_DRIVER_APPROVAL)) {
         throw new AppError(409, "Selected driver is no longer available", "QUOTE_CHANGED");
       }
       const [routeRow] = await tx.select().from(routesTable)
@@ -957,26 +1019,127 @@ export class PostgresStore implements Store {
 
   async createOrderWithOffer(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number): Promise<Order | undefined> {
     assertLegacyOrderInput(input);
-    return this.reserveNewOrder(input, expectedSessionVersion);
+    return (await this.reserveNewOrder(input, expectedSessionVersion))?.order;
   }
 
   async createRouteOrderWithOffer(input: RouteOrderInput, selection: RouteOrderSelectionInput, expectedSessionVersion?: number): Promise<Order | undefined> {
     const choice = validateRouteOrderSelectionInput(selection);
     if (!input.pickupLocation) throw new AppError(422, "Pickup location is required", "OUTSIDE_PICKUP_GEOFENCE");
-    return this.reserveNewOrder({
+    return (await this.reserveNewOrder({
       passengerId: input.passengerId, passengerPhone: input.passengerPhone,
       pickupLocation: structuredClone(input.pickupLocation), seats: boundedInteger(input.seats, "seats", 1, 8),
-    }, expectedSessionVersion, choice);
+    }, expectedSessionVersion, choice))?.order;
+  }
+
+  async getRouteOrderRequest(passengerId: string, requestKey: string, expectedSessionVersion?: number): Promise<RouteOrderReceipt | undefined> {
+    const key = requireRouteOrderRequestKey(requestKey);
+    const { db, usersTable, ordersTable, routeOrderRequestsTable, closedRouteOrderRequestsTable } = await this.database();
+    return db.transaction(async tx => {
+      // No order/queue lock is taken after this user lock. A revoked session
+      // cannot recover a receipt, even if the caller already knows its key.
+      const [passenger] = await tx.select().from(usersTable)
+        .where(eq(usersTable.id, passengerId)).for("share").limit(1);
+      if (!passenger || (expectedSessionVersion !== undefined && passenger.sessionVersion !== expectedSessionVersion)) {
+        throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+      }
+      if (passenger.role !== "passenger") throw new AppError(403, "passenger mode is required", "FORBIDDEN");
+      const [receipt] = await tx.select().from(routeOrderRequestsTable).where(and(
+        eq(routeOrderRequestsTable.passengerId, passengerId), eq(routeOrderRequestsTable.requestKey, key),
+      )).limit(1);
+      if (!receipt) {
+        const [closed] = await tx.select().from(closedRouteOrderRequestsTable).where(and(eq(closedRouteOrderRequestsTable.passengerId, passengerId), eq(closedRouteOrderRequestsTable.requestKey, key))).limit(1);
+        if (closed) throw new AppError(409, "Booking request was closed", "ORDER_REQUEST_CLOSED");
+        return undefined;
+      }
+      const [row] = await tx.select().from(ordersTable).where(and(
+        eq(ordersTable.id, receipt.orderId), eq(ordersTable.passengerId, passengerId),
+      )).limit(1);
+      if (!row) throw new AppError(409, "Order recovery requires review", "ORDER_RECOVERY_REQUIRED");
+      return { order: asOrder(row as unknown as Record<string, unknown>), requestHash: receipt.requestHash };
+    });
+  }
+
+  async resolveRouteOrderRequest(passengerId: string, requestKey: string, expectedSessionVersion?: number): Promise<RouteOrderResolution> {
+    const key = requireRouteOrderRequestKey(requestKey);
+    const { db, usersTable, ordersTable, routeOrderRequestsTable, closedRouteOrderRequestsTable } = await this.database();
+    return db.transaction<RouteOrderResolution>(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${JSON.stringify(["onay-route-order", passengerId, key])}, 0))`);
+      const [passenger] = await tx.select().from(usersTable).where(eq(usersTable.id, passengerId)).for("share").limit(1);
+      if (!passenger || (expectedSessionVersion !== undefined && passenger.sessionVersion !== expectedSessionVersion)) throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+      if (passenger.role !== "passenger") throw new AppError(403, "passenger mode is required", "FORBIDDEN");
+      const [receipt] = await tx.select().from(routeOrderRequestsTable).where(and(eq(routeOrderRequestsTable.passengerId, passengerId), eq(routeOrderRequestsTable.requestKey, key))).limit(1);
+      if (receipt) {
+        const [order] = await tx.select().from(ordersTable).where(and(eq(ordersTable.id, receipt.orderId), eq(ordersTable.passengerId, passengerId))).limit(1);
+        if (!order) throw new AppError(409, "Order recovery requires review", "ORDER_RECOVERY_REQUIRED");
+        return { state: "created", order: asOrder(order as unknown as Record<string, unknown>) };
+      }
+      const [closed] = await tx.select().from(closedRouteOrderRequestsTable).where(and(eq(closedRouteOrderRequestsTable.passengerId, passengerId), eq(closedRouteOrderRequestsTable.requestKey, key))).limit(1);
+      if (closed) return { state: "closed", requestKey: key };
+      // Different keys share a per-passenger quota; locks always precede the count.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${JSON.stringify(["onay-route-order-close-quota", passengerId])}, 0))`);
+      const now = new Date(Date.now());
+      const [usage] = await tx.select({ count: sql<number>`count(*)::int` }).from(closedRouteOrderRequestsTable).where(and(eq(closedRouteOrderRequestsTable.passengerId, passengerId), gt(closedRouteOrderRequestsTable.closedAt, new Date(now.getTime() - ROUTE_REQUEST_CLOSURE_WINDOW_MS).toISOString())));
+      if (usage.count >= MAX_CLOSED_ROUTE_REQUESTS_PER_DAY) throw new AppError(429, "Too many recovery closures; retry later", "ORDER_RECOVERY_LIMIT");
+      await tx.insert(closedRouteOrderRequestsTable).values({ passengerId, requestKey: key, closedAt: now.toISOString() });
+      return { state: "closed", requestKey: key };
+    });
+  }
+
+  async createRouteOrderOnce(input: RouteOrderInput, selection: RouteOrderSelectionInput, requestKey: string, expectedSessionVersion?: number): Promise<{ order: Order; created: boolean } | undefined> {
+    const key = requireRouteOrderRequestKey(requestKey);
+    const choice = validateRouteOrderSelectionInput(selection);
+    if (!input.pickupLocation) throw new AppError(422, "Pickup location is required", "OUTSIDE_PICKUP_GEOFENCE");
+    const seats = boundedInteger(input.seats, "seats", 1, 8);
+    return this.reserveNewOrder({
+      passengerId: input.passengerId, passengerPhone: input.passengerPhone,
+      pickupLocation: structuredClone(input.pickupLocation), seats,
+    }, expectedSessionVersion, choice, { key, hash: routeOrderRequestHash(choice, seats) });
   }
 
   private async reserveNewOrder(
     input: Omit<Order, "id" | "createdAt" | "updatedAt"> | RouteOrderInput,
     expectedSessionVersion?: number,
     selection?: RouteOrderSelectionInput,
-  ): Promise<Order | undefined> {
-    const { db, driverQueueTable, usersTable, ordersTable, routesTable } = await this.database();
+    request?: { key: string; hash: string },
+  ): Promise<{ order: Order; created: boolean } | undefined> {
+    const { db, driverQueueTable, usersTable, ordersTable, routesTable, routeOrderRequestsTable, closedRouteOrderRequestsTable } = await this.database();
     const legacyInput = input as Omit<Order, "id" | "createdAt" | "updatedAt">;
     return db.transaction(async tx => {
+      if (request) {
+        // Serialize the same passenger/key across server instances before any
+        // queue/user lock. The receipt and reservation commit together, so a
+        // transport failure or process restart cannot reserve a second order.
+        // Hash collisions only serialize unrelated requests; they cannot alias
+        // receipts, whose unique identity is the full passenger/key pair.
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${JSON.stringify(["onay-route-order", input.passengerId, request.key])}, 0))`);
+        const [receipt] = await tx.select().from(routeOrderRequestsTable).where(and(
+          eq(routeOrderRequestsTable.passengerId, input.passengerId),
+          eq(routeOrderRequestsTable.requestKey, request.key),
+        )).limit(1);
+        if (receipt) {
+          const [passenger] = await tx.select().from(usersTable)
+            .where(eq(usersTable.id, input.passengerId)).for("share").limit(1);
+          if (!passenger || (expectedSessionVersion !== undefined && passenger.sessionVersion !== expectedSessionVersion)) {
+            throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+          }
+          if (passenger.role !== "passenger") throw new AppError(403, "passenger mode is required", "FORBIDDEN");
+          assertRouteOrderRequestHash(receipt.requestHash, request.hash);
+          // Read without a row lock: lifecycle writes use order -> queue ->
+          // user, and adding an order lock here would invert that ordering.
+          const [row] = await tx.select().from(ordersTable).where(and(
+            eq(ordersTable.id, receipt.orderId), eq(ordersTable.passengerId, input.passengerId),
+          )).limit(1);
+          if (!row) throw new AppError(409, "Order recovery requires review", "ORDER_RECOVERY_REQUIRED");
+          return { order: asOrder(row as unknown as Record<string, unknown>), created: false };
+        }
+        const [closed] = await tx.select().from(closedRouteOrderRequestsTable).where(and(eq(closedRouteOrderRequestsTable.passengerId, input.passengerId), eq(closedRouteOrderRequestsTable.requestKey, request.key))).limit(1);
+        if (closed) {
+          const [passenger] = await tx.select().from(usersTable).where(eq(usersTable.id, input.passengerId)).for("share").limit(1);
+          if (!passenger || (expectedSessionVersion !== undefined && passenger.sessionVersion !== expectedSessionVersion)) throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+          if (passenger.role !== "passenger") throw new AppError(403, "passenger mode is required", "FORBIDDEN");
+          throw new AppError(409, "Booking request was closed", "ORDER_REQUEST_CLOSED");
+        }
+      }
       // This order does not exist yet. Locking queue rows before inserting its
       // new UUID cannot acquire or wait on another existing order row.
       const queueRows = await tx.select().from(driverQueueTable).where(and(
@@ -1009,7 +1172,7 @@ export class PostgresStore implements Store {
         orderInput = { ...input, ...buildRouteOrder(liveRoute, selection, input.pickupLocation), status: "searching" };
       }
       const approvedIds = new Set(users.filter(user => user.role === "driver" &&
-        (!REQUIRE_DRIVER_APPROVAL || user.driverApprovalStatus === "approved")).map(user => user.id));
+        hasRequiredDriverApproval(user, REQUIRE_DRIVER_APPROVAL)).map(user => user.id));
       const now = Date.now();
       const candidate = orderedOfferCandidates(
         { ...orderInput, attemptedDriverIds: [] },
@@ -1041,7 +1204,13 @@ export class PostgresStore implements Store {
         createdAt: order.createdAt,
         ...orderValues(order),
       }).returning();
-      return asOrder(row as unknown as Record<string, unknown>);
+      if (request) {
+        await tx.insert(routeOrderRequestsTable).values({
+          passengerId: input.passengerId, requestKey: request.key,
+          requestHash: request.hash, orderId: order.id, createdAt: timestamp,
+        });
+      }
+      return { order: asOrder(row as unknown as Record<string, unknown>), created: true };
     });
   }
 
@@ -1136,7 +1305,7 @@ export class PostgresStore implements Store {
         const [driver] = previousDriverId ? await tx.select().from(usersTable)
           .where(eq(usersTable.id, previousDriverId)).for("share").limit(1) : [];
         const approved = Boolean(driver && driver.role === "driver" &&
-          (!REQUIRE_DRIVER_APPROVAL || driver.driverApprovalStatus === "approved"));
+          hasRequiredDriverApproval(driver, REQUIRE_DRIVER_APPROVAL));
         if (rejectingDriverId !== undefined && expectedSessionVersion !== undefined) {
           if (!driver || driver.id !== rejectingDriverId || driver.sessionVersion !== expectedSessionVersion) {
             throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
@@ -1188,7 +1357,7 @@ export class PostgresStore implements Store {
         ).orderBy(asc(usersTable.id)).for("share")
         : [];
       const approvedIds = new Set(liveDrivers.filter(driver => driver.role === "driver" &&
-        (!REQUIRE_DRIVER_APPROVAL || driver.driverApprovalStatus === "approved")).map(driver => driver.id));
+        hasRequiredDriverApproval(driver, REQUIRE_DRIVER_APPROVAL)).map(driver => driver.id));
       if (rejectingDriverId !== undefined && expectedSessionVersion !== undefined) {
         const actor = liveDrivers.find(driver => driver.id === rejectingDriverId);
         if (!actor || actor.sessionVersion !== expectedSessionVersion) {
@@ -1264,7 +1433,7 @@ export class PostgresStore implements Store {
       if (expectedSessionVersion !== undefined && (!driver || driver.sessionVersion !== expectedSessionVersion)) {
         throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
       }
-      if (!driver || driver.role !== "driver" || (REQUIRE_DRIVER_APPROVAL && driver.driverApprovalStatus !== "approved")) {
+      if (!driver || driver.role !== "driver" || !hasRequiredDriverApproval(driver, REQUIRE_DRIVER_APPROVAL)) {
         if (order.externalPickup) {
           if (entry) {
             const released = releaseQueueOffer(entry, order);
@@ -1351,14 +1520,36 @@ export class PostgresStore implements Store {
     expectedStatus?: OrderStatus,
     expectedSessionVersion?: number,
   ): Promise<Order | undefined> {
-    const { db, ordersTable, driverQueueTable, usersTable } = await this.database();
+    return this.transitionOrderInternal(orderId, actorId, nextStatus, expectedStatus, expectedSessionVersion);
+  }
+
+  async cancelOrderAsAdmin(orderId: string, adminId: string, expectedStatus: OrderStatus, expectedSessionVersion: number): Promise<Order | undefined> {
+    return this.transitionOrderInternal(orderId, adminId, "cancelled", expectedStatus, expectedSessionVersion, true);
+  }
+
+  async listAdminAuditEvents(orderId?: string, limit = 50, driverId?: string, routeId?: string): Promise<AdminAuditEvent[]> {
+    const count = boundedInteger(limit, "limit", 1, 100);
+    const { db, adminAuditEventsTable: events } = await this.database();
+    const rows = await db.select().from(events).where(and(orderId ? eq(events.orderId, orderId) : undefined, driverId ? eq(events.driverId, driverId) : undefined, routeId ? eq(events.routeId, routeId) : undefined))
+      .orderBy(desc(events.createdAt), desc(events.id)).limit(count);
+    return rows.map(({ orderId, driverId, vehicleRevision, routeId, changedFields, previousVersion, nextVersion, fromStatus, toStatus, ...event }) => ({ ...event,
+      ...(orderId ? { orderId } : {}), ...(driverId ? { driverId } : {}), ...(vehicleRevision ? { vehicleRevision } : {}),
+      ...(routeId ? { routeId } : {}), ...(changedFields ? { changedFields } : {}), ...(previousVersion ? { previousVersion } : {}), ...(nextVersion ? { nextVersion } : {}),
+      ...(fromStatus ? { fromStatus } : {}), ...(toStatus ? { toStatus } : {}) } as AdminAuditEvent));
+  }
+
+  private async transitionOrderInternal(
+    orderId: string, actorId: string, nextStatus: OrderStatus, expectedStatus?: OrderStatus,
+    expectedSessionVersion?: number, adminCancellation = false,
+  ): Promise<Order | undefined> {
+    const { db, ordersTable, driverQueueTable, usersTable, adminAuditEventsTable } = await this.database();
     return db.transaction(async (tx) => {
       // Every lifecycle operation acquires the order before any queue row.
       const [orderRow] = await tx.select().from(ordersTable).where(eq(ordersTable.id, orderId))
         .for("update").limit(1);
       if (!orderRow) return undefined;
       const order = asOrder(orderRow as unknown as Record<string, unknown>);
-      if (!canTransitionOrder(order, actorId, nextStatus, expectedStatus)) return undefined;
+      if (!canTransitionOrder(order, actorId, nextStatus, expectedStatus, adminCancellation)) return undefined;
       const queueDriverId = order.driverId ?? (nextStatus === "cancelled" ? order.offeredDriverId : undefined);
       let entry: QueueEntry | undefined;
       if (queueDriverId) {
@@ -1366,16 +1557,17 @@ export class PostgresStore implements Store {
           .where(eq(driverQueueTable.driverId, queueDriverId)).for("update").limit(1);
         entry = queueRow ? asQueueEntry(queueRow as unknown as Record<string, unknown>) : undefined;
       }
-      if (expectedSessionVersion !== undefined || nextStatus === "boarded_waiting") {
+      if (adminCancellation && expectedSessionVersion === undefined) throw new AppError(401, "Session is required", "UNAUTHORIZED");
+      if (adminCancellation || expectedSessionVersion !== undefined || nextStatus === "boarded_waiting") {
         // Acquire the actor only after the order and its queue, matching every
         // offer operation and preventing revocation from racing this transition.
         const [actor] = await tx.select().from(usersTable).where(eq(usersTable.id, actorId)).for("share").limit(1);
         if (!actor || (expectedSessionVersion !== undefined && actor.sessionVersion !== expectedSessionVersion)) {
           throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
         }
-        const role = actorId === order.passengerId ? "passenger" : "driver";
+        const role = adminCancellation ? "admin" : actorId === order.passengerId ? "passenger" : "driver";
         if (actor.role !== role) throw new AppError(403, `${role} mode is required`, "FORBIDDEN");
-        if (role === "driver" && REQUIRE_DRIVER_APPROVAL && actor.driverApprovalStatus !== "approved") {
+        if (role === "driver" && !hasRequiredDriverApproval(actor, REQUIRE_DRIVER_APPROVAL)) {
           throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");
         }
       }
@@ -1403,6 +1595,10 @@ export class PostgresStore implements Store {
         updatedAt: updated.updatedAt,
         payload: updated as unknown as Record<string, unknown>,
       }).where(eq(ordersTable.id, orderId));
+      if (adminCancellation) await tx.insert(adminAuditEventsTable).values({
+        id: randomUUID(), actorId, action: "order.cancelled", orderId,
+        fromStatus: order.status, toStatus: "cancelled", createdAt: updated.updatedAt,
+      });
       return updated;
     });
   }
@@ -1510,11 +1706,51 @@ export class PostgresStore implements Store {
     return rows.map((row) => asUser(row as unknown as Record<string, unknown>));
   }
 
-  async setDriverApproval(userId: string, status: DriverApprovalStatus): Promise<User | undefined> {
-    const { db, usersTable } = await this.database();
-    const [row] = await db.update(usersTable).set({ driverApprovalStatus: status })
-      .where(and(eq(usersTable.id, userId), sql`${usersTable.roles} ? 'driver'`)).returning();
-    return row ? asUser(row as unknown as Record<string, unknown>) : undefined;
+  async setDriverApproval(userId: string, status: DriverApprovalStatus, expectedVehicleRevision?: string | null): Promise<User | undefined> {
+    return this.setDriverApprovalInternal(userId, status, expectedVehicleRevision);
+  }
+
+  async setDriverApprovalAsAdmin(userId: string, status: DriverApprovalStatus, expectedVehicleRevision: string | null | undefined, adminId: string, expectedSessionVersion: number): Promise<User | undefined> {
+    return this.setDriverApprovalInternal(userId, status, expectedVehicleRevision, { adminId, expectedSessionVersion });
+  }
+
+  private async setDriverApprovalInternal(userId: string, status: DriverApprovalStatus, expectedVehicleRevision?: string | null,
+    audit?: { adminId: string; expectedSessionVersion: number }): Promise<User | undefined> {
+    const { db, usersTable, adminAuditEventsTable } = await this.database();
+    return db.transaction(async tx => {
+      if (audit) {
+        // Preserve authorization before target lookup, without holding an
+        // administrator lock while waiting for the driver. Recheck below
+        // under SHARE so a concurrent session/role revocation cannot commit.
+        const [actor] = await tx.select().from(usersTable).where(eq(usersTable.id, audit.adminId)).limit(1);
+        if (!actor || audit.expectedSessionVersion === undefined || actor.sessionVersion !== audit.expectedSessionVersion) throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+        if (actor.role !== "admin") throw new AppError(403, "Administrator role is required", "FORBIDDEN");
+      }
+      // A review owns the driver first and only SHARE-locks its administrator.
+      // Taking administrator UPDATE before the driver can cycle with booking
+      // (driver SHARE -> route SHARE) and route edits (route UPDATE -> admin SHARE).
+      const [row] = await tx.select().from(usersTable).where(eq(usersTable.id, userId)).for("update").limit(1);
+      if (!row || !(row.roles as string[]).includes("driver")) return undefined;
+      if (audit) {
+        // Admin accounts cannot be review targets, including legacy mixed-role
+        // accounts. Reject before a second lock so reciprocal/self reviews
+        // cannot reintroduce an account-to-account lock cycle.
+        if (userId === audit.adminId || row.role === "admin" || (row.roles as string[]).includes("admin")) {
+          throw new AppError(403, "Administrator accounts cannot be reviewed as drivers", "FORBIDDEN");
+        }
+        const [actor] = await tx.select().from(usersTable).where(eq(usersTable.id, audit.adminId)).for("share").limit(1);
+        if (!actor || audit.expectedSessionVersion === undefined || actor.sessionVersion !== audit.expectedSessionVersion) throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+        if (actor.role !== "admin") throw new AppError(403, "Administrator role is required", "FORBIDDEN");
+      }
+      const driver = asUser(row as unknown as Record<string, unknown>);
+      assertVehicleReview(driver, expectedVehicleRevision);
+      const previous = driver.driverApprovalStatus ?? "pending";
+      if (audit && previous === status) return driver;
+      const [updated] = await tx.update(usersTable).set({ driverApprovalStatus: status }).where(eq(usersTable.id, userId)).returning();
+      if (audit) await tx.insert(adminAuditEventsTable).values({ id: randomUUID(), actorId: audit.adminId, action: "driver.approval_changed", driverId: userId,
+        vehicleRevision: driver.driverVehicle?.revision ?? null, fromStatus: previous, toStatus: status, createdAt: new Date().toISOString() });
+      return asUser(updated as unknown as Record<string, unknown>);
+    });
   }
 
   async listRoutes(): Promise<RouteDefinition[]> {
@@ -1537,23 +1773,25 @@ export class PostgresStore implements Store {
     routeId: string,
     input: { expectedUpdatedAt: string; settings: ExternalPickupSettings },
   ): Promise<RouteDefinition | undefined> {
-    const settings = normalizeExternalPickupSettings(input.settings);
     return this.mutateRoute(routeId, route => {
       if (route.updatedAt !== input.expectedUpdatedAt) {
         throw new AppError(409, "Route changed; reload the catalog", "ROUTE_CHANGED");
       }
+      const settings = normalizeExternalPickupSettings(input.settings, route.currency);
       return {
         route: { ...route, externalPickup: settings, updatedAt: nextRouteUpdatedAt(route.updatedAt) },
       };
     });
   }
 
-  async createRoute(input: { id: string; name: string; pricePerStopKzt: number; active: boolean }): Promise<RouteDefinition> {
+  async createRoute(input: RouteCreateInput): Promise<RouteDefinition> {
     const { db, routesTable } = await this.database();
     const now = new Date().toISOString();
     const route: RouteDefinition = {
-      ...input,
-      currency: "KZT",
+      id: input.id,
+      name: input.name,
+      active: input.active,
+      ...normalizeRoutePricing(input),
       stops: [],
       createdAt: now,
       updatedAt: now,
@@ -1562,7 +1800,9 @@ export class PostgresStore implements Store {
       id: route.id,
       name: route.name,
       active: route.active,
-      pricePerStopKzt: route.pricePerStopKzt,
+      currency: route.currency,
+      pricePerStop: routePricePerStop(route),
+      pricePerStopKzt: route.currency === "KZT" ? routePricePerStop(route) : null,
       createdAt: route.createdAt,
       updatedAt: route.updatedAt,
       payload: route as unknown as Record<string, unknown>,
@@ -1571,10 +1811,10 @@ export class PostgresStore implements Store {
     return asRoute(row as unknown as Record<string, unknown>);
   }
 
-  async updateRoute(routeId: string, patch: Partial<Pick<RouteDefinition, "name" | "pricePerStopKzt" | "active">>): Promise<RouteDefinition | undefined> {
+  async updateRoute(routeId: string, patch: RouteMetadataPatch, audit?: AdminMutationActor): Promise<RouteDefinition | undefined> {
     return this.mutateRoute(routeId, (route) => ({
-      route: { ...route, ...patch, updatedAt: nextRouteUpdatedAt(route.updatedAt) },
-    }));
+      route: { ...applyRoutePricingPatch(route, patch), updatedAt: nextRouteUpdatedAt(route.updatedAt) },
+    }), audit);
   }
 
   async deleteRoute(routeId: string): Promise<boolean> {
@@ -1613,22 +1853,34 @@ export class PostgresStore implements Store {
   private async mutateRoute<T = RouteDefinition>(
     routeId: string,
     mutate: (route: RouteDefinition) => { route: RouteDefinition; result?: T } | undefined,
+    audit?: AdminMutationActor,
   ): Promise<T | undefined> {
-    const { db, routesTable } = await this.database();
+    const { db, routesTable, usersTable, adminAuditEventsTable } = await this.database();
     return db.transaction(async tx => {
       const [current] = await tx.select().from(routesTable)
         .where(eq(routesTable.id, routeId)).for("update").limit(1);
       if (!current) return undefined;
-      const changed = mutate(asRoute(current as unknown as Record<string, unknown>));
+      if (audit) {
+        const [actor] = await tx.select().from(usersTable).where(eq(usersTable.id, audit.adminId)).for("share").limit(1);
+        if (!actor || audit.expectedSessionVersion === undefined || actor.sessionVersion !== audit.expectedSessionVersion) throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+        if (actor.role !== "admin") throw new AppError(403, "Administrator role is required", "FORBIDDEN");
+      }
+      const before = asRoute(current as unknown as Record<string, unknown>);
+      const changed = mutate(before);
       if (!changed) return undefined;
       const { route } = changed;
+      const event = audit ? routeMetadataEvent(before, route, audit.adminId) : undefined;
+      if (audit && !event) return (changed.result ?? before) as T;
       const [row] = await tx.update(routesTable).set({
         name: route.name,
         active: route.active,
-        pricePerStopKzt: route.pricePerStopKzt,
+        currency: route.currency,
+        pricePerStop: routePricePerStop(route),
+        pricePerStopKzt: route.currency === "KZT" ? routePricePerStop(route) : null,
         updatedAt: route.updatedAt,
         payload: route as unknown as Record<string, unknown>,
       }).where(eq(routesTable.id, routeId)).returning();
+      if (event) await tx.insert(adminAuditEventsTable).values(event);
       return changed.result ?? asRoute(row as unknown as Record<string, unknown>) as T;
     });
   }

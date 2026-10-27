@@ -10,6 +10,7 @@ import { quoteExternalPickup } from "../services/externalPickupService";
 import { createExternalPickupQuoteToken, verifyExternalPickupQuoteToken } from "../services/externalPickupQuoteToken";
 import { publishOrderOfferChanges } from "../services/orderDispatchService";
 import { serializeOrder } from "../utils/serialize";
+import { externalQuoteAmounts } from "../utils/externalMoney";
 
 function fields(value: unknown, allowed: readonly string[]): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
@@ -59,14 +60,17 @@ export async function createExternalPickupQuote(request: Request, response: Resp
     };
   }
   const quote = await quoteExternalPickup(actor.userId, actor.user.sessionVersion, input);
+  const money = externalQuoteAmounts(quote);
   response.json({
     quote_token: createExternalPickupQuoteToken(quote),
     quote: {
       quote_id: quote.quoteId, order_id: quote.orderId ?? quote.quoteId, driver_id: quote.driverId,
-      currency: "KZT", base_fare_kzt: quote.baseFareKzt,
-      pickup_surcharge_kzt: quote.pickupSurchargeKzt, total_kzt: quote.totalKzt,
+      currency: money.currency, total: money.total,
+      ...(money.currency === "KZT" ? { base_fare_kzt: money.baseFare, pickup_surcharge_kzt: money.pickupSurcharge, total_kzt: money.total }
+        : { base_fare: money.baseFare, pickup_surcharge: money.pickupSurcharge }),
       road_distance_meters: quote.roadDistanceMeters, road_duration_seconds: quote.roadDurationSeconds,
-      price_per_km_kzt: quote.settings.pricePerKmKzt, fare_rounding: quote.settings.fareRounding,
+      ...(money.currency === "KZT" ? { price_per_km_kzt: quote.settings.pricePerKmKzt } : { price_per_km: quote.settings.pricePerKm }),
+      fare_rounding: quote.settings.fareRounding,
       expires_at: quote.expiresAt,
     },
   });

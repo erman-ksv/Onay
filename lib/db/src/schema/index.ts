@@ -1,6 +1,7 @@
 import {
   bigint,
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -30,6 +31,7 @@ export const usersTable = pgTable(
     profileLocked: boolean("profile_locked").notNull().default(true),
     sessionVersion: integer("session_version").notNull().default(0),
     driverApprovalStatus: text("driver_approval_status"),
+    driverVehicle: jsonb("driver_vehicle").$type<Record<string, unknown> | null>(),
     driverRouteChoice: jsonb("driver_route_choice").$type<Record<string, unknown> | null>(),
     lastLocation: jsonb("last_location").$type<Record<string, unknown> | null>(),
     createdAt: text("created_at").notNull(),
@@ -45,6 +47,7 @@ export const otpChallengesTable = pgTable(
   {
     phoneNumber: text("phone_number").primaryKey(),
     code: text("code").notNull(),
+    deliveryId: text("delivery_id"),
     role: text("role").notNull(),
     locale: text("locale").notNull(),
     fullName: text("full_name"),
@@ -117,6 +120,32 @@ export const ordersTable = pgTable(
   ],
 );
 
+/** A committed booking intent survives transport failures and server restarts.
+ * Receipts deliberately outlive order deletion: a missing order must fail closed,
+ * rather than make the same key eligible to reserve seats a second time.
+ */
+export const routeOrderRequestsTable = pgTable(
+  "tezjet_route_order_requests",
+  {
+    passengerId: text("passenger_id").notNull(),
+    requestKey: text("request_key").notNull(),
+    requestHash: text("request_hash").notNull(),
+    orderId: text("order_id").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [uniqueIndex("tezjet_route_order_requests_passenger_key_uq").on(table.passengerId, table.requestKey)],
+);
+
+/** Durable fences contain no phone, token, GPS or order payload. */
+export const closedRouteOrderRequestsTable = pgTable("tezjet_closed_route_order_requests", {
+  passengerId: text("passenger_id").notNull(),
+  requestKey: text("request_key").notNull(),
+  closedAt: text("closed_at").notNull(),
+}, table => [
+  uniqueIndex("tezjet_closed_route_requests_passenger_key_uq").on(table.passengerId, table.requestKey),
+  index("tezjet_closed_route_requests_passenger_time_idx").on(table.passengerId, table.closedAt),
+]);
+
 export const deviceRegistrationsTable = pgTable(
   "tezjet_device_registrations",
   {
@@ -135,9 +164,39 @@ export const routesTable = pgTable("tezjet_routes", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   active: boolean("active").notNull().default(true),
-  pricePerStopKzt: integer("price_per_stop_kzt").notNull(),
+  currency: text("currency").notNull().default("KZT"),
+  pricePerStop: integer("price_per_stop"),
+  pricePerStopKzt: integer("price_per_stop_kzt"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
   payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
-});
+}, table => [
+  check("tezjet_routes_currency_pricing_check", sql`(
+    (${table.currency} = 'KZT' AND ${table.pricePerStopKzt} IS NOT NULL AND ${table.pricePerStopKzt} >= 0 AND (${table.pricePerStop} IS NULL OR ${table.pricePerStop} >= 0)) OR
+    (${table.currency} = 'UZS' AND ${table.pricePerStop} IS NOT NULL AND ${table.pricePerStop} >= 0 AND ${table.pricePerStopKzt} IS NULL)
+  )`),
+]);
 
+
+/** Append-only administrative action receipts; never store secrets or GPS. */
+export const adminAuditEventsTable = pgTable("tezjet_admin_audit_events", {
+  id: text("id").primaryKey(),
+  actorId: text("actor_id").notNull(),
+  action: text("action").notNull(),
+  orderId: text("order_id"),
+  driverId: text("driver_id"),
+  vehicleRevision: text("vehicle_revision"),
+  routeId: text("route_id"),
+  changedFields: jsonb("changed_fields").$type<string[]>(),
+  previousVersion: text("previous_version"),
+  nextVersion: text("next_version"),
+  fromStatus: text("from_status"),
+  toStatus: text("to_status"),
+  createdAt: text("created_at").notNull(),
+}, table => [
+  index("tezjet_admin_audit_created_idx").on(table.createdAt, table.id),
+  index("tezjet_admin_audit_order_created_idx").on(table.orderId, table.createdAt, table.id),
+  index("tezjet_admin_audit_driver_created_idx").on(table.driverId, table.createdAt, table.id),
+  index("tezjet_admin_audit_route_created_idx").on(table.routeId, table.createdAt, table.id),
+  uniqueIndex("tezjet_admin_audit_action_order_uq").on(table.action, table.orderId),
+]);

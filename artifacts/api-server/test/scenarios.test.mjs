@@ -9,7 +9,7 @@ const port = 41_000 + (process.pid % 1_000);
 const baseUrl = `http://127.0.0.1:${port}/api`;
 const socketUrl = `http://127.0.0.1:${port}`;
 const schema = `api_scenarios_${randomUUID().replaceAll("-", "")}`;
-const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes"];
+const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes", "tezjet_admin_audit_events"];
 const { Pool } = createRequire(new URL("../../../lib/db/package.json", import.meta.url))("pg");
 const queueLocation = {
   lat: 41.3111,

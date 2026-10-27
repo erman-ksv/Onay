@@ -1,3 +1,4 @@
+import { hasRequiredDriverApproval } from "./utils/driverVehicle";
 import type { Server as HttpServer } from "node:http";
 import { Server } from "socket.io";
 import { store } from "./store";
@@ -33,9 +34,8 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
         return;
       }
       if (
-        REQUIRE_DRIVER_APPROVAL &&
         user.role === "driver" &&
-        user.driverApprovalStatus !== "approved"
+        !hasRequiredDriverApproval(user, REQUIRE_DRIVER_APPROVAL)
       ) {
         next(new Error("Driver approval required"));
         return;
@@ -109,8 +109,7 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
           return;
         }
         if (
-          REQUIRE_DRIVER_APPROVAL &&
-          driver?.driverApprovalStatus !== "approved"
+          !hasRequiredDriverApproval(driver, REQUIRE_DRIVER_APPROVAL)
         ) {
           return;
         }

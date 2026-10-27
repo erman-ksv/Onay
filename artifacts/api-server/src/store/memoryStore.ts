@@ -1,7 +1,9 @@
+import { applyRoutePricingPatch, normalizeRoutePricing } from "../utils/routePricing";
+import { assertVehicleQueueCapacity, assertVehicleReview, createDriverVehicle, hasRequiredDriverApproval } from "../utils/driverVehicle";
 import { randomUUID } from "node:crypto";
 import { OFFER_TIMEOUT_MS, OTP_TTL_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
 import { normalizePhone } from "../utils/phone";
-import type { DriverRouteChoiceInput, ExternalPickupSelectionInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderSelectionInput, Store } from "./storeContract";
+import type { RouteCreateInput, RouteMetadataPatch, RouteOrderResolution, DriverRouteChoiceInput, ExternalPickupSelectionInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderSelectionInput, Store } from "./storeContract";
 import { emptyOtpRateState, OTP_CLEANUP_BATCH_SIZE, otpFailureState, otpPhoneBlock, otpRateExpiresAt, otpRateKey, recordOtpFailure, takeOtpIp, takeOtpSend } from "./otpProtection";
 import type { OtpRateKind, OtpRateState } from "./otpProtection";
 import { mutateRouteStop, nextRouteUpdatedAt, replaceRouteLayout } from "../utils/routeLayout";
@@ -11,14 +13,19 @@ import { AppError } from "../utils/errors";
 import { assertRouteQueueLocation, assertRouteQueueTelemetry, resolveRouteQueue, routeQueueSnapshot, sameQueueLane } from "../utils/routeQueue";
 import { acceptQueueOffer, assertLegacyOrderInput, assertOrderOfferPatch, assertQueueOfferPatch, compareOfferDrivers, hasLiveOrderOffer, orderedOfferCandidates, releaseQueueOffer, reserveQueueOffer } from "./orderOffers";
 import { buildRouteOrder, validateRouteOrderSelectionInput } from "../utils/routeOrder";
+import { MAX_CLOSED_ROUTE_REQUESTS_PER_DAY, ROUTE_REQUEST_CLOSURE_WINDOW_MS, assertRouteOrderRequestHash, requireRouteOrderRequestKey, routeOrderRequestHash } from "../utils/routeOrderRequest";
 import { boundedInteger } from "../utils/validation";
+import type { AdminMutationActor } from "./storeContract";
+import { routeMetadataEvent } from "./routeAudit";
 import { assertLineOrderTransition, createLineCollectionState, isCollecting, lineOrderIds, prepareLineDeparture } from "./lineCollection";
 import { assertExternalQuoteCurrent, buildConfirmedExternalOrder, buildExternalPickupDetails, eligibleExternalCandidate, externalPickupLeaseMs, liveExternalOfferValid, nextOrderUpdatedAt, normalizeExternalPickupSettings, repriceExternalOrder, validateExternalPickupSelectionInput } from "./externalPickup";
 import type {
+  AdminAuditEvent,
   Coordinates,
   DeviceRegistration,
   DriverQueueStatus,
   DriverApprovalStatus,
+  DriverVehicleInput,
   DriverRouteChoice,
   ExternalPickupQuote,
   ExternalPickupSettings,
@@ -44,6 +51,9 @@ class MemoryStore implements Store {
   private otpChallengeCleanupIterator?: IterableIterator<[string, OtpChallenge]>;
   private readonly queueEntries = new Map<string, QueueEntry>();
   private readonly orders = new Map<string, Order>();
+  private readonly adminAuditEvents: AdminAuditEvent[] = [];
+  private readonly closedRouteOrderRequests = new Map<string, number>();
+  private readonly routeOrderRequests = new Map<string, { requestHash: string; orderId: string }>();
   private readonly deviceRegistrations = new Map<string, DeviceRegistration>();
   private readonly routes = new Map<string, RouteDefinition>();
 
@@ -124,7 +134,9 @@ class MemoryStore implements Store {
 
   saveOtp(challenge: OtpChallenge): void {
     this.cleanupOtp(Date.now());
-    this.otpChallenges.set(challenge.phoneNumber, structuredClone(challenge));
+    const saved = structuredClone(challenge);
+    if (!saved.deliveryId) delete saved.deliveryId;
+    this.otpChallenges.set(challenge.phoneNumber, saved);
   }
 
   private cleanupOtp(now: number): void {
@@ -179,9 +191,9 @@ class MemoryStore implements Store {
     const budget = takeOtpSend(this.otpState(sendKey), now);
     this.saveOtpState("send", sendKey, budget.state);
     if (budget.result.allowed) {
-      this.otpChallenges.set(phoneNumber, structuredClone({
-        ...challenge, phoneNumber, expiresAt: now + OTP_TTL_MS,
-      }));
+      const saved = structuredClone({ ...challenge, phoneNumber, expiresAt: now + OTP_TTL_MS });
+      if (!saved.deliveryId) delete saved.deliveryId;
+      this.otpChallenges.set(phoneNumber, saved);
     }
     return budget.result;
   }
@@ -204,6 +216,15 @@ class MemoryStore implements Store {
     this.saveOtpState("verify", verifyKey, failure);
     const limit = otpPhoneBlock(failure, now);
     return limit.allowed ? { status: "invalid" } : { status: "limited", retryAfterMs: limit.retryAfterMs };
+  }
+
+  discardOtpDelivery(phone: string, deliveryId: string): boolean {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(deliveryId)) return false;
+    const phoneNumber = normalizePhone(phone);
+    const current = this.otpChallenges.get(phoneNumber);
+    if (!current || current.deliveryId !== deliveryId) return false;
+    this.otpChallenges.delete(phoneNumber);
+    return true;
   }
 
   activateUserRole(userId: string, nextRole: "passenger" | "driver", expectedSessionVersion?: number): User {
@@ -233,12 +254,25 @@ class MemoryStore implements Store {
     return structuredClone(user);
   }
 
-  private requireCurrentRole(userId: string, role: "passenger" | "driver", expectedSessionVersion?: number): void {
+  private requireCurrentRole(userId: string, role: "passenger" | "driver" | "admin", expectedSessionVersion?: number): void {
     const user = this.users.get(userId);
     if (!user || (expectedSessionVersion !== undefined && user.sessionVersion !== expectedSessionVersion)) {
       throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
     }
     if (user.role !== role) throw new AppError(403, `${role} mode is required`, "FORBIDDEN");
+  }
+
+  setDriverVehicle(userId: string, input: DriverVehicleInput, expectedSessionVersion: number): User {
+    this.requireCurrentRole(userId, "driver", expectedSessionVersion);
+    const user = this.users.get(userId)!;
+    if (this.queueEntries.has(userId) || [...this.orders.values()].some(order =>
+      order.status !== "completed" && order.status !== "cancelled" &&
+      (order.passengerId === userId || order.driverId === userId || order.offeredDriverId === userId))) {
+      throw new AppError(409, "Finish active orders and leave the queue before changing the vehicle", "DRIVER_VEHICLE_BUSY");
+    }
+    user.driverVehicle = createDriverVehicle(input, user.driverVehicle);
+    user.driverApprovalStatus = "pending";
+    return structuredClone(user);
   }
 
   setDriverRouteChoice(userId: string, input: DriverRouteChoiceInput | null, expectedSessionVersion: number): DriverRouteChoice | null {
@@ -248,7 +282,7 @@ class MemoryStore implements Store {
     }
     this.requireCurrentRole(userId, "driver", expectedSessionVersion);
     const user = this.users.get(userId)!;
-    if (REQUIRE_DRIVER_APPROVAL && user.driverApprovalStatus !== "approved") {
+    if (!hasRequiredDriverApproval(user, REQUIRE_DRIVER_APPROVAL)) {
       throw new AppError(403, "Driver approval is required", "DRIVER_APPROVAL_REQUIRED");
     }
     if (this.queueEntries.has(userId) || [...this.orders.values()].some(order =>
@@ -303,7 +337,8 @@ class MemoryStore implements Store {
     this.requireCurrentRole(entry.driverId, "driver", expectedSessionVersion);
     if (entry.routeContext || entry.collectionState !== undefined) throw new AppError(400, "Queue context is server-owned", "VALIDATION_ERROR");
     const user = this.users.get(entry.driverId)!;
-    if (user.driverRouteChoice && REQUIRE_DRIVER_APPROVAL && user.driverApprovalStatus !== "approved") {
+    assertVehicleQueueCapacity(user, entry.availableSeats);
+    if (user.driverRouteChoice && !hasRequiredDriverApproval(user, REQUIRE_DRIVER_APPROVAL)) {
       throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");
     }
     const current = this.queueEntries.get(entry.driverId);
@@ -368,7 +403,7 @@ class MemoryStore implements Store {
 
   departQueue(driverId: string, expectedEnrollmentId: string, expectedSessionVersion?: number): { entry: QueueEntry; orders: Order[]; changed: boolean } {
     this.requireCurrentRole(driverId, "driver", expectedSessionVersion);
-    if (REQUIRE_DRIVER_APPROVAL && this.users.get(driverId)?.driverApprovalStatus !== "approved") {
+    if (!hasRequiredDriverApproval(this.users.get(driverId), REQUIRE_DRIVER_APPROVAL)) {
       throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");
     }
     const entry = this.queueEntries.get(driverId);
@@ -415,7 +450,7 @@ class MemoryStore implements Store {
   private eligibleOfferEntries(): QueueEntry[] {
     return [...this.queueEntries.values()].filter(entry =>
       this.users.get(entry.driverId)?.role === "driver" &&
-      (!REQUIRE_DRIVER_APPROVAL || this.users.get(entry.driverId)?.driverApprovalStatus === "approved"),
+      hasRequiredDriverApproval(this.users.get(entry.driverId), REQUIRE_DRIVER_APPROVAL),
     );
   }
 
@@ -455,7 +490,7 @@ class MemoryStore implements Store {
     if (route.updatedAt !== input.expectedUpdatedAt) {
       throw new AppError(409, "Route changed; reload the catalog", "ROUTE_CHANGED");
     }
-    const settings = normalizeExternalPickupSettings(input.settings);
+    const settings = normalizeExternalPickupSettings(input.settings, route.currency);
     const updated = { ...route, externalPickup: settings, updatedAt: nextRouteUpdatedAt(route.updatedAt) };
     this.routes.set(routeId, updated);
     return structuredClone(updated);
@@ -474,6 +509,8 @@ class MemoryStore implements Store {
     // The original UUID is a permanent idempotency key, including after a
     // later repricing. Replaying it can never reserve another driver's seats.
     if (existing && (!quote.orderId || existing.externalPickup?.quoteId === quote.quoteId)) {
+      const currency = quote.version === 1 ? "KZT" : quote.version === 2 ? quote.currency : undefined;
+      if (currency !== existing.fare.currency) throw new AppError(409, "Pickup quote currency changed", "PICKUP_QUOTE_CHANGED");
       return { order: structuredClone(existing), created: false, changed: false };
     }
     if (quote.orderId && !existing) {
@@ -481,7 +518,7 @@ class MemoryStore implements Store {
     }
     const passenger = this.users.get(passengerId)!;
     const driver = this.users.get(quote.driverId);
-    if (!driver || driver.role !== "driver" || (REQUIRE_DRIVER_APPROVAL && driver.driverApprovalStatus !== "approved")) {
+    if (!driver || driver.role !== "driver" || !hasRequiredDriverApproval(driver, REQUIRE_DRIVER_APPROVAL)) {
       throw new AppError(409, "Selected driver is no longer available", "QUOTE_CHANGED");
     }
     const entry = this.queueEntries.get(quote.driverId);
@@ -533,6 +570,53 @@ class MemoryStore implements Store {
     }, expectedSessionVersion, route);
   }
 
+  getRouteOrderRequest(passengerId: string, requestKey: string, expectedSessionVersion?: number) {
+    const key = requireRouteOrderRequestKey(requestKey);
+    this.requireCurrentRole(passengerId, "passenger", expectedSessionVersion);
+    const receipt = this.routeOrderRequests.get(JSON.stringify([passengerId, key]));
+    if (!receipt) {
+      if (this.closedRouteOrderRequests.has(JSON.stringify([passengerId, key]))) throw new AppError(409, "Booking request was closed", "ORDER_REQUEST_CLOSED");
+      return undefined;
+    }
+    const order = this.orders.get(receipt.orderId);
+    if (!order || order.passengerId !== passengerId) {
+      throw new AppError(409, "Booking requires recovery; do not create another request", "ORDER_RECOVERY_REQUIRED");
+    }
+    return { order: structuredClone(order), requestHash: receipt.requestHash };
+  }
+
+  resolveRouteOrderRequest(passengerId: string, requestKey: string, expectedSessionVersion?: number): RouteOrderResolution {
+    const key = requireRouteOrderRequestKey(requestKey);
+    this.requireCurrentRole(passengerId, "passenger", expectedSessionVersion);
+    const identity = JSON.stringify([passengerId, key]);
+    if (this.routeOrderRequests.has(identity)) {
+      const receipt = this.getRouteOrderRequest(passengerId, key, expectedSessionVersion)!;
+      return { state: "created", order: receipt.order };
+    }
+    if (this.closedRouteOrderRequests.has(identity)) return { state: "closed", requestKey: key };
+    const now = Date.now();
+    const prefix = JSON.stringify([passengerId]).slice(0, -1) + ",";
+    const count = [...this.closedRouteOrderRequests].filter(([id, closedAt]) => id.startsWith(prefix) && closedAt > now - ROUTE_REQUEST_CLOSURE_WINDOW_MS).length;
+    if (count >= MAX_CLOSED_ROUTE_REQUESTS_PER_DAY) throw new AppError(429, "Too many recovery closures; retry later", "ORDER_RECOVERY_LIMIT");
+    this.closedRouteOrderRequests.set(identity, now);
+    return { state: "closed", requestKey: key };
+  }
+
+  createRouteOrderOnce(input: RouteOrderInput, selection: RouteOrderSelectionInput, requestKey: string, expectedSessionVersion?: number) {
+    const key = requireRouteOrderRequestKey(requestKey);
+    const requestHash = routeOrderRequestHash(selection, input.seats);
+    const receipt = this.getRouteOrderRequest(input.passengerId, key, expectedSessionVersion);
+    if (receipt) {
+      assertRouteOrderRequestHash(receipt.requestHash, requestHash);
+      return { order: receipt.order, created: false };
+    }
+    // The memory adapter is synchronous; no other allocator can interleave here.
+    const order = this.createRouteOrderWithOffer(input, selection, expectedSessionVersion);
+    if (!order) return undefined;
+    this.routeOrderRequests.set(JSON.stringify([input.passengerId, key]), { requestHash, orderId: order.id });
+    return { order, created: true };
+  }
+
   private reserveNewOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt">, expectedSessionVersion?: number, liveRoute?: RouteDefinition): Order | undefined {
     this.requireCurrentRole(input.passengerId, "passenger", expectedSessionVersion);
     const now = Date.now();
@@ -582,7 +666,7 @@ class MemoryStore implements Store {
     const entry = order.offeredDriverId ? this.queueEntries.get(order.offeredDriverId) : undefined;
     if (!entry || entry.pendingOfferOrderId !== order.id || entry.availableSeats < 0) return false;
     if (this.users.get(entry.driverId)?.role !== "driver") return false;
-    if (REQUIRE_DRIVER_APPROVAL && this.users.get(entry.driverId)?.driverApprovalStatus !== "approved") return false;
+    if (!hasRequiredDriverApproval(this.users.get(entry.driverId), REQUIRE_DRIVER_APPROVAL)) return false;
     if (order.externalPickup) {
       return liveExternalOfferValid(order, entry,
         order.routeContext ? this.routes.get(order.routeContext.routeId) : undefined, now);
@@ -635,7 +719,7 @@ class MemoryStore implements Store {
   rejectOrderOffer(orderId: string, driverId: string, now = Date.now(), expectedSessionVersion?: number): OrderOfferChange | undefined {
     if (expectedSessionVersion !== undefined) {
       this.requireCurrentRole(driverId, "driver", expectedSessionVersion);
-      if (REQUIRE_DRIVER_APPROVAL && this.users.get(driverId)?.driverApprovalStatus !== "approved") return undefined;
+      if (!hasRequiredDriverApproval(this.users.get(driverId), REQUIRE_DRIVER_APPROVAL)) return undefined;
     }
     const order = this.orders.get(orderId);
     if (!order || order.offeredDriverId !== driverId || !hasLiveOrderOffer(order, now) ||
@@ -687,12 +771,27 @@ class MemoryStore implements Store {
   }
 
   transitionOrder(orderId: string, actorId: string, nextStatus: OrderStatus, expectedStatus?: OrderStatus, expectedSessionVersion?: number): Order | undefined {
+    return this.transitionOrderInternal(orderId, actorId, nextStatus, expectedStatus, expectedSessionVersion);
+  }
+
+  cancelOrderAsAdmin(orderId: string, adminId: string, expectedStatus: OrderStatus, expectedSessionVersion: number): Order | undefined {
+    return this.transitionOrderInternal(orderId, adminId, "cancelled", expectedStatus, expectedSessionVersion, true);
+  }
+
+  listAdminAuditEvents(orderId?: string, limit = 50, driverId?: string, routeId?: string): AdminAuditEvent[] {
+    const count = boundedInteger(limit, "limit", 1, 100);
+    return structuredClone(this.adminAuditEvents.filter(event => (!orderId || event.orderId === orderId) && (!driverId || event.driverId === driverId) && (!routeId || event.routeId === routeId))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)).slice(0, count));
+  }
+
+  private transitionOrderInternal(orderId: string, actorId: string, nextStatus: OrderStatus, expectedStatus?: OrderStatus, expectedSessionVersion?: number, adminCancellation = false): Order | undefined {
     const order = this.orders.get(orderId);
-    if (!order || !canTransitionOrder(order, actorId, nextStatus, expectedStatus)) return undefined;
-    if (expectedSessionVersion !== undefined || nextStatus === "boarded_waiting") {
-      const role = actorId === order.passengerId ? "passenger" : "driver";
+    if (!order || !canTransitionOrder(order, actorId, nextStatus, expectedStatus, adminCancellation)) return undefined;
+    if (adminCancellation && expectedSessionVersion === undefined) throw new AppError(401, "Session is required", "UNAUTHORIZED");
+    if (adminCancellation || expectedSessionVersion !== undefined || nextStatus === "boarded_waiting") {
+      const role = adminCancellation ? "admin" : actorId === order.passengerId ? "passenger" : "driver";
       this.requireCurrentRole(actorId, role, expectedSessionVersion);
-      if (role === "driver" && REQUIRE_DRIVER_APPROVAL && this.users.get(actorId)?.driverApprovalStatus !== "approved") {
+      if (role === "driver" && !hasRequiredDriverApproval(this.users.get(actorId), REQUIRE_DRIVER_APPROVAL)) {
         throw new AppError(403, "Driver approval is required", "DRIVER_NOT_APPROVED");
       }
     }
@@ -703,6 +802,7 @@ class MemoryStore implements Store {
       const offeredEntry = this.queueEntries.get(order.offeredDriverId);
       if (offeredEntry) this.queueEntries.set(offeredEntry.driverId, releaseQueueOffer(offeredEntry, order));
     }
+    const previousStatus = order.status;
     const updated = this.writeOrder(order, {
       status: nextStatus,
       ...(nextStatus === "cancelled" ? { cancelledBy: actorId } : {}),
@@ -710,6 +810,8 @@ class MemoryStore implements Store {
         ? undefined : order.seatLockExpiresAt,
       offerExpiresAt: nextStatus === "cancelled" ? undefined : order.offerExpiresAt,
     });
+    if (adminCancellation) this.adminAuditEvents.push({ id: randomUUID(), actorId, action: "order.cancelled", orderId,
+      fromStatus: previousStatus, toStatus: "cancelled", createdAt: updated.updatedAt });
     return updated.routeContext ? structuredClone(updated) : updated;
   }
 
@@ -777,12 +879,32 @@ class MemoryStore implements Store {
   setDriverApproval(
     userId: string,
     status: DriverApprovalStatus,
+    expectedVehicleRevision?: string | null,
   ): User | undefined {
     const user = this.users.get(userId);
     if (!user || !user.roles.includes("driver")) {
       return undefined;
     }
+    assertVehicleReview(user, expectedVehicleRevision);
     user.driverApprovalStatus = status;
+    return structuredClone(user);
+  }
+
+  setDriverApprovalAsAdmin(userId: string, status: DriverApprovalStatus, expectedVehicleRevision: string | null | undefined, adminId: string, expectedSessionVersion: number): User | undefined {
+    if (expectedSessionVersion === undefined) throw new AppError(401, "Session is required", "UNAUTHORIZED");
+    this.requireCurrentRole(adminId, "admin", expectedSessionVersion);
+    const user = this.users.get(userId);
+    if (!user || !user.roles.includes("driver")) return undefined;
+    if (userId === adminId || user.role === "admin" || user.roles.includes("admin")) {
+      throw new AppError(403, "Administrator accounts cannot be reviewed as drivers", "FORBIDDEN");
+    }
+    assertVehicleReview(user, expectedVehicleRevision);
+    const previous = user.driverApprovalStatus ?? "pending";
+    if (previous !== status) {
+      const event: AdminAuditEvent = { id: randomUUID(), actorId: adminId, action: "driver.approval_changed", driverId: userId,
+        ...(user.driverVehicle ? { vehicleRevision: user.driverVehicle.revision } : {}), fromStatus: previous, toStatus: status, createdAt: new Date().toISOString() };
+      user.driverApprovalStatus = status; this.adminAuditEvents.push(event);
+    }
     return structuredClone(user);
   }
 
@@ -803,12 +925,7 @@ class MemoryStore implements Store {
     return structuredClone(route);
   }
 
-  createRoute(input: {
-    id: string;
-    name: string;
-    pricePerStopKzt: number;
-    active: boolean;
-  }): RouteDefinition {
+  createRoute(input: RouteCreateInput): RouteDefinition {
     if (this.routes.has(input.id)) {
       throw new Error(`Route ${input.id} already exists`);
     }
@@ -816,8 +933,7 @@ class MemoryStore implements Store {
     const route: RouteDefinition = {
       id: input.id,
       name: input.name,
-      currency: "KZT",
-      pricePerStopKzt: input.pricePerStopKzt,
+      ...normalizeRoutePricing(input),
       active: input.active,
       stops: [],
       createdAt: now,
@@ -829,13 +945,22 @@ class MemoryStore implements Store {
 
   updateRoute(
     routeId: string,
-    patch: Partial<Pick<RouteDefinition, "name" | "pricePerStopKzt" | "active">>,
+    patch: RouteMetadataPatch,
+    audit?: AdminMutationActor,
   ): RouteDefinition | undefined {
+    if (audit) {
+      if (audit.expectedSessionVersion === undefined) throw new AppError(401, "Session is required", "UNAUTHORIZED");
+      this.requireCurrentRole(audit.adminId, "admin", audit.expectedSessionVersion);
+    }
     const route = this.routes.get(routeId);
     if (!route) {
       return undefined;
     }
-    this.routes.set(routeId, { ...route, ...patch, updatedAt: nextRouteUpdatedAt(route.updatedAt) });
+    const updated = { ...applyRoutePricingPatch(route, patch), updatedAt: nextRouteUpdatedAt(route.updatedAt) };
+    const event = audit ? routeMetadataEvent(route, updated, audit.adminId) : undefined;
+    if (audit && !event) return structuredClone(route);
+    this.routes.set(routeId, updated);
+    if (event) this.adminAuditEvents.push(event);
     return this.getRoute(routeId);
   }
 

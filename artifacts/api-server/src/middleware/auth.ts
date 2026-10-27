@@ -1,3 +1,4 @@
+import { hasRequiredDriverApproval } from "../utils/driverVehicle";
 import type { NextFunction, Request, Response } from "express";
 import type { AuthContext } from "../types/express";
 import { store } from "../store";
@@ -61,8 +62,7 @@ export function requireApprovedDriver(
     throw new AppError(403, "Driver access is required", "FORBIDDEN");
   }
   if (
-    process.env.REQUIRE_DRIVER_APPROVAL !== "false" &&
-    request.auth.user.driverApprovalStatus !== "approved"
+    !hasRequiredDriverApproval(request.auth.user, process.env.REQUIRE_DRIVER_APPROVAL !== "false")
   ) {
     throw new AppError(
       403,

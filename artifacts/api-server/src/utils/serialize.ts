@@ -1,5 +1,7 @@
 import type { Order, User } from "../types/domain";
 import { maskPhone } from "./phone";
+import { withCanonicalFare } from "./fareMoney";
+import { serializeExternalPickup } from "./externalMoney";
 
 export function serializeUser(user: User) {
   return {
@@ -12,6 +14,10 @@ export function serializeUser(user: User) {
     locale: user.locale,
     profile_locked: user.profileLocked,
     driver_approval_status: user.driverApprovalStatus,
+    ...(user.driverVehicle ? { driver_vehicle: {
+      revision: user.driverVehicle.revision, make: user.driverVehicle.make, model: user.driverVehicle.model,
+      plate_number: user.driverVehicle.plateNumber, seat_capacity: user.driverVehicle.seatCapacity, updated_at: user.driverVehicle.updatedAt,
+    } } : {}),
     created_at: user.createdAt,
   };
 }
@@ -29,24 +35,14 @@ export function serializeOrder(order: Order, maskPassenger = false) {
     pickup_point: order.pickupPoint,
     pickup_location: order.pickupLocation,
     pickup_address: order.pickupAddress,
-    ...(order.externalPickup ? { external_pickup: {
-      pickup_address: order.externalPickup.pickupAddress,
-      requires_price_confirmation: order.externalPickup.requiresPriceConfirmation,
-      road_distance_meters: order.externalPickup.roadDistanceMeters,
-      road_duration_seconds: order.externalPickup.roadDurationSeconds,
-      base_fare_kzt: order.externalPickup.baseFareKzt,
-      pickup_surcharge_kzt: order.externalPickup.pickupSurchargeKzt,
-      total_kzt: order.fare.totalKzt,
-      price_per_km_kzt: order.externalPickup.settings.pricePerKmKzt,
-      fare_rounding: order.externalPickup.settings.fareRounding,
-    } } : {}),
+    ...(order.externalPickup ? { external_pickup: serializeExternalPickup(order) } : {}),
     ...(order.routeContext ? {
       route_context: order.routeContext,
       pickup_stop_id: order.fare.pickupStop.id,
       destination_stop_id: order.fare.destinationStop.id,
     } : {}),
     route_stops: order.routeStops,
-    fare: order.fare,
+    fare: withCanonicalFare(order.fare),
     destination: order.destination,
     seats: order.seats,
     status: order.status,

@@ -1,0 +1,17 @@
+.git
+.github
+.agents
+.codex
+.aws
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+mobile
+artifacts/*-qa
+**/.DS_Store
+
+artifacts/staging-runtime
+**/*.dump
