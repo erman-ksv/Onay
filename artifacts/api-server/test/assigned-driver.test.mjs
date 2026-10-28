@@ -297,7 +297,7 @@ test("HTTP orders and queue no-store covers auth, forbidden, missing and parser 
   }
   assertNoStore(await request("/orders/" + randomUUID(), { token: passenger.token }), 404);
   assertNoStore(await request("/queue/unknown", { token: passenger.token }), 404);
-  assertNoStore(await request("/API/QUEUE/", { token: driver.token }), 200);
+  assertNoStore(await request("/QUEUE/", { token: driver.token }), 200);
 });
 
 test("HTTP trip cache policy preserves health, auth and admin cache behavior", async () => {
