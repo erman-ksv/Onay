@@ -278,3 +278,52 @@ test("Socket expiry drops a driver location whose account lookup finishes after 
   assert.equal(locations.length, 1);
   assert.equal(locations[0].location.timestamp, 42);
 });
+
+test("Logout socket cleanup delayed across a newer login disconnects only the revoked session", { timeout: 15_000 }, async t => {
+  const { socket: oldSocket, user } = await client(t);
+  await connect(oldSocket);
+  let releaseCleanup, cleanupStarted;
+  const gate = new Promise(resolve => { releaseCleanup = resolve; });
+  const started = new Promise(resolve => { cleanupStarted = resolve; });
+  const request = {
+    auth: { userId: user.id, role: user.role, user: structuredClone(user), locale: "ru" },
+    app: { locals: { io: { in(room) {
+      return { async fetchSockets() {
+        cleanupStarted();
+        await gate;
+        return realtime.in(room).fetchSockets();
+      } };
+    } } } },
+  };
+  const response = { status(value) { this.statusCode = value; return this; }, send() {} };
+  const pending = logout(request, response);
+  let renewed;
+  try {
+    await started;
+    const current = await store.invalidateSessions(user.id);
+    const token = createAccessToken({
+      sub: current.id, role: current.role, locale: current.locale,
+      sessionVersion: current.sessionVersion, sessionId: randomUUID(),
+    });
+    renewed = createSocket(serverUrl, {
+      path: "/api/socket.io", auth: { token }, transports: ["websocket"],
+      autoConnect: false, reconnection: false,
+    });
+    sockets.add(renewed);
+    t.after(() => { renewed.disconnect(); sockets.delete(renewed); });
+    await connect(renewed);
+    const disconnected = waitForEvent(oldSocket, "disconnect");
+    releaseCleanup();
+    await pending;
+    assert.equal(await disconnected, "io server disconnect");
+    assert.equal(response.statusCode, 204);
+    assert.equal(renewed.connected, true);
+    const delivered = waitForEvent(renewed, "test:session");
+    realtime.to(`user:${user.id}`).emit("test:session", { current: true });
+    assert.deepEqual(await delivered, { current: true });
+    assert.equal((await store.getUser(user.id)).sessionVersion, current.sessionVersion);
+  } finally {
+    releaseCleanup();
+    await pending;
+  }
+});

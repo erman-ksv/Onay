@@ -180,8 +180,17 @@ export async function updateProfile(request: Request, response: Response): Promi
 
 export async function logout(request: Request, response: Response): Promise<void> {
   if (request.auth) {
-    await store.invalidateSessions(request.auth.userId);
-    disconnectPreviousSessions(request, request.auth.userId);
+    const { userId, user } = request.auth;
+    await store.invalidateSessions(userId, user.sessionVersion);
+    // A new login may commit while socket cleanup is awaiting its snapshot.
+    // Disconnect only the session that this logout actually revoked.
+    const io = request.app?.locals.io;
+    if (io) {
+      const sockets = await io.in(`user:${userId}`).fetchSockets();
+      for (const socket of sockets) {
+        if (socket.data.sessionVersion === user.sessionVersion) socket.disconnect(true);
+      }
+    }
   }
   response.status(204).send();
 }

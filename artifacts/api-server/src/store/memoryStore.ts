@@ -123,10 +123,13 @@ class MemoryStore implements Store {
     return structuredClone(user);
   }
 
-  invalidateSessions(userId: string): User {
+  invalidateSessions(userId: string, expectedSessionVersion?: number): User {
     const user = this.users.get(userId);
     if (!user) {
       throw new Error(`User ${userId} not found`);
+    }
+    if (expectedSessionVersion !== undefined && user.sessionVersion !== expectedSessionVersion) {
+      throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
     }
     user.sessionVersion += 1;
     return structuredClone(user);

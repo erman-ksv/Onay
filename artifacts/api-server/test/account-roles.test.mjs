@@ -53,7 +53,7 @@ before(async () => {
         'export { store as runtimeStore } from "./src/store";',
         'export { default as router } from "./src/routes";',
         'export { errorHandler } from "./src/middleware/errorHandler";',
-        'export { switchRole } from "./src/controllers/authController";',
+        'export { switchRole, logout } from "./src/controllers/authController";',
         'export { joinQueue } from "./src/controllers/queueController";',
         'export { createOrder } from "./src/controllers/orderController";',
       ].join("\n"),
@@ -844,3 +844,67 @@ for (const winner of ["switch", "create"]) {
     }
   });
 }
+
+for (const adapterName of ["MemoryStore", "PostgresStore"]) {
+  test(`${adapterName} conditional logout preserves a newer session and revokes the current one once`, async t => {
+    const adapter = adapterName === "MemoryStore" ? new production.MemoryStore() : store;
+    const f = await fixture(t, adapter);
+    const user = await f.createUser();
+    const current = await adapter.invalidateSessions(user.id);
+    const before = await snapshot(adapter, user.id);
+    await assert.rejects(async () => adapter.invalidateSessions(user.id, user.sessionVersion),
+      error => error.statusCode === 401 && error.code === "UNAUTHORIZED");
+    assert.deepEqual(await snapshot(adapter, user.id), before);
+    const revoked = await adapter.invalidateSessions(user.id, current.sessionVersion);
+    assert.equal(revoked.sessionVersion, current.sessionVersion + 1);
+    await assert.rejects(async () => adapter.invalidateSessions(user.id, current.sessionVersion),
+      error => error.statusCode === 401 && error.code === "UNAUTHORIZED");
+    assert.equal((await adapter.getUser(user.id)).sessionVersion, revoked.sessionVersion);
+  });
+}
+
+test("PostgreSQL delayed authenticated logout cannot revoke a newer login while waiting on its row lock", { timeout: 15_000 }, async t => {
+  const f = await fixture(t);
+  const user = await f.createUser();
+  let cleanupCalls = 0;
+  const staleRequest = controllerRequest(user);
+  staleRequest.app.locals.io = { in() { cleanupCalls++; throw new Error("Stale logout must not disconnect sockets"); } };
+  const outcomes = await overlappingAccount(user.id, [
+    () => otherStore.invalidateSessions(user.id),
+    () => production.logout(staleRequest, controllerResponse()),
+  ]);
+  assert.equal(outcomes[0].error, undefined);
+  assert.equal(outcomes[1].error?.statusCode, 401);
+  assert.equal(outcomes[1].error?.code, "UNAUTHORIZED");
+  assert.equal(cleanupCalls, 0);
+  assert.equal((await store.getUser(user.id)).sessionVersion, user.sessionVersion + 1);
+});
+
+test("PostgreSQL duplicate authenticated logout requests increment the version only once", { timeout: 15_000 }, async t => {
+  const f = await fixture(t);
+  const user = await f.createUser();
+  const outcomes = await overlappingAccount(user.id, [
+    () => production.logout(controllerRequest(user), controllerResponse()),
+    () => production.logout(controllerRequest(user), controllerResponse()),
+  ]);
+  assert.equal(outcomes[0].error, undefined);
+  assert.equal(outcomes[1].error?.statusCode, 401);
+  assert.equal((await store.getUser(user.id)).sessionVersion, user.sessionVersion + 1);
+});
+
+test("HTTP logout revokes its current JWT while an old JWT cannot log out a newer login", async t => {
+  const f = await fixture(t);
+  const user = await f.createUser();
+  const oldLogin = await login(user.phoneNumber, "passenger");
+  assert.equal(oldLogin.status, 200);
+  const newLogin = await login(user.phoneNumber, "passenger");
+  assert.equal(newLogin.status, 200);
+  const current = await snapshot(store, user.id);
+  const stale = await request("/auth/logout", { method: "POST", token: oldLogin.body.access_token });
+  assert.equal(stale.status, 401);
+  assert.deepEqual(await snapshot(store, user.id), current);
+  assert.equal((await request("/auth/me", { token: newLogin.body.access_token })).status, 200);
+  assert.equal((await request("/auth/logout", { method: "POST", token: newLogin.body.access_token })).status, 204);
+  assert.equal((await request("/auth/me", { token: newLogin.body.access_token })).status, 401);
+  assert.equal((await store.getUser(user.id)).sessionVersion, current.sessionVersion + 1);
+});

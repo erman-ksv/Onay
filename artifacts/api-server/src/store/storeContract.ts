@@ -117,7 +117,8 @@ export interface Store {
     userId: string,
     patch: Partial<Pick<User, "locale" | "lastLocation">>,
   ): MaybePromise<User>;
-  invalidateSessions(userId: string): MaybePromise<User>;
+  /** With an expected version, revoke only that still-current session atomically. */
+  invalidateSessions(userId: string, expectedSessionVersion?: number): MaybePromise<User>;
   /** Activate a non-admin mode and invalidate the previous session atomically. */
   activateUserRole(userId: string, nextRole: "passenger" | "driver", expectedSessionVersion?: number): MaybePromise<User>;
   /** Change planning preference only while the live driver has no queue/order work. */
