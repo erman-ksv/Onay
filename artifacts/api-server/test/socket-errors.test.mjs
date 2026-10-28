@@ -21,6 +21,8 @@ let store;
 let createAccessToken;
 let switchRole;
 let logout;
+let verifyOtp;
+let authenticate;
 let httpServer;
 let realtime;
 let serverUrl;
@@ -39,8 +41,9 @@ before(async () => {
         'export { createRealtimeServer } from "./src/socket";',
         'export { store } from "./src/store";',
         'export { MemoryStore } from "./src/store/memoryStore";',
+        'export { authenticate } from "./src/middleware/auth";',
         'export { createAccessToken } from "./src/utils/token";',
-        'export { switchRole, logout } from "./src/controllers/authController";',
+        'export { switchRole, logout, verifyOtp } from "./src/controllers/authController";',
       ].join("\n"),
       resolveDir: apiRoot, loader: "ts",
     },
@@ -53,6 +56,8 @@ before(async () => {
   createAccessToken = production.createAccessToken;
   switchRole = production.switchRole;
   logout = production.logout;
+  verifyOtp = production.verifyOtp;
+  authenticate = production.authenticate;
   assert.ok(store instanceof production.MemoryStore, "Socket rejection regressions must be independent of PostgreSQL.");
   await store.initialize();
   httpServer = createServer((_request, response) => response.end("healthy"));
@@ -327,3 +332,88 @@ test("Logout socket cleanup delayed across a newer login disconnects only the re
     await pending;
   }
 });
+
+for (const action of ["login", "switch-role"]) {
+  test(`Delayed ${action} completion preserves the newer OTP login's socket and JWT`, { timeout: 15_000 }, async t => {
+    const user = await store.createUser({
+      role: "passenger", fullName: "Concurrent session regression",
+      phoneNumber: action === "login" ? "+998901234561" : "+998901234562", locale: "ru",
+    });
+    function socketFor(token) {
+      const socket = createSocket(serverUrl, {
+        path: "/api/socket.io", auth: { token }, transports: ["websocket"],
+        autoConnect: false, reconnection: false,
+      });
+      sockets.add(socket);
+      t.after(() => { socket.disconnect(); sockets.delete(socket); });
+      return socket;
+    }
+    const oldSocket = socketFor(createAccessToken({
+      sub: user.id, role: user.role, locale: user.locale,
+      sessionVersion: user.sessionVersion, sessionId: randomUUID(),
+    }));
+    await connect(oldSocket);
+    let releaseRotation, rotationStarted;
+    const gate = new Promise(resolve => { releaseRotation = resolve; });
+    const started = new Promise(resolve => { rotationStarted = resolve; });
+    const method = action === "login" ? "invalidateSessions" : "activateUserRole";
+    const rotate = store[method].bind(store);
+    let first = true;
+    t.mock.method(store, method, async (...args) => {
+      const rotated = await rotate(...args);
+      if (first) {
+        first = false;
+        rotationStarted();
+        // Model a durable commit whose result is delayed before controller cleanup.
+        await gate;
+      }
+      return rotated;
+    });
+    const app = { locals: { io: realtime } };
+    const response = () => ({ json(body) { this.body = body; } });
+    async function otpRequest(code) {
+      await store.saveOtp({
+        phoneNumber: user.phoneNumber, code, role: "passenger",
+        locale: "ru", expiresAt: Date.now() + 60_000,
+      });
+      return { body: { phone_number: user.phoneNumber, code }, app };
+    }
+    const previousResponse = response();
+    const firstRequest = action === "login" ? await otpRequest("123456") : {
+      body: { role: "driver" }, app,
+      auth: { userId: user.id, role: user.role, locale: "ru", user: structuredClone(user) },
+    };
+    const pending = (action === "login" ? verifyOtp : switchRole)(firstRequest, previousResponse);
+    try {
+      await started;
+      const disconnected = waitForEvent(oldSocket, "disconnect");
+      const latestResponse = response();
+      await verifyOtp(await otpRequest("654321"), latestResponse);
+      assert.equal(await disconnected, "io server disconnect", "Superseded sockets must still be revoked");
+      const current = await store.getUser(user.id);
+      const latestSocket = socketFor(latestResponse.body.access_token);
+      await connect(latestSocket);
+      releaseRotation();
+      await pending;
+      // Successful delivery after the earlier controller completes proves survival.
+      const delivered = waitForEvent(latestSocket, "test:latest-session");
+      realtime.to(`user:${user.id}`).emit("test:latest-session", { current: true });
+      assert.deepEqual(await delivered, { current: true });
+      assert.equal(latestSocket.connected, true);
+      const authRequest = token => ({ header: () => `Bearer ${token}` });
+      await assert.rejects(() => authenticate(authRequest(previousResponse.body.access_token), {}, () => {}),
+        error => error.statusCode === 401 && error.code === "UNAUTHORIZED");
+      const currentRequest = authRequest(latestResponse.body.access_token);
+      let passed = false;
+      await authenticate(currentRequest, {}, () => { passed = true; });
+      assert.equal(passed, true);
+      assert.equal(currentRequest.auth.userId, user.id);
+      assert.equal((await store.getUser(user.id)).sessionVersion, current.sessionVersion);
+      assert.equal(current.sessionVersion, user.sessionVersion + 2);
+      assert.equal(current.fullName, user.fullName);
+    } finally {
+      releaseRotation();
+      await pending;
+    }
+  });
+}

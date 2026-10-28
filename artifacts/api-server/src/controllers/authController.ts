@@ -19,8 +19,18 @@ function getLocale(request: Request, value: unknown): Locale {
   return pickEnum(value ?? request.auth?.locale ?? "ru", "locale", locales);
 }
 
-function disconnectPreviousSessions(request: Request, userId: string): void {
-  request.app?.locals.io?.in(`user:${userId}`).disconnectSockets(true);
+async function disconnectPreviousSessions(request: Request, user: User): Promise<void> {
+  const io = request.app?.locals.io;
+  if (!io) return;
+  const sockets = await io.in(`user:${user.id}`).fetchSockets();
+  for (const socket of sockets) {
+    // Cleanup may finish after a later login or role change has committed.
+    // Preserve the issuing session and every newer one.
+    if (typeof socket.data.sessionVersion !== "number" ||
+        socket.data.sessionVersion < user.sessionVersion) {
+      socket.disconnect(true);
+    }
+  }
 }
 
 function issueToken(user: User): string {
@@ -122,7 +132,7 @@ export async function verifyOtp(request: Request, response: Response): Promise<v
   }
 
   const token = issueToken(user);
-  disconnectPreviousSessions(request, user.id);
+  await disconnectPreviousSessions(request, user);
   response.json({
     access_token: token,
     token_type: "Bearer",
@@ -137,7 +147,7 @@ export async function switchRole(request: Request, response: Response): Promise<
   }
   const role = pickEnum(request.body?.role, "role", ["passenger", "driver"] as const);
   const user = await store.activateUserRole(request.auth.userId, role, request.auth.user.sessionVersion);
-  disconnectPreviousSessions(request, user.id);
+  await disconnectPreviousSessions(request, user);
   response.json({
     access_token: issueToken(user),
     token_type: "Bearer",
