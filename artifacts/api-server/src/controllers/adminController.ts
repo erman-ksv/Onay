@@ -2,7 +2,8 @@ import type { Request, Response } from "express";
 import { randomUUID } from "node:crypto";
 import { store } from "../store";
 import type { DriverApprovalStatus, OrderStatus } from "../types/domain";
-import { PYATAK_ZONE, updatePyatakCenter } from "../utils/config";
+import { hasRequiredDriverApproval } from "../utils/driverVehicle";
+import { PYATAK_ZONE, REQUIRE_DRIVER_APPROVAL, updatePyatakCenter } from "../utils/config";
 import { isValidCoordinates } from "../utils/geo";
 import { AppError } from "../utils/errors";
 import { serializeOrder, serializeUser } from "../utils/serialize";
@@ -392,6 +393,19 @@ export async function updateDriverApproval(request: Request, response: Response)
   );
   if (!user) {
     throw new AppError(404, "Driver not found", "DRIVER_NOT_FOUND");
+  }
+  if (!hasRequiredDriverApproval(user, REQUIRE_DRIVER_APPROVAL)) {
+    const io = request.app?.locals.io;
+    if (io) {
+      const sockets = await io.in(`user:${user.id}`).fetchSockets();
+      for (const socket of sockets) {
+        // Revoke driver transports only; a newer session must not be closed
+        // by delayed cleanup from this review.
+        if (socket.data.role === "driver" && socket.data.sessionVersion <= user.sessionVersion) {
+          socket.disconnect(true);
+        }
+      }
+    }
   }
   response.json({ driver: serializeUser(user) });
 }
