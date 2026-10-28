@@ -55,6 +55,12 @@ app.use("/api/admin", (_request, response, next) => {
   response.set("Cache-Control", "no-store");
   next();
 });
+// Orders and queue snapshots include private trip, account and location data.
+// Cover early parser/auth failures as well as successful reads and mutations.
+app.use(["/api/orders", "/api/queue"], (_request, response, next) => {
+  response.set("Cache-Control", "no-store");
+  next();
+});
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
