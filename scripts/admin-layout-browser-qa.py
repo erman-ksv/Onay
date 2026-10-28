@@ -81,6 +81,7 @@ class AdminLayoutQA:
         self.order_cancel_requests = []
         self.audit_network_failure = False
         self.monitor_network_failure = False
+        self.directory_network_failure = False
         self.admin_requests = []
         self.token = None
         self.route_id = None
@@ -820,11 +821,111 @@ class AdminLayoutQA:
         require(all(item["method"] == "GET" for item in self.admin_requests[before:]), "Every browser monitoring interaction must remain read-only")
         self.passed("Unmount discards a delayed genuine monitoring response and fresh mobile390px mounting renders safely without overflow")
 
+
+    def directory_acceptance(self):
+        """Task9.2: actual directories, real reads/writes and controlled transport failures."""
+        panel = self.page.get_by_test_id("admin-directory")
+        self.expect(panel).to_be_visible()
+        self.expect(panel.get_by_test_id("directory-snapshot")).to_be_visible()
+        tag = uuid.uuid4().hex[:8]
+        def register(role, name):
+            phone = "+998" + str(int(uuid.uuid4().hex[:8], 16) % 1000000000).zfill(9)
+            challenge = expect_status(api_request(self.args.api_url, "/auth/request-otp", "POST",
+                {"phone_number": phone, "role": role, "full_name": name, "locale": "ru"}), 202, "Create isolated directory fixture OTP")
+            return expect_status(api_request(self.args.api_url, "/auth/verify-otp", "POST",
+                {"phone_number": phone, "code": challenge["demo_code"]}), 200, "Verify isolated directory fixture")
+        passenger = register("passenger", "Каталог пассажир " + tag)
+        driver = register("driver", "Каталог водитель " + tag)
+        mixed = register("passenger", "Каталог две роли " + tag)
+        mixed = expect_status(api_request(self.args.api_url, "/auth/switch-role", "POST", {"role": "driver"},
+            mixed["access_token"]), 200, "Activate driver mode without duplicating identity")
+        def refresh():
+            with self.response_for("/admin/drivers", "GET") as pending:
+                panel.get_by_role("button", name="Обновить", exact=True).click()
+            require(pending.value.status == 200, "Directory refresh must use the real API")
+            self.expect(panel.get_by_test_id("directory-snapshot")).to_be_visible()
+            self.expect(panel.get_by_role("alert")).to_have_count(0)
+        def tab(name):
+            panel.get_by_role("tab", name=name, exact=True).click()
+        search = panel.get_by_role("searchbox", name="Поиск по имени, номеру телефона или ID")
+        refresh()
+        for name, fixture in [("Пассажиры", passenger), ("Водители", driver)]:
+            tab(name)
+            user = fixture["user"]
+            for query in [user["full_name"].upper(), user["id"], user["phone_number"],
+                user["phone_number"][:4] + " (" + user["phone_number"][4:6] + ") " + user["phone_number"][6:9] + "-" + user["phone_number"][9:]]:
+                search.fill(query)
+                rows = panel.locator("tbody tr")
+                self.expect(rows).to_have_count(1)
+                self.expect(rows.first).to_contain_text(user["full_name"])
+            search.fill("no-match-" + tag)
+            self.expect(panel.locator("tbody tr")).to_have_count(0)
+            self.expect(panel.get_by_text("Пользователи не найдены", exact=True)).to_be_visible()
+            self.expect(panel.get_by_role("alert")).to_have_count(0)
+        self.passed("Task9.2 directories search real names, IDs and formatted phones with a genuine no-match state")
+
+        for name in ["Пассажиры", "Водители"]:
+            tab(name)
+            search.fill(mixed["user"]["id"])
+            self.expect(panel.locator("tbody tr")).to_have_count(1)
+            self.expect(panel.locator("tbody tr")).to_contain_text(mixed["user"]["full_name"])
+        self.passed("Task9.2 one passenger account in driver mode appears in both capability directories without duplication")
+
+        expect_status(api_request(self.args.api_url, "/admin/drivers/" + driver["user"]["id"] + "/approval",
+            "PATCH", {"status": "approved"}, self.token), 200, "Update actual directory driver approval")
+        refresh()
+        tab("Водители")
+        search.fill(driver["user"]["id"])
+        self.expect(panel.locator("tbody tr")).to_contain_text("Одобрен")
+        self.passed("Task9.2 explicit directory refresh shows the committed driver approval")
+
+        extra = register("passenger", "Каталог новый " + tag)
+        tab("Пассажиры")
+        search.fill(extra["user"]["id"])
+        self.expect(panel.locator("tbody tr")).to_have_count(0)
+        refresh()
+        self.expect(panel.locator("tbody tr")).to_have_count(1)
+        self.expect(panel.locator("tbody tr")).to_contain_text(extra["user"]["full_name"])
+        self.passed("Task9.2 explicit refresh obtains new persisted users instead of keeping an old snapshot")
+
+        pattern = "**/api/admin/drivers"
+        def disconnect(route):
+            self.directory_network_failure = True
+            route.abort("connectionfailed")
+        self.page.route(pattern, disconnect)
+        try:
+            panel.get_by_role("button", name="Обновить", exact=True).click()
+            self.expect(panel.get_by_role("alert")).to_contain_text("Не удалось обновить каталоги")
+            self.expect(panel.get_by_test_id("directory-snapshot")).to_be_hidden()
+            self.expect(panel.locator("tbody tr")).to_have_count(0)
+            self.expect(panel.get_by_text("Пользователи не найдены", exact=True)).to_have_count(0)
+            self.expect(panel.get_by_text("Нет актуальных данных", exact=False)).to_be_visible()
+            self.expect(panel.get_by_label("Статистика пользователей")).to_contain_text("—")
+        finally:
+            self.page.unroute(pattern, disconnect)
+        refresh()
+        self.expect(panel.locator("tbody tr")).to_contain_text(extra["user"]["full_name"])
+        self.passed("Task9.2 one failed read clears both catalogs and counters, stays distinct from empty and recovers explicitly")
+
+        for actor in [passenger, driver, mixed]:
+            for pathname in ["/admin/passengers", "/admin/drivers"]:
+                expect_status(api_request(self.args.api_url, pathname, token=actor["access_token"]), 403, "Directory API denies non-admin capability")
+        search.fill("")
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        require(self.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "390px directory must contain table scrolling inside the panel")
+        self.expect(search).to_be_visible()
+        self.identity()
+        self.screenshot("mobile-390-user-directories")
+        self.page.set_viewport_size({"width": 1440, "height": 1000})
+        self.screenshot("desktop-user-directories")
+        self.passed("Task9.2 catalogs remain administrator-only and usable at desktop and390px")
+
     def run(self):
         expect_status(api_request(self.args.api_url, "/healthz"), 200, "Actual API health")
         expect_status(api_request(self.args.base_url, "/healthz"), 200, "Same-origin API health")
         self.page.goto(self.args.base_url.rstrip("/") + "/admin", wait_until="domcontentloaded")
         self.login()
+        self.directory_acceptance()
         self.open_routes()
         self.passed("Real admin OTP login and same-origin API access")
 
@@ -987,7 +1088,8 @@ class AdminLayoutQA:
             expected_order_conflict = urlparse(entry["url"]).path in self.order_conflict_paths and bool(re.fullmatch(r"Failed to load resource: the server responded with a status of 409 \(Conflict\)", entry["text"]))
             expected_order_network = self.order_network_failure_path and urlparse(entry["url"]).path == self.order_network_failure_path and bool(re.fullmatch(r"Failed to load resource: net::ERR_CONNECTION_FAILED", entry["text"]))
             expected_monitor = self.monitor_network_failure and urlparse(entry["url"]).path == "/api/admin/queue" and bool(re.fullmatch(r"Failed to load resource: net::ERR_CONNECTION_FAILED", entry["text"]))
-            if not expected and not expected_vehicle and not expected_audit and not expected_order_conflict and not expected_order_network and not expected_monitor:
+            expected_directory = self.directory_network_failure and urlparse(entry["url"]).path == "/api/admin/drivers" and bool(re.fullmatch(r"Failed to load resource: net::ERR_CONNECTION_FAILED", entry["text"]))
+            if not expected and not expected_vehicle and not expected_audit and not expected_order_conflict and not expected_order_network and not expected_monitor and not expected_directory:
                 errors.append(entry)
         require(not errors and not self.page_errors, f"Browser errors: {redact(errors)}; page errors: {self.page_errors}")
 

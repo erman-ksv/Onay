@@ -6,7 +6,7 @@ import AdminOrders from "./AdminOrders";
 import AdminMonitoring from "./AdminMonitoring";
 import DriverVehicleReview from "./DriverVehicleReview";
 import {
-  AdminApiError, closeAdminSession, loadDirectories, sendAdminOtp, verifyAdminOtp,
+  AdminApiError, closeAdminSession, filterDirectory, loadDirectories, sendAdminOtp, verifyAdminOtp,
   type AdminRecord, type AdminSession,
 } from "./api";
 
@@ -96,6 +96,8 @@ export default function AdminPortal() {
     const isCurrent = () => !controller.signal.aborted &&
       active.token === activeSessionToken.current && request === directoryRequest.current;
     setLoading(true);
+    setData(empty);
+    setLastUpdate(null);
     setError("");
     try {
       const directory = await loadDirectories(active.token, controller.signal);
@@ -109,7 +111,7 @@ export default function AdminPortal() {
         void signOut(active);
         setError("Доступ администратора завершён. Войдите снова.");
       } else {
-        setError(e instanceof Error ? e.message : "Не удалось загрузить список.");
+        setError("Не удалось обновить каталоги. Попробуйте ещё раз.");
       }
     } finally {
       if (isCurrent()) setLoading(false);
@@ -152,12 +154,7 @@ export default function AdminPortal() {
     } finally { setBusy(false); }
   }
 
-  const records = useMemo(() => {
-    const q = filter.trim().toLocaleLowerCase("ru");
-    return data[tab].filter(user => !q ||
-      [user.full_name, user.phone_number, user.id].some(v => v?.toLocaleLowerCase("ru").includes(q)),
-    );
-  }, [data, tab, filter]);
+  const records = useMemo(() => filterDirectory(data[tab], filter), [data, tab, filter]);
 
   if (!session) {
     return <div className="min-h-screen bg-[#f5f7fb] px-5 py-16 text-slate-900">
@@ -208,12 +205,12 @@ export default function AdminPortal() {
         <button type="button" aria-current={section === "orders" ? "page" : undefined} onClick={() => setSection("orders")} className={"inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold " + (section === "orders" ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50")}><CarTaxiFront size={17}/>Заказы</button>
         <button type="button" aria-current={section === "monitoring" ? "page" : undefined} onClick={() => setSection("monitoring")} className={"inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold " + (section === "monitoring" ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50")}><RefreshCw size={17}/>Мониторинг</button>
       </nav>
-      <div hidden={section !== "users"}>
+      <div data-testid="admin-directory" hidden={section !== "users"}>
       <div className="mb-8"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700">Панель управления</p><h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">Пользователи TezJet</h1><p className="mt-2 text-sm text-slate-500">Просмотр пассажиров и водителей. Данные поступают из защищённого API.</p></div>
       <section aria-label="Статистика пользователей" className="mb-8 grid gap-4 sm:grid-cols-3">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5"><div className="mb-5 inline-flex rounded-xl bg-blue-50 p-3 text-blue-600"><Users size={20}/></div><p className="text-sm text-slate-500">Пассажиры</p><p className="mt-1 text-3xl font-bold tabular-nums">{data.passengers.length}</p></div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-5"><div className="mb-5 inline-flex rounded-xl bg-violet-50 p-3 text-violet-600"><CarTaxiFront size={20}/></div><p className="text-sm text-slate-500">Водители</p><p className="mt-1 text-3xl font-bold tabular-nums">{data.drivers.length}</p></div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-5"><div className="mb-5 inline-flex rounded-xl bg-emerald-50 p-3 text-emerald-600"><CheckCircle2 size={20}/></div><p className="text-sm text-slate-500">Одобренные водители</p><p className="mt-1 text-3xl font-bold tabular-nums">{data.drivers.filter(d => d.driver_approval_status === "approved").length}</p></div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-5"><div className="mb-5 inline-flex rounded-xl bg-blue-50 p-3 text-blue-600"><Users size={20}/></div><p className="text-sm text-slate-500">Пассажиры</p><p className="mt-1 text-3xl font-bold tabular-nums">{lastUpdate ? data.passengers.length : "—"}</p></div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-5"><div className="mb-5 inline-flex rounded-xl bg-violet-50 p-3 text-violet-600"><CarTaxiFront size={20}/></div><p className="text-sm text-slate-500">Водители</p><p className="mt-1 text-3xl font-bold tabular-nums">{lastUpdate ? data.drivers.length : "—"}</p></div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-5"><div className="mb-5 inline-flex rounded-xl bg-emerald-50 p-3 text-emerald-600"><CheckCircle2 size={20}/></div><p className="text-sm text-slate-500">Одобренные водители</p><p className="mt-1 text-3xl font-bold tabular-nums">{lastUpdate ? data.drivers.filter(d => d.driver_approval_status === "approved").length : "—"}</p></div>
       </section>
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 p-5">
@@ -230,7 +227,7 @@ export default function AdminPortal() {
         </div>
         {error && <div role="alert" className="mx-5 mb-4 flex items-center gap-2 rounded-xl bg-red-50 p-3 text-sm text-red-700"><CircleAlert size={17}/>{error}</div>}
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[650px] border-collapse text-left text-sm">
+          <table data-testid="directory-snapshot" hidden={!lastUpdate || loading || !!error} className="w-full min-w-[650px] border-collapse text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-4 font-semibold">Пользователь</th><th className="px-5 py-4 font-semibold">Телефон</th><th className="px-5 py-4 font-semibold">{tab === "drivers" ? "Одобрение" : "Роли"}</th><th className="px-5 py-4 font-semibold">Создан</th></tr></thead>
             <tbody>{records.map(item => <tr key={item.id} className="border-t border-slate-100">
               <td className="px-5 py-4"><span className="font-semibold text-slate-900">{item.full_name || "Без имени"}</span><span className="mt-1 block font-mono text-xs text-slate-400">{item.id.slice(0, 8)}…</span></td>
@@ -238,10 +235,10 @@ export default function AdminPortal() {
               <td className="px-5 py-4">{tab === "drivers" ? <span className={"inline-flex rounded-full px-2.5 py-1 text-xs font-semibold " + (item.driver_approval_status === "approved" ? "bg-emerald-50 text-emerald-700" : item.driver_approval_status === "rejected" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700")}>{statusLabel(item.driver_approval_status)}</span> : <span className="text-slate-600">{item.roles?.join(", ") || "Пассажир"}</span>}</td>
               <td className="px-5 py-4 text-slate-500">{formatDate(item.created_at)}{tab === "drivers" ? <DriverVehicleReview key={`${session.token}:${item.id}:${item.driver_vehicle?.revision ?? "none"}`} driver={item} token={session.token} onReviewed={() => { void refresh(session); }} onAccessExpired={expireRouteAccess} /> : null}</td></tr>)}</tbody>
           </table>
-          {!loading && records.length === 0 && <div className="px-6 py-14 text-center"><Smartphone className="mx-auto mb-3 text-slate-300" size={28}/><p className="font-medium text-slate-700">Пользователи не найдены</p><p className="mt-1 text-sm text-slate-400">Измените запрос или нажмите «Обновить».</p></div>}
+          {lastUpdate && !loading && !error && records.length === 0 && <div className="px-6 py-14 text-center"><Smartphone className="mx-auto mb-3 text-slate-300" size={28}/><p className="font-medium text-slate-700">Пользователи не найдены</p><p className="mt-1 text-sm text-slate-400">Измените запрос или нажмите «Обновить».</p></div>}
           {loading && <p role="status" className="px-6 py-8 text-center text-sm text-slate-500">Загружаем актуальные данные…</p>}
         </div>
-        <div className="border-t border-slate-100 px-5 py-4 text-xs text-slate-500">Найдено: {records.length} · Автомобили проверяются администратором. Персональные данные доступны лишь администратору.</div>
+        <div className="border-t border-slate-100 px-5 py-4 text-xs text-slate-500">{lastUpdate ? "Найдено: " + records.length : "Нет актуальных данных"} · Автомобили проверяются администратором. Персональные данные доступны лишь администратору.</div>
       </section>
       </div>
       <div hidden={section !== "routes"}><RouteEditor token={session.token} onAccessExpired={expireRouteAccess}/></div>
