@@ -42,6 +42,12 @@ app.use(
   }),
 );
 app.use(cors());
+// Tokens and private profiles must not be stored by HTTP caches. Mount before
+// the OTP limiter and body parsers so their early failures carry the same policy.
+app.use("/api/auth", (_request, response, next) => {
+  response.set("Cache-Control", "no-store");
+  next();
+});
 app.use("/api", protectOtpRequests);
 // Admin responses contain private account and operational data. Apply before
 // body parsing and authentication so failures and HEAD responses cannot be cached.
