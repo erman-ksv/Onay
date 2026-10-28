@@ -121,7 +121,7 @@ test("Authentication, validation, malformed and oversized bodies and auth namesp
   noStore(head, 401);
   assert.equal(head.text, "");
   noStore(await request("/api/auth/profile", { method: "PATCH", token: "invalid" }), 401);
-  noStore(await request("/api/auth/verify-otp", { method: "POST", body: { phone_number: "invalid", code: "123456" } }), 422);
+  noStore(await request("/api/auth/verify-otp", { method: "POST", body: { phone_number: "invalid", code: "123456" } }), 400);
   noStore(await request("/api/auth/request-otp", { method: "POST", raw: "{" }), 400);
   noStore(await request("/api/auth/request-otp", { method: "POST", body: { padding: "x".repeat(110000) } }), 413);
   noStore(await request("/api/auth/unknown"), 404);
