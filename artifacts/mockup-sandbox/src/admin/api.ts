@@ -91,6 +91,28 @@ export async function verifyAdminOtp(phone: string, code: string): Promise<Admin
   return { token: result.access_token, user: result.user };
 }
 
+function isDirectory(value: unknown, capability: "passenger" | "driver"): value is AdminRecord[] {
+  if (!Array.isArray(value)) return false;
+  const ids = new Set<string>();
+  return value.every(user => {
+    if (!user || typeof user !== "object" || typeof user.id !== "string" || !user.id ||
+        ids.has(user.id) || typeof user.full_name !== "string" ||
+        typeof user.phone_number !== "string" || !Array.isArray(user.roles) ||
+        !user.roles.includes(capability) || !["passenger", "driver", "admin"].includes(user.role)) return false;
+    ids.add(user.id);
+    return true;
+  });
+}
+
+/** Search the loaded snapshot only; never send personal search text in URLs. */
+export function filterDirectory(users: AdminRecord[], query: string): AdminRecord[] {
+  const text = query.trim().normalize("NFKC").toLocaleLowerCase("ru");
+  const phone = /^\+?[\d\s().-]+$/.test(text) ? text.replace(/\D/g, "") : "";
+  return users.filter(user => !text ||
+    [user.full_name, user.phone_number, user.id].some(value => value.normalize("NFKC").toLocaleLowerCase("ru").includes(text)) ||
+    (phone.length > 0 && user.phone_number.replace(/\D/g, "").includes(phone)));
+}
+
 export async function loadDirectories(token: string, signal?: AbortSignal): Promise<{
   passengers: AdminRecord[];
   drivers: AdminRecord[];
@@ -99,7 +121,7 @@ export async function loadDirectories(token: string, signal?: AbortSignal): Prom
     adminRequest<{ passengers: AdminRecord[] }>("/admin/passengers", { token, signal }),
     adminRequest<{ drivers: AdminRecord[] }>("/admin/drivers", { token, signal }),
   ]);
-  if (!Array.isArray(p.passengers) || !Array.isArray(d.drivers)) {
+  if (!isDirectory(p?.passengers, "passenger") || !isDirectory(d?.drivers, "driver")) {
     throw new AdminApiError(502, "Некорректный ответ каталога пользователей.");
   }
   return { passengers: p.passengers, drivers: d.drivers };
