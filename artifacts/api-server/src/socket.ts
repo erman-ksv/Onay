@@ -40,9 +40,16 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
         next(new Error("Driver approval required"));
         return;
       }
+      const expiresAt = (claims as typeof claims & { exp?: number }).exp;
+      if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) {
+        next(new Error("Unauthorized"));
+        return;
+      }
+      socket.data.expiresAt = expiresAt * 1000;
       socket.data.userId = user.id;
       socket.data.role = user.role;
       socket.data.sessionVersion = user.sessionVersion;
+      socket.data.accessToken = token;
       next();
     } catch (err) {
       logger.error({ err, socketId: socket.id }, "Socket authentication failed");
@@ -52,6 +59,22 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
 
   io.on("connection", async (socket) => {
     const userId = socket.data.userId as string;
+    const token = socket.data.accessToken as string;
+    // A live transport must not extend the lifetime of its access token.
+    const expiresAt = socket.data.expiresAt as number;
+    let expiryTimer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleExpiry = (): void => {
+      const remaining = expiresAt - Date.now();
+      if (!Number.isFinite(remaining) || remaining <= 0) {
+        socket.disconnect(true);
+        return;
+      }
+      expiryTimer = setTimeout(scheduleExpiry, Math.min(remaining, 2_147_483_647));
+      expiryTimer.unref();
+    };
+    socket.once("disconnect", () => clearTimeout(expiryTimer));
+    scheduleExpiry();
+    if (!socket.connected) return;
     socket.join(`user:${userId}`);
     socket.join(`queue:${PYATAK_ZONE.id}`);
     socket.emit("connected", {
@@ -103,8 +126,12 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
         return;
       }
       try {
+        if (!verifyAccessToken(token)) {
+          socket.disconnect(true);
+          return;
+        }
         const driver = await store.getUser(userId);
-        if (!driver || driver.role !== "driver" || driver.sessionVersion !== socket.data.sessionVersion) {
+        if (!socket.connected || !verifyAccessToken(token) || !driver || driver.role !== "driver" || driver.sessionVersion !== socket.data.sessionVersion) {
           socket.disconnect(true);
           return;
         }

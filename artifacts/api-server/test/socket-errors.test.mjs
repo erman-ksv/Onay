@@ -7,6 +7,7 @@ import { after, before, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { io as createSocket } from "socket.io-client";
+import jwt from "jsonwebtoken";
 
 // Promise rejection handling belongs to the Socket.IO boundary, independent
 // of a database connection. Use the real server with an isolated MemoryStore
@@ -92,15 +93,17 @@ function waitForEvent(socket, event, predicate = () => true) {
   });
 }
 
-async function client(t, role = "passenger") {
+async function client(t, role = "passenger", expiresIn) {
   const user = await store.createUser({
     role, fullName: "Socket regression user", phoneNumber: randomUUID(), locale: "ru",
   });
   if (role === "driver") await store.setDriverApproval(user.id, "approved");
-  const token = createAccessToken({
+  const claims = {
     sub: user.id, role: user.role, locale: user.locale,
     sessionVersion: user.sessionVersion, sessionId: randomUUID(),
-  });
+  };
+  const token = expiresIn === undefined ? createAccessToken(claims)
+    : jwt.sign(claims, process.env.SESSION_SECRET, { expiresIn });
   const socket = createSocket(serverUrl, {
     path: "/api/socket.io", auth: { token }, transports: ["websocket"],
     autoConnect: false, reconnection: false,
@@ -207,3 +210,71 @@ for (const action of ["invalidate", "switch", "logout"]) {
     assert.equal((await fetch(serverUrl)).status, 200);
   });
 }
+
+for (const role of ["passenger", "driver"]) {
+  test(`Socket ${role} expires without client traffic and rejects the old token on reconnect`, { timeout: 15_000 }, async t => {
+    const { socket } = await client(t, role, 3);
+    const { socket: observer } = await client(t);
+    await Promise.all([connect(socket), connect(observer)]);
+    const disconnected = waitForEvent(socket, "disconnect");
+    assert.equal(await disconnected, "io server disconnect");
+    assert.equal(socket.connected, false);
+    assert.equal(observer.connected, true);
+    const rejected = waitForEvent(socket, "connect_error");
+    socket.connect();
+    assert.equal((await rejected).message, "Unauthorized");
+    assert.equal(socket.connected, false);
+    const { socket: renewed } = await client(t, role);
+    await connect(renewed);
+    assert.equal(renewed.connected, true);
+  });
+}
+
+test("Socket rejects an already expired JWT at handshake", async t => {
+  const { socket } = await client(t, "passenger", -1);
+  const rejected = waitForEvent(socket, "connect_error");
+  socket.connect();
+  assert.equal((await rejected).message, "Unauthorized");
+  assert.equal(socket.connected, false);
+});
+
+test("Socket expiry drops a driver location whose account lookup finishes after expiry", { timeout: 15_000 }, async t => {
+  const { socket: observer } = await client(t);
+  const { socket: driver, user } = await client(t, "driver", 3);
+  await Promise.all([connect(observer), connect(driver)]);
+  const locations = [];
+  observer.on("driver:location", payload => locations.push(payload));
+  const getUser = store.getUser.bind(store);
+  let releaseLookup, lookupStarted;
+  const blocked = new Promise(resolve => { releaseLookup = resolve; });
+  const started = new Promise(resolve => { lookupStarted = resolve; });
+  let lookupFinished;
+  const finished = new Promise(resolve => { lookupFinished = resolve; });
+  t.mock.method(store, "getUser", async id => {
+    if (id === user.id) {
+      lookupStarted();
+      await blocked;
+      const value = await getUser(id);
+      lookupFinished();
+      return value;
+    }
+    return getUser(id);
+  });
+  const disconnected = waitForEvent(driver, "disconnect");
+  driver.emit("driver:location", { lat: 41.3111, lng: 69.2797, timestamp: Date.now() });
+  try {
+    await started;
+    assert.equal(await disconnected, "io server disconnect");
+  } finally {
+    releaseLookup();
+  }
+  await finished;
+  // A subsequent valid broadcast fences the observer's event stream.
+  const { socket: validDriver } = await client(t, "driver");
+  await connect(validDriver);
+  const delivered = waitForEvent(observer, "driver:location", payload => payload.location.timestamp === 42);
+  validDriver.emit("driver:location", { lat: 41.3111, lng: 69.2797, timestamp: 42 });
+  await delivered;
+  assert.equal(locations.length, 1);
+  assert.equal(locations[0].location.timestamp, 42);
+});
