@@ -89,13 +89,13 @@ function assertError(result, status, code) {
   assert.equal(result.status, status, JSON.stringify(result.body));
   if (code) assert.equal(result.body?.error?.code, code, JSON.stringify(result.body));
 }
-async function request(pathname, { token, method = "GET", body } = {}) {
+async function request(pathname, { token, method = "GET", body, raw } = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
     method, headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: raw ?? (body === undefined ? undefined : JSON.stringify(body)),
   });
   const content = await response.text();
-  return { status: response.status, body: content ? JSON.parse(content) : undefined };
+  return { status: response.status, headers: response.headers, text: content, body: content ? JSON.parse(content) : undefined };
 }
 async function fixture(t, adapter = store) {
   const users = [], routes = [];
@@ -224,4 +224,86 @@ test("HTTP: cancelled rides and deleted driver accounts cannot disclose cached c
   const missing = await assignedFixture(t);
   await database.query("DELETE FROM tezjet_users WHERE id = $1", [missing.driver.user.id]);
   assertError(await request(missing.contact, { token: missing.passenger.token }), 404, "DRIVER_CONTACT_UNAVAILABLE");
+});
+
+function assertNoStore(result, status) {
+  assert.equal(result.status, status, JSON.stringify(result.body));
+  assert.equal(result.headers.get("cache-control"), "no-store");
+}
+
+test("HTTP private order history, details and driver contact forbid caching on GET and HEAD", async t => {
+  const { driver, passenger, order, contact } = await assignedFixture(t);
+  for (const actor of [passenger, driver]) {
+    const history = await request("/orders", { token: actor.token });
+    assertNoStore(history, 200);
+    assert.ok(history.body.orders.some(item => item.id === order.id));
+    const detail = await request(`/orders/${order.id}`, { token: actor.token });
+    assertNoStore(detail, 200);
+    assert.equal(detail.body.order.id, order.id);
+    for (const pathname of ["/orders", `/orders/${order.id}`]) {
+      const head = await request(pathname, { method: "HEAD", token: actor.token });
+      assertNoStore(head, 200);
+      assert.equal(head.text, "");
+    }
+  }
+  assertNoStore(await request(contact, { token: passenger.token }), 200);
+  const head = await request(contact, { method: "HEAD", token: passenger.token });
+  assertNoStore(head, 200);
+  assert.equal(head.text, "");
+});
+
+test("HTTP private queue snapshots and personal enrollment forbid caching on GET and HEAD", async t => {
+  const { driver, passenger } = await assignedFixture(t);
+  for (const actor of [driver, passenger]) {
+    const snapshot = await request("/queue", { token: actor.token });
+    assertNoStore(snapshot, 200);
+    assert.ok(Array.isArray(snapshot.body.queue));
+    if (actor === driver) assert.equal(snapshot.body.your_entry.driverId, driver.user.id);
+    else assert.equal(snapshot.body.your_entry, null);
+    const head = await request("/queue", { method: "HEAD", token: actor.token });
+    assertNoStore(head, 200);
+    assert.equal(head.text, "");
+  }
+});
+
+test("HTTP cancellation and subsequent private order reads retain no-store and existing state transitions", async t => {
+  const { passenger, order } = await assignedFixture(t);
+  const cancelled = await request(`/orders/${order.id}/cancel`, { method: "POST", token: passenger.token });
+  assertNoStore(cancelled, 200);
+  assert.equal((await store.getOrder(order.id)).status, "cancelled");
+  const detail = await request(`/orders/${order.id}`, { token: passenger.token });
+  assertNoStore(detail, 200);
+  assert.equal(detail.body.order.status, "cancelled");
+  assertNoStore(await request("/orders", { token: passenger.token }), 200);
+});
+
+test("HTTP orders and queue no-store covers auth, forbidden, missing and parser failures without widening access", async t => {
+  const { f, driver, passenger, order, contact } = await assignedFixture(t);
+  const stranger = await f.createUser("passenger");
+  for (const pathname of ["/orders", `/orders/${order.id}`, contact,
+      "/orders/route/request-key", "/orders/route/requests/" + randomUUID(), "/queue"]) {
+    assertNoStore(await request(pathname), 401);
+    const head = await request(pathname, { method: "HEAD" });
+    assertNoStore(head, 401);
+    assert.equal(head.text, "");
+  }
+  assertNoStore(await request(contact, { token: driver.token }), 403);
+  assertNoStore(await request(`/orders/${order.id}`, { token: stranger.token }), 404);
+  assertNoStore(await request(contact, { token: stranger.token }), 404);
+  assertNoStore(await request("/queue/join", { method: "POST", token: passenger.token, body: {} }), 403);
+  for (const pathname of ["/orders", "/queue/join"]) {
+    assertNoStore(await request(pathname, { method: "POST", raw: "{" }), 400);
+    assertNoStore(await request(pathname, { method: "POST", body: { padding: "x".repeat(110000) } }), 413);
+  }
+  assertNoStore(await request("/orders/" + randomUUID(), { token: passenger.token }), 404);
+  assertNoStore(await request("/queue/unknown", { token: passenger.token }), 404);
+  assertNoStore(await request("/QUEUE/", { token: driver.token }), 200);
+});
+
+test("HTTP trip cache policy preserves health, auth and admin cache behavior", async () => {
+  const health = await request("/healthz");
+  assert.equal(health.status, 200);
+  assert.notEqual(health.headers.get("cache-control"), "no-store");
+  assertNoStore(await request("/auth/me"), 401);
+  assertNoStore(await request("/admin/orders"), 401);
 });
