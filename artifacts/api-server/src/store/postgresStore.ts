@@ -279,13 +279,22 @@ export class PostgresStore implements Store {
     return asUser(row as unknown as Record<string, unknown>);
   }
 
-  async invalidateSessions(userId: string): Promise<User> {
+  async invalidateSessions(userId: string, expectedSessionVersion?: number): Promise<User> {
     const { db, usersTable } = await this.database();
     const [row] = await db.update(usersTable)
       .set({ sessionVersion: sql`${usersTable.sessionVersion} + 1` })
-      .where(eq(usersTable.id, userId))
+      // PostgreSQL rechecks this predicate after waiting for a concurrent update.
+      .where(and(
+        eq(usersTable.id, userId),
+        expectedSessionVersion === undefined ? undefined : eq(usersTable.sessionVersion, expectedSessionVersion),
+      ))
       .returning();
-    if (!row) throw new Error(`User ${userId} not found`);
+    if (!row) {
+      if (expectedSessionVersion !== undefined) {
+        throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+      }
+      throw new Error(`User ${userId} not found`);
+    }
     return asUser(row as unknown as Record<string, unknown>);
   }
 
