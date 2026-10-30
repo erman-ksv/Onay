@@ -40,7 +40,11 @@ Orders refresh on reconnect, app resume, and a ten-second interval. Incoming Soc
 
 Expo EAS can build an Android preview APK and an iOS binary. An Expo account is required; iOS distribution also requires Apple Developer membership. Store publication is a separate release step.
 
-GitHub Actions installs dependencies, checks TypeScript and API/order regressions, exports Android/iOS bundles, generates the Android project, and assembles a debug APK with JavaScript embedded. Successful runs upload `tezjet-android-debug-apk`. The optional repository variable `TEZJET_API_URL` sets the default API for export and the APK; without it, configure the endpoint in the app.
+On pull requests and configured pushes, GitHub Actions installs dependencies, checks TypeScript and API/order regressions, and exports Android/iOS bundles. These automatic checks do not generate an Android project or build an APK.
+
+To request a debug APK when a phone preview is needed, open **Actions → TezJet Mobile CI → Run workflow**, select the intended branch (normally `main`), enable **build_apk**, and run it. The input defaults to `false`; leaving it disabled runs validation only. After validation passes, the opted-in run sets up Java, generates the Android project, embeds JavaScript, assembles the debug APK, and uploads `tezjet-android-debug-apk`. No completion percentage automatically triggers a build. This remains a debug preview, not a signed store release.
+
+The optional repository variable `TEZJET_API_URL` sets the default API for export and the APK; without it, configure the endpoint in the app.
 
 The Expo web export (`pnpm exec expo export --platform web`) uses the same application and route picker for browser validation. React DOM and React Native Web are included for Expo 54; this remains the native mobile application with a browser test surface.
 
