@@ -14,6 +14,7 @@ import { routeBookingRecoveryKey, saveRouteBookingRecovery, clearRouteBookingRec
 import PassengerDriverCard from "../components/PassengerDriverCard";
 import DriverVehicleForm from "../components/DriverVehicleForm";
 import DriverHistory from "../components/DriverHistory";
+import PassengerHistory from "../components/PassengerHistory";
 import type { DriverVehicleSnapshot } from "../lib/driver-vehicle";
 import { canBoardLinePassenger, canDepartLine, lineDepartBody, parseLineCollectionState, type LineCollectionState } from "../lib/driver-line";
 import { createQueueMutationGuard, driverQueueMembership, parseDriverQueueMembership, type DriverQueueSnapshot } from "../lib/driver-queue";
@@ -787,7 +788,7 @@ export default function Home() {
       {message ? <Text style={s.note}>{message}</Text> : null}<Text style={s.small}>Геолокация запрашивается только при оформлении заказа.</Text>
     </View>
     {availabilityDisplay.state === "unavailable" ? <View style={s.card}><Text style={s.heading}>Водителей пока нет</Text><Text style={s.descDark}>Для этой точки и количества пассажиров сейчас нет свободного водителя. Попробуй проверить наличие позже.</Text></View> : null}
-    {passengerOrders.some(isClosed) ? <View style={s.card}><Text style={s.heading}>Последние поездки</Text>{passengerOrders.filter(isClosed).slice(0, 3).map(previous => <Text key={previous.id} style={s.descDark}>{ridePickupLabel(previous)} → {rideDestinationLabel(previous)}: {statusLabels[previous.status]}</Text>)}</View> : null}
+    <PassengerHistory key={`${driverRouteSession}:${profile.id}`} endpoint={apiBase} token={token} passengerId={profile.id} recentOrders={passengerOrders} />
     </>}
     <Text style={s.footer}>TEZJET · ПАССАЖИР И ВОДИТЕЛЬ В ОДНОМ ПРИЛОЖЕНИИ</Text>
   </ScrollView>;

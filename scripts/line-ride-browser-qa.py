@@ -36,6 +36,8 @@ class LineRideQA(shared.DriverRouteQA):
         self.capacity_snapshots = []
         self.last_driver_gps_at = None
         self.history_abort_observed = False
+        self.passenger_history_abort_observed = False
+        self.history_fixture_ids = []
         passenger_page.on("console", self.on_console)
         passenger_page.on("pageerror", lambda error: self.page_errors.append(self.safe(str(error))))
         passenger_page.on("request", self.on_request)
@@ -199,6 +201,13 @@ class LineRideQA(shared.DriverRouteQA):
         self.expect(self.control("driver-history-totals")).to_contain_text("Завершено поездок: 0")
         self.expect(self.passenger_page.get_by_test_id("driver-history")).to_have_count(0)
         self.passed("Task4.14 real empty driver history stays separate from passenger UI")
+        with self.response(self.passenger_page, "/orders", "GET") as pending:
+            self.passenger_page.get_by_test_id("passenger-history-toggle").click()
+        require(pending.value.status == 200, "Passenger history must read the real authorized API")
+        self.expect(self.passenger_page.get_by_test_id("passenger-history-empty")).to_be_visible()
+        self.expect(self.control("passenger-history")).to_have_count(0)
+        self.passenger_page.get_by_test_id("passenger-history-toggle").click()
+        self.passed("Task3.14 genuine empty passenger history is distinct and absent from driver mode")
 
     def queue(self, label=None, seats=None, phase=None):
         snapshot = self.expected(api_request(self.args.api_url, "/queue", token=self.driver_token), 200, "Read actual driver queue")
@@ -470,6 +479,98 @@ class LineRideQA(shared.DriverRouteQA):
         require(not unexpected and not self.page_errors, "Unexpected history browser errors: " + str(self.safe(unexpected + self.page_errors)))
         self.passed("Task4.14 real transport failure clears stale history and totals, differs from empty, explicit retry recovers without browser errors")
 
+    def cancelled_history_fixture(self):
+        location = self.stop("B")["location"]
+        order = self.expected(api_request(self.args.api_url, "/orders/route", "POST", {
+            "route_id": self.route["id"], "direction": "b_to_a", "expected_updated_at": self.route["updatedAt"],
+            "pickup_stop_id": self.stop("B")["id"], "destination_stop_id": self.stop("A")["id"], "seats": 1,
+            "pickup_location": {"lat": location["lat"], "lng": location["lng"], "timestamp": int(time.time() * 1000)},
+        }, self.passenger_token), 201, "Create real reverse passenger history fixture")["order"]
+        self.history_fixture_ids.append(order["id"])
+        cancelled = self.expected(api_request(self.args.api_url, "/orders/" + order["id"] + "/cancel", "POST", token=self.passenger_token), 200, "Cancel own real history fixture")["order"]
+        require(cancelled["status"] == "cancelled", "History fixture must be durably cancelled")
+        return order["id"]
+
+    def passenger_history(self):
+        page = self.passenger_page
+        for _ in range(4):
+            self.cancelled_history_fixture()
+        with self.response(page, "/orders", "GET") as pending:
+            page.get_by_test_id("passenger-history-toggle").click()
+        require(pending.value.status == 200, "Full history must use real HTTP and PostgreSQL")
+        expected_ids = [order["id"] for order in pending.value.json()["orders"]
+                        if order.get("passenger_id") and order["status"] in {"completed", "cancelled"}]
+        require(len(expected_ids) == 5 and set(expected_ids) == {self.order_id, *self.history_fixture_ids}, "History must contain all five real own closed orders")
+        self.expect(page.get_by_test_id("passenger-history-results")).to_contain_text("Закрытых поездок: 5")
+        self.expect(page.get_by_test_id("passenger-history-row-" + self.order_id)).to_contain_text("Поездка завершена")
+        self.expect(page.get_by_test_id("passenger-history-row-" + self.order_id)).to_contain_text(re.compile(r"5\s000 сум"))
+        for order_id in self.history_fixture_ids:
+            self.expect(page.get_by_test_id("passenger-history-row-" + order_id)).to_contain_text("Заказ отменён")
+        actual_ids = page.locator('[data-testid^="passenger-history-row-"]').evaluate_all("nodes => nodes.map(n => n.getAttribute('data-testid').replace('passenger-history-row-', ''))")
+        require(actual_ids == expected_ids, "Rendered history must retain server newest-first creation order beyond three records")
+        self.expect(page.get_by_test_id("passenger-driver-card")).to_have_count(0)
+        self.shot(page, "task3-14-history-desktop")
+        page.set_viewport_size({"width": 390, "height": 844})
+        require(page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "Full passenger history must fit390px")
+        self.shot(page, "task3-14-history-mobile-390")
+        self.passed("Task3.14 all five real closed passenger rides show completed/cancelled, dates, frozen UZS fares and correct order on desktop390px")
+        new_id = self.cancelled_history_fixture()
+        with self.response(page, "/orders", "GET") as pending:
+            page.get_by_test_id("passenger-history-refresh").click()
+        require(pending.value.status == 200, "Explicit refresh must read newly committed history")
+        self.expect(page.get_by_test_id("passenger-history-row-" + new_id)).to_be_visible()
+        self.expect(page.get_by_test_id("passenger-history-results")).to_contain_text("Закрытых поездок: 6")
+        page.reload(wait_until="domcontentloaded")
+        self.expect(page.get_by_test_id("passenger-history-toggle")).to_be_visible()
+        page.get_by_test_id("passenger-history-toggle").click()
+        self.expect(page.get_by_test_id("passenger-history-results")).to_contain_text("Закрытых поездок: 6")
+        self.passed("Task3.14 explicit refresh and actual app reload retain all six persisted passenger rides")
+        def fail_transport(route):
+            self.passenger_history_abort_observed = True
+            route.abort("failed")
+        page.route("**/api/orders", fail_transport)
+        page.get_by_test_id("passenger-history-refresh").click()
+        self.expect(page.get_by_test_id("passenger-history-error")).to_be_visible()
+        self.expect(page.get_by_test_id("passenger-history-results")).to_have_count(0)
+        self.expect(page.get_by_test_id("passenger-history-empty")).to_have_count(0)
+        self.shot(page, "task3-14-history-transport-error")
+        page.unroute("**/api/orders", fail_transport)
+        page.get_by_test_id("passenger-history-refresh").click()
+        self.expect(page.get_by_test_id("passenger-history-results")).to_contain_text("Закрытых поездок: 6")
+        self.expect(page.get_by_test_id("passenger-history-error")).to_have_count(0)
+        unexpected = [entry for entry in self.console if entry["type"] == "error" and not (
+            (self.history_abort_observed or self.passenger_history_abort_observed) and
+            urlparse(entry.get("url", "")).path == "/api/orders" and entry["text"] == "Failed to load resource: net::ERR_FAILED")]
+        require(not unexpected and not self.page_errors, "Unexpected passenger history errors: " + str(self.safe(unexpected + self.page_errors)))
+        self.passed("Task3.14 transport failure clears old rows, remains distinct from empty and explicit retry restores real history")
+
+    def passenger_history_logout(self):
+        # Hold a real upstream response, then release it after UI logout. No
+        # fabricated order body or authentication state is supplied to the app.
+        held = []
+        def delay_read(route):
+            held.append((route, route.fetch()))
+        page = self.passenger_page
+        page.route("**/api/orders", delay_read)
+        page.get_by_test_id("passenger-history-refresh").click()
+        self.expect(page.get_by_test_id("passenger-history-loading")).to_be_visible()
+        deadline = time.monotonic() + 10
+        while not held and time.monotonic() < deadline:
+            page.wait_for_timeout(20)
+        require(bool(held), "The real history read must be held in flight")
+        page.get_by_text("Выйти", exact=True).click()
+        self.expect(page.get_by_test_id("passenger-history")).to_have_count(0)
+        for route, response in held:
+            try:
+                route.fulfill(response=response)
+            except Exception as error:
+                require("cancel" in str(error).lower() or "closed" in str(error).lower() or "invalid interception" in str(error).lower(), "Only expected cancellation may prevent releasing a held response")
+        page.unroute("**/api/orders", delay_read)
+        self.expect(page.get_by_test_id("passenger-history-results")).to_have_count(0)
+        self.expect(page.get_by_placeholder("+998 90 123 45 67", exact=True)).to_be_visible()
+        require(not self.page_errors, "Logout must not produce a page exception")
+        self.passed("Task3.14 logout discards an actual delayed history response and removes private rows")
+
     def cleanup(self):
         failures = []
         if self.order_id and self.passenger_token:
@@ -501,7 +602,8 @@ class LineRideQA(shared.DriverRouteQA):
         self.close_retained_enrollment()
         self.join_reverse()
         self.history_recovery()
-        require(len(self.checks) == 14, "Ten original line checks plus four Task4.14 history checks must complete")
+        self.passenger_history()
+        require(len(self.checks) == 18, "Fourteen existing line/driver checks plus four passenger history checks must complete before logout")
 
 
 def main():
@@ -550,6 +652,13 @@ def main():
                     if failures:
                         report["cleanup_errors"] = failures
                         report["status"], exit_code = "failed", 1
+                    elif report["status"] == "passed":
+                        try:
+                            qa.passenger_history_logout()
+                            require(len(qa.checks) == 19, "All fourteen original and five new passenger history checks must pass")
+                        except Exception:
+                            report["status"], exit_code = "failed", 1
+                            raise
                 finally:
                     driver_context.close()
                     passenger_context.close()
@@ -572,4 +681,5 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
 
