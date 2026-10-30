@@ -326,7 +326,7 @@ export default function Home() {
       (seatRevision.current !== seatRevisionAtStart || (queueReceivedAt !== undefined && Date.now() - queueReceivedAt >= DRIVER_SEATS_MAX_AGE_MS))) void readOrders();
   }, [token, apiBase, profile?.id, activeRole, driverApproved, clearSession, updateQueueSnapshot, bookingGate]);
 
-  useEffect(() => { if (!busy) void refreshOrders(); }, [busy, refreshOrders]);
+  useEffect(() => { if (driverApproved && !busy) void refreshOrders(); }, [busy, driverApproved, refreshOrders]);
 
   const refreshAvailability = useCallback(async () => {
     if (!token || activeRole !== "passenger" || !a) return null;

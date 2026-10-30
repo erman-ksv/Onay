@@ -6,7 +6,7 @@ export type DriverSeatSnapshot = SeatReadScope & { checkedAt: number } & (
   { membership: "absent" } |
   { membership: "enrolled"; availableSeats: number; joinedAt: number; enrollmentId?: string }
 );
-export type DriverSeatView = { status: "unknown" | "absent" } | { status: "known"; availableSeats: number };
+export type DriverSeatView = { status: "unknown" } | { status: "absent" } | { status: "known"; availableSeats: number };
 export const DRIVER_SEATS_MAX_AGE_MS = 15_000;
 
 /** Only the driver's own authoritative queue entry proves remaining seats.
