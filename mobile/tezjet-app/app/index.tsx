@@ -314,7 +314,7 @@ export default function Home() {
         if (seatRevision.current === seatRevisionAtStart) setDriverSeatSnapshot(null);
       }
     }
-    if (driverApproved && queueResult.status === "rejected" && seatRevision.current === seatRevisionAtStart) setDriverSeatSnapshot(null);
+    if (driverApproved && (queueResult.status === "rejected" || !queueResult.value) && seatRevision.current === seatRevisionAtStart) setDriverSeatSnapshot(null);
     const failed = results.find(result => result.status === "rejected");
     if (failed?.status === "rejected") {
       setDataError(errorMessage(failed.reason, "Не удалось обновить заказы."));
