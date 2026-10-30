@@ -35,6 +35,7 @@ class LineRideQA(shared.DriverRouteQA):
         self.passenger_token = self.order_id = self.route = self.enrollment_id = None
         self.capacity_snapshots = []
         self.last_driver_gps_at = None
+        self.history_abort_observed = False
         passenger_page.on("console", self.on_console)
         passenger_page.on("pageerror", lambda error: self.page_errors.append(self.safe(str(error))))
         passenger_page.on("request", self.on_request)
@@ -59,7 +60,7 @@ class LineRideQA(shared.DriverRouteQA):
 
     def on_console(self, message):
         if message.type in {"warning", "error"}:
-            self.console.append({"type": message.type, "text": self.safe(message.text)})
+            self.console.append({"type": message.type, "text": self.safe(message.text), "url": message.location.get("url", "")})
 
     def on_request(self, request):
         parsed = urlparse(request.url)
@@ -125,7 +126,7 @@ class LineRideQA(shared.DriverRouteQA):
         self.admin_token = self.remember(session["access_token"])
         require(session.get("user", {}).get("role") == "admin", "Setup must authenticate the real administrator")
         created = self.expected(api_request(self.args.api_url, "/admin/routes", "POST", {
-            "name": "QA линия полный рейс " + uuid.uuid4().hex[:10], "active": True,
+            "name": "QA линия полный рейс " + uuid.uuid4().hex[:10], "active": True, "currency": "UZS", "price_per_stop": 2500,
         }, self.admin_token), 201, "Create configured line route")["route"]
         self.route = self.expected(api_request(self.args.api_url, "/admin/routes/" + created["id"] + "/layout", "PUT", {
             "expected_updated_at": created["updatedAt"],
@@ -191,6 +192,13 @@ class LineRideQA(shared.DriverRouteQA):
         self.expect(self.passenger_page.get_by_test_id("configured-route-passenger")).to_be_visible()
         require(self.context != self.passenger_context, "Driver and passenger must have isolated browser sessions")
         self.passed("Two isolated Expo sessions perform actual OTP login and driver administrator approval")
+        with self.response_for("/orders", "GET") as pending:
+            self.control("driver-history-toggle").click()
+        require(pending.value.status == 200, "History must use an actual authorized order read")
+        self.expect(self.control("driver-history-empty")).to_be_visible()
+        self.expect(self.control("driver-history-totals")).to_contain_text("Завершено поездок: 0")
+        self.expect(self.passenger_page.get_by_test_id("driver-history")).to_have_count(0)
+        self.passed("Task4.14 real empty driver history stays separate from passenger UI")
 
     def queue(self, label=None, seats=None, phase=None):
         snapshot = self.expected(api_request(self.args.api_url, "/queue", token=self.driver_token), 200, "Read actual driver queue")
@@ -366,6 +374,23 @@ class LineRideQA(shared.DriverRouteQA):
             "Repeating completion must reject the closed-order transition")
         self.queue("repeated-completion-no-extra-release", 3, "departed")
         self.passed("Actual completion reaches passenger history and restores exactly the three-seat capacity")
+        self.expected_history_fare = order["fare"]["total"]
+        require(order["fare"]["currency"] == "UZS" and self.expected_history_fare == 5000, "Completed work must retain the real two-stop frozen UZS fare")
+        with self.response_for("/orders", "GET") as pending:
+            self.control("driver-history-refresh").click()
+        require(pending.value.status == 200, "History refresh must read real persisted completed orders")
+        row = self.control("driver-history-row-" + self.order_id)
+        self.expect(row).to_contain_text("Поездка завершена")
+        self.expect(row).to_contain_text("QA линия A → QA линия B")
+        self.expect(self.control("driver-history-totals")).to_contain_text("Завершено поездок: 1")
+        self.expect(self.control("driver-history-totals")).to_contain_text(re.compile(r"5\s000 сум"))
+        self.expect(self.control("driver-history-empty")).to_have_count(0)
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        require(self.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "390px history must fit without horizontal overflow")
+        self.shot(self.page, "task4-14-history-mobile-390")
+        self.page.set_viewport_size({"width": 1440, "height": 1000})
+        self.shot(self.page, "task4-14-history-desktop")
+        self.passed("Task4.14 actual completed driver work shows frozen UZS sum and route on desktop and390px")
 
     def close_retained_enrollment(self):
         with self.response_for("/queue", "GET") as pending:
@@ -416,6 +441,35 @@ class LineRideQA(shared.DriverRouteQA):
             "Unexpected browser errors: " + str(self.safe(self.console + self.page_errors)))
         self.passed("Actual driver saves B-to-A and joins pitak B with fresh FIFO receipt/capacity and healthy desktop/mobile apps")
 
+    def history_recovery(self):
+        if self.control("driver-history-toggle").inner_text() == "Показать историю":
+            self.control("driver-history-toggle").click()
+        self.expect(self.control("driver-history-totals")).to_contain_text("Завершено поездок: 1")
+        self.expect(self.control("driver-history-totals")).to_contain_text(re.compile(r"5\s000 сум"))
+        self.passed("Task4.14 real completed earnings survive app reload and new enrollment without double counting")
+        def fail_transport(route):
+            self.history_abort_observed = True
+            route.abort("failed")
+        self.page.route("**/api/orders", fail_transport)
+        self.control("driver-history-refresh").click()
+        self.expect(self.control("driver-history-error")).to_be_visible()
+        self.expect(self.control("driver-history-totals")).to_have_count(0)
+        self.expect(self.control("driver-history-row-" + self.order_id)).to_have_count(0)
+        self.expect(self.control("driver-history-empty")).to_have_count(0)
+        self.shot(self.page, "task4-14-history-transport-error")
+        self.page.unroute("**/api/orders", fail_transport)
+        with self.response_for("/orders", "GET") as pending:
+            self.control("driver-history-refresh").click()
+        require(pending.value.status == 200, "Explicit history retry must recover the real PostgreSQL snapshot")
+        self.expect(self.control("driver-history-row-" + self.order_id)).to_be_visible()
+        self.expect(self.control("driver-history-error")).to_have_count(0)
+        self.expect(self.control("driver-history-totals")).to_contain_text(re.compile(r"5\s000 сум"))
+        unexpected = [entry for entry in self.console if entry["type"] == "error" and not (
+            self.history_abort_observed and urlparse(entry.get("url", "")).path == "/api/orders" and
+            entry["text"] == "Failed to load resource: net::ERR_FAILED")]
+        require(not unexpected and not self.page_errors, "Unexpected history browser errors: " + str(self.safe(unexpected + self.page_errors)))
+        self.passed("Task4.14 real transport failure clears stale history and totals, differs from empty, explicit retry recovers without browser errors")
+
     def cleanup(self):
         failures = []
         if self.order_id and self.passenger_token:
@@ -446,7 +500,8 @@ class LineRideQA(shared.DriverRouteQA):
         self.complete()
         self.close_retained_enrollment()
         self.join_reverse()
-        require(len(self.checks) == 10, "This bounded line lifecycle must contain ten completed checks")
+        self.history_recovery()
+        require(len(self.checks) == 14, "Ten original line checks plus four Task4.14 history checks must complete")
 
 
 def main():
@@ -517,3 +572,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
