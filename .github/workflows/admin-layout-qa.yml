@@ -11,6 +11,7 @@ on:
       - "scripts/admin-orders-client.test.mjs"
       - "scripts/admin-monitoring-client.test.mjs"
       - "scripts/admin-directory-client.test.mjs"
+      - "scripts/admin-statistics-client.test.mjs"
       - ".github/workflows/admin-layout-qa.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -29,6 +30,7 @@ on:
       - "scripts/admin-orders-client.test.mjs"
       - "scripts/admin-monitoring-client.test.mjs"
       - "scripts/admin-directory-client.test.mjs"
+      - "scripts/admin-statistics-client.test.mjs"
       - ".github/workflows/admin-layout-qa.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -103,6 +105,8 @@ jobs:
         run: node --experimental-transform-types --test-reporter=tap scripts/admin-monitoring-client.test.mjs
       - name: Admin directory client regressions
         run: node --experimental-transform-types --test-reporter=tap scripts/admin-directory-client.test.mjs
+      - name: Admin statistics client regressions
+        run: node --experimental-transform-types --test-reporter=tap scripts/admin-statistics-client.test.mjs
       - name: Typecheck
         run: pnpm run typecheck
 
@@ -223,4 +227,5 @@ jobs:
           path: artifacts/admin-layout-qa
           if-no-files-found: warn
           retention-days: 14
+
 

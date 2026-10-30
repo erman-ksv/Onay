@@ -82,6 +82,7 @@ class AdminLayoutQA:
         self.audit_network_failure = False
         self.monitor_network_failure = False
         self.directory_network_failure = False
+        self.statistics_network_failure = False
         self.admin_requests = []
         self.token = None
         self.route_id = None
@@ -700,6 +701,7 @@ class AdminLayoutQA:
         self.screenshot("mobile-390-order-cancellation-audit")
         self.passed("Actual administrative cancellation appears in the real journal UI with the correct order and exactly one event")
         self.admin_monitoring(passenger_token, route, choice, start, destination)
+        self.statistics_origin = start["location"]
 
     def admin_monitoring(self, passenger_token, route, choice, start, destination):
         # All data below is persisted by the actual API. No monitoring response
@@ -822,6 +824,121 @@ class AdminLayoutQA:
         self.passed("Unmount discards a delayed genuine monitoring response and fresh mobile390px mounting renders safely without overflow")
 
 
+    def statistics_empty(self):
+        with self.response_for("/admin/statistics/trips", "GET") as pending:
+            self.page.get_by_role("button", name="Статистика поездок", exact=True).click()
+        require(pending.value.status == 200, "Actual statistics read must succeed")
+        stats = pending.value.json()
+        require(stats["statistics"]["total"] == 0 and stats["fare_summary"]["totals"] == [], "Initial isolated database must have genuine empty statistics")
+        panel = self.page.get_by_test_id("admin-statistics")
+        self.expect(panel.get_by_test_id("statistics-empty")).to_be_visible()
+        self.expect(panel.get_by_test_id("statistics-total")).to_have_text("0")
+        self.page.get_by_role("button", name="Пользователи", exact=True).click()
+        self.passed("Task9.12 genuine empty statistics use the real API and remain distinct from failed reads")
+
+    def admin_statistics(self, passenger_token):
+        driver_token = self.reviewed_driver_token
+        # Reuse the actual driver's current origin to respect the unchanged GPS
+        # speed guard; fixtures use real HTTP transitions and PostgreSQL.
+        origin = self.statistics_origin
+        expect_status(api_request(self.args.api_url, "/queue/leave", "DELETE", token=driver_token), 204, "Leave previous monitoring enrollment")
+        route = expect_status(api_request(self.args.api_url, "/admin/routes", "POST", {"name": "Statistics KZT " + uuid.uuid4().hex[:8], "currency": "KZT", "price_per_stop": 500, "active": True}, self.token), 201, "Create real KZT statistics route")["route"]
+        route = expect_status(api_request(self.args.api_url, "/admin/routes/" + route["id"] + "/layout", "PUT", {
+            "expected_updated_at": route["updatedAt"],
+            "stops": [{"code": code, "name": "Statistics " + code, "location": {"lat": origin["lat"] + index * 0.0001, "lng": origin["lng"]}} for index, code in enumerate(("A", "C", "B"))],
+            "pitaks": {"a_stop_code": "A", "b_stop_code": "B", "radius_meters": 175},
+        }, self.token), 200, "Configure actual KZT geometry")["route"]
+        choice = {"route_id": route["id"], "direction": "a_to_b", "expected_updated_at": route["updatedAt"]}
+        expect_status(api_request(self.args.api_url, "/driver/route", "PUT", choice, driver_token), 200, "Persist KZT choice")
+        def join():
+            expect_status(api_request(self.args.api_url, "/queue/join", "POST", {"route_choice": choice, "available_seats": 4,
+                "location": {"lat": origin["lat"], "lng": origin["lng"], "timestamp": int(time.time() * 1000)}}, driver_token), 201, "Join real KZT FIFO")
+        def create():
+            return expect_status(api_request(self.args.api_url, "/orders/route", "POST", {**choice, "pickup_stop_id": route["stops"][0]["id"], "destination_stop_id": route["stops"][-1]["id"], "seats": 2,
+                "pickup_location": {"lat": origin["lat"], "lng": origin["lng"], "timestamp": int(time.time() * 1000)}}, passenger_token), 201, "Create actual statistics order")["order"]
+        join(); order = create()
+        expect_status(api_request(self.args.api_url, "/orders/" + order["id"] + "/accept", "POST", {}, driver_token), 200, "Accept KZT statistics ride")
+        for status in ("arrived_at_c", "in_transit", "completed"):
+            expect_status(api_request(self.args.api_url, "/orders/" + order["id"] + "/status", "PATCH", {"status": status}, driver_token), 200, "Complete real KZT statistics ride")
+        expect_status(api_request(self.args.api_url, "/queue/leave", "DELETE", token=driver_token), 204, "Leave completed KZT enrollment")
+        with self.response_for("/admin/statistics/trips", "GET") as pending:
+            self.page.get_by_role("button", name="Статистика поездок", exact=True).click()
+        panel = self.page.get_by_test_id("admin-statistics")
+        def verify(value):
+            orders = expect_status(api_request(self.args.api_url, "/admin/orders", token=self.token), 200, "Compare actual aggregate against durable orders")["orders"]
+            stats, fare = value["statistics"], value["fare_summary"]
+            completed = [item for item in orders if item["status"] == "completed"]
+            cancelled = [item for item in orders if item["status"] == "cancelled"]
+            require(stats["total"] == len(orders) and stats["completed"] == len(completed) and stats["cancelled"] == len(cancelled), "API counters must describe actual stored orders")
+            sums, counts = {}, {}
+            for item in completed:
+                money = item["fare"]; currency = money["currency"]
+                sums[currency] = sums.get(currency, 0) + money.get("total", money.get("totalKzt"))
+                counts[currency] = counts.get(currency, 0) + 1
+            require(fare["totals"] == [{"currency": currency, "total": sums[currency], "orders": counts[currency]} for currency in sorted(sums)], "Frozen fares must be summed once per completed order, separately by currency")
+            for key in ("total", "active", "completed", "cancelled"):
+                self.expect(panel.get_by_test_id("statistics-" + key)).to_have_text(str(stats[key]))
+            for row in fare["totals"]:
+                text = panel.get_by_test_id("statistics-fare-" + row["currency"]).inner_text()
+                require(str(row["total"]) in re.sub(r"\s", "", text), "UI must render the actual currency sum")
+            return fare["totals"]
+        original_totals = verify(pending.value.json())
+        require({row["currency"] for row in original_totals} == {"KZT", "UZS"}, "Actual completed fixtures must prove both currencies")
+        self.page.set_viewport_size({"width": 1440, "height": 1000})
+        self.screenshot("desktop-admin-statistics")
+        self.passed("Task9.12 actual KZT and UZS completed fares match stored orders without multiplying seats or including cancellations")
+        join(); cancelled = create()
+        expect_status(api_request(self.args.api_url, "/orders/" + cancelled["id"] + "/cancel", "POST", token=passenger_token), 200, "Cancel own real statistics fixture")
+        expect_status(api_request(self.args.api_url, "/queue/leave", "DELETE", token=driver_token), 204, "Leave cancelled fixture enrollment")
+        expect_status(api_request(self.args.api_url, "/admin/routes/" + route["id"], "PATCH", {"price_per_stop": 999}, self.token), 200, "Change current tariff without repricing historical rides")
+        with self.response_for("/admin/statistics/trips", "GET") as pending:
+            panel.get_by_role("button", name="Обновить статистику", exact=True).click()
+        require(verify(pending.value.json()) == original_totals, "New cancellation and current tariff change must not alter completed frozen fare sums")
+        self.passed("Task9.12 explicit refresh includes a new cancellation while retaining frozen historical sums after tariff change")
+        def disconnect(route_request):
+            self.statistics_network_failure = True
+            route_request.abort("connectionfailed")
+        pattern = "**/api/admin/statistics/trips"
+        self.page.route(pattern, disconnect)
+        panel.get_by_role("button", name="Обновить статистику", exact=True).click()
+        self.expect(panel.get_by_role("alert")).to_be_visible()
+        self.expect(panel.get_by_test_id("statistics-snapshot")).to_have_count(0)
+        self.expect(panel.get_by_test_id("statistics-empty")).to_have_count(0)
+        self.page.unroute(pattern, disconnect)
+        with self.response_for("/admin/statistics/trips", "GET") as pending:
+            panel.get_by_role("button", name="Обновить статистику", exact=True).click()
+        verify(pending.value.json())
+        self.expect(panel.get_by_role("alert")).to_have_count(0)
+        self.passed("Task9.12 transport failure clears all stale counters and sums, stays distinct from empty, and retry recovers")
+        self.page.evaluate("""() => {
+          const original = window.fetch;
+          window.__restoreStatisticsFetch = () => { window.fetch = original; delete window.__restoreStatisticsFetch; };
+          let hold = true;
+          window.fetch = async (...args) => {
+            const response = await original(...args);
+            if (hold && new URL(typeof args[0] === 'string' ? args[0] : args[0].url, location.href).pathname === '/api/admin/statistics/trips') {
+              hold = false; return new Promise(resolve => { window.__releaseStatisticsResponse = () => { delete window.__releaseStatisticsResponse; resolve(response); }; });
+            }
+            return response;
+          };
+        }""")
+        try:
+            panel.get_by_role("button", name="Обновить статистику", exact=True).click()
+            self.page.wait_for_function("typeof window.__releaseStatisticsResponse === 'function'")
+            self.page.get_by_role("button", name="Пользователи", exact=True).click()
+            self.page.evaluate("() => window.__releaseStatisticsResponse()")
+            self.expect(self.page.get_by_test_id("admin-statistics")).to_have_count(0)
+        finally:
+            self.page.evaluate("() => { window.__releaseStatisticsResponse?.(); window.__restoreStatisticsFetch?.(); }")
+        self.page.get_by_role("button", name="Статистика поездок", exact=True).click()
+        self.expect(panel.get_by_test_id("statistics-snapshot")).to_be_visible()
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        require(self.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "390px statistics must not overflow")
+        for actor in (passenger_token, driver_token):
+            expect_status(api_request(self.args.api_url, "/admin/statistics/trips", token=actor), 403, "Non-admin statistics access denied")
+        self.screenshot("mobile-390-admin-statistics")
+        self.passed("Task9.12 unmount discards a delayed real response; fresh390px statistics and actual admin-only access remain correct")
+
     def directory_acceptance(self):
         """Task9.2: actual directories, real reads/writes and controlled transport failures."""
         panel = self.page.get_by_test_id("admin-directory")
@@ -925,6 +1042,7 @@ class AdminLayoutQA:
         expect_status(api_request(self.args.base_url, "/healthz"), 200, "Same-origin API health")
         self.page.goto(self.args.base_url.rstrip("/") + "/admin", wait_until="domcontentloaded")
         self.login()
+        self.statistics_empty()
         self.directory_acceptance()
         self.open_routes()
         self.passed("Real admin OTP login and same-origin API access")
@@ -1059,6 +1177,7 @@ class AdminLayoutQA:
         self.vehicle_review()
         self.audit_journal(passenger["access_token"])
         self.admin_orders(passenger["access_token"])
+        self.admin_statistics(passenger["access_token"])
 
         with self.response_for("/auth/logout", "POST") as pending:
             self.page.get_by_role("button", name="Выйти", exact=True).click()
@@ -1069,6 +1188,7 @@ class AdminLayoutQA:
         self.expect(self.page.get_by_test_id("admin-orders")).to_have_count(0)
         self.expect(self.page.get_by_test_id("admin-monitoring")).to_have_count(0)
         self.expect(self.page.get_by_test_id("monitor-snapshot")).to_have_count(0)
+        self.expect(self.page.get_by_test_id("admin-statistics")).to_have_count(0)
         self.screenshot("mobile-390-logged-out")
         self.passed("UI logout returns to login and invalidates the admin token")
         self.assert_console_health()
@@ -1089,7 +1209,8 @@ class AdminLayoutQA:
             expected_order_network = self.order_network_failure_path and urlparse(entry["url"]).path == self.order_network_failure_path and bool(re.fullmatch(r"Failed to load resource: net::ERR_CONNECTION_FAILED", entry["text"]))
             expected_monitor = self.monitor_network_failure and urlparse(entry["url"]).path == "/api/admin/queue" and bool(re.fullmatch(r"Failed to load resource: net::ERR_CONNECTION_FAILED", entry["text"]))
             expected_directory = self.directory_network_failure and urlparse(entry["url"]).path == "/api/admin/drivers" and bool(re.fullmatch(r"Failed to load resource: net::ERR_CONNECTION_FAILED", entry["text"]))
-            if not expected and not expected_vehicle and not expected_audit and not expected_order_conflict and not expected_order_network and not expected_monitor and not expected_directory:
+            expected_statistics = self.statistics_network_failure and urlparse(entry["url"]).path == "/api/admin/statistics/trips" and bool(re.fullmatch(r"Failed to load resource: net::ERR_CONNECTION_FAILED", entry["text"]))
+            if not expected and not expected_vehicle and not expected_audit and not expected_order_conflict and not expected_order_network and not expected_monitor and not expected_directory and not expected_statistics:
                 errors.append(entry)
         require(not errors and not self.page_errors, f"Browser errors: {redact(errors)}; page errors: {self.page_errors}")
 
@@ -1149,6 +1270,7 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
 
 
 

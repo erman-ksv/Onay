@@ -11,6 +11,7 @@ import { boundedInteger, optionalString, pickEnum, requiredString } from "../uti
 import { normalizeExternalPickupSettings } from "../store/externalPickup";
 import { processOrderDispatch, publishOrderOfferChanges } from "../services/orderDispatchService";
 import type { RouteMetadataPatch } from "../store/storeContract";
+import { buildTripStatistics } from "../utils/tripStatistics";
 
 export async function listAdminAuditEvents(request: Request, response: Response): Promise<void> {
   if (Object.keys(request.query).some(key => !["order_id", "driver_id", "route_id", "limit"].includes(key))) {
@@ -339,28 +340,7 @@ export async function listAdminQueue(request: Request, response: Response): Prom
 
 /** Return aggregate trip counts without exposing order or passenger details. */
 export async function getTripStatistics(_request: Request, response: Response): Promise<void> {
-  const byStatus: Record<OrderStatus, number> = {
-    searching: 0,
-    en_route_to_c: 0,
-    arrived_at_c: 0,
-    boarded_waiting: 0,
-    in_transit: 0,
-    completed: 0,
-    cancelled: 0,
-  };
-  const orders = await store.listOrders();
-  for (const order of orders) {
-    byStatus[order.status] += 1;
-  }
-  response.json({
-    statistics: {
-      total: orders.length,
-      active: orders.length - byStatus.completed - byStatus.cancelled,
-      completed: byStatus.completed,
-      cancelled: byStatus.cancelled,
-      by_status: byStatus,
-    },
-  });
+  response.set("Cache-Control", "no-store").json(buildTripStatistics(await store.listOrders()));
 }
 
 /** List accounts that have passenger capability, including users in driver mode. */
@@ -395,3 +375,4 @@ export async function updateDriverApproval(request: Request, response: Response)
   }
   response.json({ driver: serializeUser(user) });
 }
+
