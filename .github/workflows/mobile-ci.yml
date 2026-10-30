@@ -13,6 +13,14 @@ on:
       - "mobile/tezjet-app/**"
       - ".github/workflows/mobile-ci.yml"
 
+  workflow_dispatch:
+    inputs:
+      build_apk:
+        description: "Build Android debug APK for an on-demand phone preview"
+        type: boolean
+        required: false
+        default: false
+
 permissions:
   contents: read
 
@@ -48,13 +56,16 @@ jobs:
       - name: Export Android and iOS bundles
         run: pnpm exec expo export --platform android --platform ios
       - name: Set up Java for Android
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
       - name: Generate Android native project
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk
         run: pnpm exec expo prebuild --platform android --no-install --clean
       - name: Embed JavaScript in the debug preview
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk
         run: |
           node <<'NODE'
           const fs = require('node:fs');
@@ -64,8 +75,10 @@ jobs:
           fs.writeFileSync(file, source.replace('react {', 'react {\n    debuggableVariants = []'));
           NODE
       - name: Assemble Android debug APK
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk
         run: cd android && ./gradlew assembleDebug
       - name: Upload Android debug APK
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk
         uses: actions/upload-artifact@v4
         with:
           name: tezjet-android-debug-apk
