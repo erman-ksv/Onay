@@ -9,6 +9,8 @@ import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextDriverTripSt
 import { registrationFullName } from "../lib/registration";
 import OnayAuthScreen from "../components/OnayAuthScreen";
 import OnayPassengerHome from "../components/OnayPassengerHome";
+import OnayPassengerTabBar from "../components/OnayPassengerTabBar";
+import { onayPassengerTabScrollY, type OnayPassengerTab } from "../lib/onay-passenger-tabs";
 import { onayPassengerHomeTarget, type OnayPassengerHomeMode } from "../lib/onay-home-modes";
 import { onayDark, onayEntryScreen } from "../lib/onay-auth-ui";
 import DriverRoutePicker from "../components/DriverRoutePicker";
@@ -46,6 +48,10 @@ export default function Home() {
   const homeScroll = useRef<ScrollView>(null);
   const [routeSectionY, setRouteSectionY] = useState(0);
   const [legacySectionY, setLegacySectionY] = useState(0);
+  const [passengerTab, setPassengerTab] = useState<OnayPassengerTab>("home");
+  const [tripsSectionY, setTripsSectionY] = useState(0);
+  const [chatsSectionY, setChatsSectionY] = useState(0);
+  const [profileSectionY, setProfileSectionY] = useState(0);
   // Each home-card tap creates a new instruction; repeating a card still
   // reapplies the direction after a manual change in the booking form.
   const [bookingDirectionIntent, setBookingDirectionIntent] = useState<{ direction: "a_to_b" | "b_to_a"; revision: number } | null>(null);
@@ -769,7 +775,18 @@ export default function Home() {
     finally { setBusy(false); }
   }
 
+  function selectPassengerTab(tab: OnayPassengerTab) {
+    setPassengerTab(tab);
+    homeScroll.current?.scrollTo({
+      y: onayPassengerTabScrollY(tab, {
+        trips: tripsSectionY, chats: chatsSectionY, profile: profileSectionY,
+      }),
+      animated: true,
+    });
+  }
+
   function openPassengerBooking(choice: OnayPassengerHomeMode) {
+    setPassengerTab("home");
     const target = onayPassengerHomeTarget(choice);
     // The original configured-route booking retains server-side availability and
     // booking admission; the home screen only navigates to it.
@@ -816,7 +833,8 @@ export default function Home() {
     />;
   }
 
-  return <ScrollView ref={homeScroll} style={[s.screen, token && mode === "passenger" && { backgroundColor: onayDark.background }]} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+  return <View style={{ flex: 1, backgroundColor: token && mode === "passenger" ? onayDark.background : "#F3F6F4" }}>
+    <ScrollView ref={homeScroll} style={[s.screen, token && mode === "passenger" && { backgroundColor: onayDark.background }]} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
     {token && profile && activeRole === "passenger" && mode === "passenger" ? <OnayPassengerHome
       activeOrder={passengerHasActiveOrder}
       onChoose={openPassengerBooking}
@@ -871,6 +889,7 @@ export default function Home() {
         <DriverHistory key={`${driverRouteSession}:${profile.id}`} endpoint={apiBase} token={token} driverId={profile.id} />
       </>
     ) : <>
+    <View testID="onay-passenger-trips" onLayout={event => setTripsSectionY(event.nativeEvent.layout.y)} style={{ height: 1 }} />
     {passengerOrders.filter(order => !isClosed(order)).map(passengerOrder => <View key={passengerOrder.id} style={s.card} testID={`passenger-trip-${passengerOrder.id}`}><Text style={s.heading}>Твоя поездка</Text><Text style={s.descDark}>{statusLabels[passengerOrder.status]}</Text><Text style={s.descDark}>Точка подачи: {ridePickupLabel(passengerOrder)}</Text><Text style={s.descDark}>Куда: {rideDestinationLabel(passengerOrder)}</Text><Text style={s.descDark}>Пассажиров: {passengerOrder.seats}</Text>{passengerOrder.status === "searching" && passengerOrder.offered_driver_id ? <Text style={s.note}>Ждём ответа водителя.</Text> : null}<PassengerDriverCard key={`${driverRouteSession}:${passengerOrder.id}:${passengerOrder.driver_id ?? ""}:${passengerOrder.status}`} endpoint={apiBase} token={token} order={passengerOrder} /><Button title={busy ? "Отменяем…" : "Отменить заказ"} onPress={() => cancelOrder(passengerOrder)} disabled={busy} secondary /></View>)}
     <View onLayout={event => setRouteSectionY(event.nativeEvent.layout.y)}><PassengerRouteOrder key={driverRouteSession} directionIntent={bookingDirectionIntent} endpoint={apiBase} userId={profile.id} token={token} busy={busy} activeOrder={passengerHasActiveOrder} bookingGate={bookingGate} onCreated={refreshOrders} /></View>
     <View onLayout={event => setLegacySectionY(event.nativeEvent.layout.y)} style={s.card}>
@@ -889,12 +908,34 @@ export default function Home() {
     </View>
     {availabilityDisplay.state === "unavailable" ? <View style={s.card}><Text style={s.heading}>Водителей пока нет</Text><Text style={s.descDark}>Для этой точки и количества пассажиров сейчас нет свободного водителя. Попробуй проверить наличие позже.</Text></View> : null}
     <PassengerHistory key={`${driverRouteSession}:${profile.id}`} endpoint={apiBase} token={token} passengerId={profile.id} recentOrders={passengerOrders} />
+    <View testID="onay-passenger-chats" onLayout={event => setChatsSectionY(event.nativeEvent.layout.y)} style={s.passengerPanel}>
+      <Text style={s.passengerPanelTitle}>Чаты</Text>
+      <Text style={s.passengerPanelText}>Обмен сообщениями с водителями пока недоступен в этой версии приложения.</Text>
+    </View>
+    <View testID="onay-passenger-profile" onLayout={event => setProfileSectionY(event.nativeEvent.layout.y)} style={s.passengerPanel}>
+      <Text style={s.passengerPanelTitle}>Профиль</Text>
+      <Text style={s.passengerPanelText}>{profile.full_name || "Пассажир Onay"}</Text>
+      <Text style={s.passengerPanelText}>Настройки и история поездок доступны в приложении.</Text>
+      <View style={s.passengerPanelActions}>
+        <Pressable testID="onay-profile-history" accessibilityRole="button" onPress={() => selectPassengerTab("trips")} style={s.passengerPanelAction}><Text style={s.passengerPanelActionText}>История поездок</Text></Pressable>
+        <Pressable testID="onay-profile-driver" accessibilityRole="button" onPress={() => { void switchMode("driver"); }} disabled={busy} style={s.passengerPanelAction}><Text style={s.passengerPanelActionText}>Режим водителя</Text></Pressable>
+        <Pressable testID="onay-profile-logout" accessibilityRole="button" onPress={logout} disabled={busy} style={s.passengerPanelAction}><Text style={s.passengerPanelActionText}>Выйти</Text></Pressable>
+      </View>
+    </View>
     </>}
     <Text style={s.footer}>TEZJET · ПАССАЖИР И ВОДИТЕЛЬ В ОДНОМ ПРИЛОЖЕНИИ</Text>
-  </ScrollView>;
+    </ScrollView>
+    {token && profile && activeRole === "passenger" && mode === "passenger" ? <OnayPassengerTabBar active={passengerTab} onSelect={selectPassengerTab} /> : null}
+  </View>;
 }
 
 const s = StyleSheet.create({
+ passengerPanel:{padding:19,backgroundColor:onayDark.card,borderRadius:22,borderWidth:1,borderColor:onayDark.border,marginBottom:16,gap:9},
+ passengerPanelTitle:{fontSize:22,fontWeight:"800",color:onayDark.text},
+ passengerPanelText:{fontSize:14,lineHeight:20,color:onayDark.muted},
+ passengerPanelActions:{gap:8,marginTop:7},
+ passengerPanelAction:{borderRadius:12,borderWidth:1,borderColor:onayDark.border,padding:13,backgroundColor:onayDark.cardRaised},
+ passengerPanelActionText:{color:onayDark.text,fontWeight:"700",fontSize:14},
  screen:{flex:1,backgroundColor:"#F3F6F4"},content:{padding:20,paddingTop:24,paddingBottom:44,maxWidth:680,width:"100%",alignSelf:"center"},
  header:{flexDirection:"row",alignItems:"center",gap:12,marginBottom:24},logo:{backgroundColor:"#0C2B26",color:"#fff",fontSize:28,fontWeight:"900",paddingHorizontal:15,paddingVertical:7,borderRadius:14},brandWrap:{flex:1},brand:{fontSize:25,color:"#0C2B26"},brandAccent:{color:"#0D735C",fontWeight:"900"},tag:{fontSize:9,color:"#6A7D76",letterSpacing:1,fontWeight:"700"},logout:{padding:8,color:"#5A6B65",fontWeight:"700"},
  hero:{padding:22,backgroundColor:"#0C2B26",borderRadius:24,marginBottom:16},kicker:{fontSize:10,color:"#8ED8BC",fontWeight:"800",letterSpacing:1},title:{fontSize:32,color:"#fff",fontWeight:"900",marginTop:12},desc:{fontSize:14,lineHeight:21,color:"#C5D8D1",marginTop:8},descDark:{fontSize:14,lineHeight:22,color:"#53675E"},
