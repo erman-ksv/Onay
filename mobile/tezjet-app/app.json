@@ -29,6 +29,7 @@
     },
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "icon": "./assets/onay-confirmed-logo.jpg"
   }
 }
