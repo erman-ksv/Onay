@@ -2,6 +2,7 @@ import { useState } from "react";
 import Constants from "expo-constants";
 import { Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { onayDark } from "../lib/onay-auth-ui";
+import { onayProfileInitial } from "../lib/onay-profile-avatar";
 
 type Theme = "light" | "dark";
 type Props = {
@@ -42,7 +43,7 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
   return <View testID="onay-passenger-profile-panel" style={[s.root, { backgroundColor: light ? "#f4f6f4" : onayDark.background }]}>
     <View style={[s.identity, { backgroundColor: surface }]}>
       <View style={[s.avatar, { backgroundColor: light ? "#e3f7df" : onayDark.cardRaised }]}>
-        <Text style={{ color: onayDark.accent, fontSize: 30 }}>◉</Text>
+        <Text testID="onay-profile-avatar-initial" style={{ color: light ? "#5a7366" : onayDark.muted, fontSize: 30, fontWeight: "700" }}>{onayProfileInitial(fullName)}</Text>
       </View>
       <View style={{ flex: 1 }}>
         <Text style={[s.personName, { color: foreground }]}>{fullName || "Пассажир Onay"}</Text>
@@ -118,7 +119,7 @@ const s = StyleSheet.create({
   personalDetails: { paddingVertical: 15, gap: 5 },
   detailCaption: { fontSize: 12, fontWeight: "600", marginTop: 6 },
   detailValue: { fontSize: 15, fontWeight: "600" },
-  avatar: { width: 61, height: 61, borderRadius: 31, alignItems: "center", justifyContent: "center" },
+  avatar: { width: 78, height: 78, borderRadius: 39, alignItems: "center", justifyContent: "center" },
   personName: { fontSize: 21, fontWeight: "800" },
   group: { borderRadius: 19, paddingHorizontal: 14, overflow: "hidden" },
   linkRow: { minHeight: 54, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1 },
