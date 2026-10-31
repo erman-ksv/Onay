@@ -19,7 +19,11 @@ function readLocation(request: Request): Coordinates | undefined {
   return {
     lat: Number(input["lat"]),
     lng: Number(input["lng"]),
-    timestamp: input["timestamp"] ? Number(input["timestamp"]) : Date.now(),
+    // Keep an omitted timestamp compatible with existing clients, but do not
+    // turn malformed/false/null values into a server timestamp or a NaN speed.
+    timestamp: input["timestamp"] === undefined ? Date.now()
+      : (typeof input["timestamp"] === "number" || typeof input["timestamp"] === "string")
+        ? Number(input["timestamp"]) : Number.NaN,
     isMocked: input["isMocked"] === true,
   };
 }
@@ -35,7 +39,7 @@ export async function antiFakeGPS(
     return;
   }
 
-  if (!isValidCoordinates(location)) {
+  if (!isValidCoordinates(location) || !Number.isFinite(location.timestamp) || location.timestamp <= 0) {
     throw new AppError(422, "Invalid coordinates", "INVALID_COORDINATES");
   }
   if (location.isMocked) {
