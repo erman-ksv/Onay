@@ -7,10 +7,12 @@ const app = readFileSync(new URL("../app/index.tsx", import.meta.url), "utf8");
 
 test("home location chip shows unconfirmed pickup instead of claiming GPS coordinates", () => {
   assert.match(home, /testID="onay-home-location"/);
-  assert.match(home, /<Text style=\{h\.locationCaption\}>Точка отправления<\/Text>/);
-  assert.match(home, /<Text style=\{h\.locationTitle\}>Выбрать остановку<\/Text>/);
-  assert.doesNotMatch(home, /<Text style=\{h\.locationCaption\}>Я сейчас<\/Text>/);
-  assert.match(home, /style=\{h\.location\} onPress=\{onChooseLocation\}/);
+  assert.match(home, /<Text style=\{\[h\.locationCaption, light && h\.lightMuted\]\}>Точка отправления<\/Text>/);
+  assert.match(home, /<Text style=\{\[h\.locationTitle, light && h\.lightText\]\}>Выбрать остановку<\/Text>/);
+  assert.doesNotMatch(home, /<Text[^>]*>Я сейчас<\/Text>/);
+  assert.match(home, /style=\{\[h\.location, light && h\.locationLight\]\} onPress=\{onChooseLocation\}/);
+  assert.match(home, /locationLight: \{ backgroundColor: "#ffffff", borderWidth: 1/);
+  assert.match(home, /Не GPS · данные и наличие водителей — в форме заказа/);
 });
 
 test("location action navigates to backend-backed route picker without changing direction", () => {
