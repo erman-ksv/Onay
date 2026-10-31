@@ -1,6 +1,6 @@
 import { useState } from "react";
 import Constants from "expo-constants";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { onayDark } from "../lib/onay-auth-ui";
 import type { OnayPassengerHomeMode } from "../lib/onay-home-modes";
 
@@ -46,10 +46,7 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
         style={[h.menuToggle, light && { backgroundColor: "#e3e8e4" }]}>
         <Text style={{ fontSize: 24, color: light ? "#0e1a14" : onayDark.text }}>{menuOpen ? "×" : "☰"}</Text>
       </Pressable>
-      <View style={h.logo}>
-        <Text style={h.logoGlyph}>◉</Text>
-        <Text style={h.logoName}>Onay</Text>
-      </View>
+      <Image testID="onay-home-original-logo" source={require("../assets/onay-original-logo.png")} style={h.logoImage} resizeMode="contain" accessibilityLabel="Onay" />
       <Pressable
         accessibilityRole="button" testID="onay-home-location"
         style={h.location} onPress={onChooseLocation}
@@ -120,6 +117,7 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
 }
 
 const h = StyleSheet.create({
+  logoImage: { width: 40, height: 46 },
   menuToggle: { width: 43, height: 46, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: onayDark.card },
   settingsPanel: { borderWidth: 1, borderColor: onayDark.border, borderRadius: 18, backgroundColor: onayDark.card, padding: 16, marginBottom: 14, gap: 12 },
   settingsTitle: { fontSize: 19, fontWeight: "800", color: onayDark.text },

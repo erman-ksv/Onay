@@ -1,7 +1,7 @@
 import { useState } from "react";
 import {
   ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable,
-  ScrollView, StyleSheet, Text, TextInput, View,
+  Image, ScrollView, StyleSheet, Text, TextInput, View,
 } from "react-native";
 import { isCompleteOnayPhone, onayDark, onayPhoneFromInput, onayPhoneInput, onayPhonePrefix } from "../lib/onay-auth-ui";
 import { registrationFullName } from "../lib/registration";
@@ -49,10 +49,7 @@ export default function OnayAuthScreen(props: Props) {
         accessibilityLabel="Вход в Onay"
       >
         <View style={s.logoWrap}>
-          <View style={s.symbol} accessible accessibilityLabel="Onay">
-            <Text style={s.symbolText}>◉</Text>
-          </View>
-          <Text style={s.wordmark}>Onay</Text>
+          <Image testID="onay-auth-original-logo" source={require("../assets/onay-original-logo.png")} style={s.brandImage} resizeMode="contain" accessibilityLabel="Onay" />
           <Text style={s.subtitle}>
             {props.mode === "passenger" ? "Сельское такси между селом и городом" : "Режим водителя"}
           </Text>
@@ -209,6 +206,7 @@ export default function OnayAuthScreen(props: Props) {
 }
 
 const s = StyleSheet.create({
+  brandImage: { height: 118, width: 118 },
   root: { flex: 1, backgroundColor: onayDark.background },
   scroller: { flex: 1 },
   screen: { flexGrow: 1, paddingHorizontal: 20, paddingTop: 44, paddingBottom: 20, minHeight: 720 },
