@@ -6,6 +6,7 @@ import { onayDark } from "../lib/onay-auth-ui";
 type Theme = "light" | "dark";
 type Props = {
   fullName: string;
+  phoneNumber?: string | null;
   busy: boolean;
   theme: Theme;
   onThemeChange: (value: Theme) => void;
@@ -17,8 +18,9 @@ type Props = {
 const HELP_EMAIL = "onayost.taxi@gmail.com";
 const APP_VERSION = Constants.expoConfig?.version ?? "0.1.0";
 
-export default function OnayPassengerProfile({ fullName, busy, theme, onThemeChange, onHistory, onDriver, onLogout }: Props) {
+export default function OnayPassengerProfile({ fullName, phoneNumber, busy, theme, onThemeChange, onHistory, onDriver, onLogout }: Props) {
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [personalOpen, setPersonalOpen] = useState(false);
   const light = theme === "light";
   const surface = light ? "#ffffff" : onayDark.card;
   const foreground = light ? "#0e1a14" : onayDark.text;
@@ -49,10 +51,26 @@ export default function OnayPassengerProfile({ fullName, busy, theme, onThemeCha
     </View>
 
     <View style={[s.group, { backgroundColor: surface }]}>
-      <View style={[s.linkRow, { borderColor: light ? "#e3e8e4" : onayDark.border }]}>
+      <Pressable
+        testID="onay-profile-personal-data"
+        accessibilityRole="button"
+        accessibilityState={{ expanded: personalOpen }}
+        onPress={() => setPersonalOpen(previous => !previous)}
+        style={[s.linkRow, { borderColor: light ? "#e3e8e4" : onayDark.border }]}
+      >
         <Text style={{ color: foreground, fontWeight: "600" }}>Личные данные</Text>
-        <Text style={{ color: muted }}>Из профиля Onay</Text>
-      </View>
+        <Text style={{ color: muted }}>{personalOpen ? "⌃" : "›"}</Text>
+      </Pressable>
+      {personalOpen ? <View testID="onay-profile-personal-details" style={s.personalDetails}>
+        <Text style={[s.detailCaption, { color: muted }]}>ФИО</Text>
+        <Text testID="onay-profile-personal-name" style={[s.detailValue, { color: foreground }]}>{fullName || "Не указано"}</Text>
+        {phoneNumber ? <>
+          <Text style={[s.detailCaption, { color: muted }]}>Номер телефона</Text>
+          <Text testID="onay-profile-personal-phone" style={[s.detailValue, { color: foreground }]}>{phoneNumber}</Text>
+        </> : null}
+        <Text style={[s.detailCaption, { color: muted }]}>Режим аккаунта</Text>
+        <Text style={[s.detailValue, { color: foreground }]}>Пассажир</Text>
+      </View> : null}
       {row("history", "История поездок", onHistory)}
       <View style={s.themeRow}>
         <Text style={{ color: foreground, fontWeight: "600" }}>Режим света</Text>
@@ -97,6 +115,9 @@ export default function OnayPassengerProfile({ fullName, busy, theme, onThemeCha
 const s = StyleSheet.create({
   root: { marginBottom: 18, gap: 14, paddingTop: 14, paddingHorizontal: 2, borderRadius: 20 },
   identity: { flexDirection: "row", alignItems: "center", padding: 14, borderRadius: 20, gap: 12 },
+  personalDetails: { paddingVertical: 15, gap: 5 },
+  detailCaption: { fontSize: 12, fontWeight: "600", marginTop: 6 },
+  detailValue: { fontSize: 15, fontWeight: "600" },
   avatar: { width: 61, height: 61, borderRadius: 31, alignItems: "center", justifyContent: "center" },
   personName: { fontSize: 21, fontWeight: "800" },
   group: { borderRadius: 19, paddingHorizontal: 14, overflow: "hidden" },

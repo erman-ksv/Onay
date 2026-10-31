@@ -34,7 +34,7 @@ const API_ENDPOINT = "tezjet_api_endpoint";
 type Mode = "passenger" | "driver";
 type Stop = { id: string; code: string; name: string; sequence: number; position: number };
 type Fare = FareMoney;
-type Profile = { id: string; role: string; active_role?: string; roles?: string[]; driver_approval_status?: "pending" | "approved" | "rejected" | "blocked"; full_name?: string; driver_vehicle?: { seat_capacity: number } };
+type Profile = { id: string; phone_number?: string; role: string; active_role?: string; roles?: string[]; driver_approval_status?: "pending" | "approved" | "rejected" | "blocked"; full_name?: string; driver_vehicle?: { seat_capacity: number } };
 
 function Button({ title, onPress, disabled = false, secondary = false, testID }: { title: string; onPress: () => void; disabled?: boolean; secondary?: boolean; testID?: string }) {
   return <Pressable accessibilityRole="button" accessibilityState={{ disabled }} testID={testID} onPress={onPress} disabled={disabled} style={[s.button, secondary && s.buttonSecondary, disabled && s.disabled]}><Text style={[s.buttonText, secondary && s.buttonSecondaryText]}>{title}</Text></Pressable>;
@@ -942,6 +942,7 @@ export default function Home() {
     <View testID="onay-passenger-profile" onLayout={event => setProfileSectionY(event.nativeEvent.layout.y)}>
       <OnayPassengerProfile
         fullName={profile.full_name || ""}
+        phoneNumber={profile.phone_number}
         busy={busy}
         theme={passengerTheme}
         onThemeChange={changePassengerTheme}
