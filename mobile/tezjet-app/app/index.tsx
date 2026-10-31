@@ -943,7 +943,7 @@ export default function Home() {
       />
     </View>
     </>}
-    <Text style={s.footer}>TEZJET · ПАССАЖИР И ВОДИТЕЛЬ В ОДНОМ ПРИЛОЖЕНИИ</Text>
+    <Text style={s.footer}>© 2026 ONAY OST E.K.K Technologies · One Founder. Intelligent Systems.</Text>
     </ScrollView>
     {token && profile && activeRole === "passenger" && mode === "passenger" ? <OnayPassengerTabBar active={passengerTab} theme={passengerTheme} onSelect={selectPassengerTab} /> : null}
   </View>;
