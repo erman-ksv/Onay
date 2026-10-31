@@ -11,6 +11,7 @@ import OnayAuthScreen from "../components/OnayAuthScreen";
 import OnayPassengerHome from "../components/OnayPassengerHome";
 import OnayPassengerTabBar from "../components/OnayPassengerTabBar";
 import OnayPassengerProfile from "../components/OnayPassengerProfile";
+import OnayPassengerChatsEmpty from "../components/OnayPassengerChatsEmpty";
 import { onayPassengerTabScrollY, type OnayPassengerTab } from "../lib/onay-passenger-tabs";
 import { onayPassengerHomeTarget, type OnayPassengerHomeMode } from "../lib/onay-home-modes";
 import { onayDark, onayEntryScreen } from "../lib/onay-auth-ui";
@@ -935,9 +936,8 @@ export default function Home() {
     </View>
     {availabilityDisplay.state === "unavailable" ? <View style={s.card}><Text style={s.heading}>Водителей пока нет</Text><Text style={s.descDark}>Для этой точки и количества пассажиров сейчас нет свободного водителя. Попробуй проверить наличие позже.</Text></View> : null}
     <PassengerHistory key={`${driverRouteSession}:${profile.id}`} endpoint={apiBase} token={token} passengerId={profile.id} recentOrders={passengerOrders} />
-    <View testID="onay-passenger-chats" onLayout={event => setChatsSectionY(event.nativeEvent.layout.y)} style={s.passengerPanel}>
-      <Text style={s.passengerPanelTitle}>Чаты</Text>
-      <Text style={s.passengerPanelText}>Обмен сообщениями с водителями пока недоступен в этой версии приложения.</Text>
+    <View testID="onay-passenger-chats" onLayout={event => setChatsSectionY(event.nativeEvent.layout.y)}>
+      <OnayPassengerChatsEmpty theme={passengerTheme} />
     </View>
     <View testID="onay-passenger-profile" onLayout={event => setProfileSectionY(event.nativeEvent.layout.y)}>
       <OnayPassengerProfile
