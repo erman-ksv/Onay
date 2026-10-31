@@ -49,7 +49,7 @@ export default function OnayAuthScreen(props: Props) {
         accessibilityLabel="Вход в Onay"
       >
         <View style={s.logoWrap}>
-          <Image testID="onay-auth-original-logo" source={require("../assets/onay-original-logo.png")} style={s.brandImage} resizeMode="contain" accessibilityLabel="Onay" />
+          <Image testID="onay-auth-original-logo" source={require("../assets/onay-confirmed-logo.jpg")} style={s.brandImage} resizeMode="contain" accessibilityLabel="Onay" />
           <Text style={s.subtitle}>
             {props.mode === "passenger" ? "Сельское такси между селом и городом" : "Режим водителя"}
           </Text>

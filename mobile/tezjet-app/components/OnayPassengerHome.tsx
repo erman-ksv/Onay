@@ -46,7 +46,7 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
         style={[h.menuToggle, light && { backgroundColor: "#e3e8e4" }]}>
         <Text style={{ fontSize: 24, color: light ? "#0e1a14" : onayDark.text }}>{menuOpen ? "×" : "☰"}</Text>
       </Pressable>
-      <Image testID="onay-home-original-logo" source={require("../assets/onay-original-logo.png")} style={h.logoImage} resizeMode="contain" accessibilityLabel="Onay" />
+      <Image testID="onay-home-original-logo" source={require("../assets/onay-confirmed-logo.jpg")} style={h.logoImage} resizeMode="contain" accessibilityLabel="Onay" />
       <Pressable
         accessibilityRole="button" testID="onay-home-location"
         style={h.location} onPress={onChooseLocation}
