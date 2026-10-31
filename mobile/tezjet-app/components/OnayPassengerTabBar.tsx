@@ -7,8 +7,9 @@ export default function OnayPassengerTabBar({ active, onSelect, theme = "dark" }
   theme?: "light" | "dark";
   onSelect: (tab: OnayPassengerTab) => void;
 }) {
-  return <View testID="onay-passenger-bottom-nav" style={[styles.container, theme === "light" && { backgroundColor: "#f4f6f4" }]}>
-    <View accessibilityRole="tablist" style={styles.pill}>
+  const light = theme === "light";
+  return <View testID="onay-passenger-bottom-nav" style={[styles.container, light && { backgroundColor: "#f4f6f4" }]}>
+    <View accessibilityRole="tablist" style={[styles.pill, light && styles.pillLight]}>
       {ONAY_PASSENGER_TABS.map(tab => {
         const selected = active === tab.id;
         return <Pressable
@@ -18,9 +19,9 @@ export default function OnayPassengerTabBar({ active, onSelect, theme = "dark" }
           accessibilityLabel={tab.label}
           accessibilityState={{ selected }}
           onPress={() => onSelect(tab.id)}
-          style={[styles.tab, selected ? styles.activeTab : styles.inactiveTab]}
+          style={[styles.tab, selected ? styles.activeTab : styles.inactiveTab, light && !selected && styles.inactiveTabLight]}
         >
-          <Text style={[styles.icon, selected && styles.selectedText]}>{tab.symbol}</Text>
+          <Text style={[styles.icon, selected && styles.selectedText, light && !selected && styles.iconLight]}>{tab.symbol}</Text>
           {selected ? <Text style={styles.activeLabel} numberOfLines={1}>{tab.label}</Text> : null}
         </Pressable>;
       })}
@@ -29,6 +30,9 @@ export default function OnayPassengerTabBar({ active, onSelect, theme = "dark" }
 }
 
 const styles = StyleSheet.create({
+  pillLight: { backgroundColor: "#ffffff", borderColor: "#e3e8e4" },
+  inactiveTabLight: { backgroundColor: "#eef3ef" },
+  iconLight: { color: "#194b34" },
   container: { backgroundColor: onayDark.background, paddingHorizontal: 12, paddingTop: 7, paddingBottom: 14 },
   pill: { flexDirection: "row", borderRadius: 40, backgroundColor: onayDark.card, borderColor: onayDark.border,
     borderWidth: 1, padding: 7, gap: 6 },

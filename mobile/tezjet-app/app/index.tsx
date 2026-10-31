@@ -855,8 +855,8 @@ export default function Home() {
     />;
   }
 
-  return <View style={{ flex: 1, backgroundColor: token && mode === "passenger" ? onayDark.background : "#F3F6F4" }}>
-    <ScrollView ref={homeScroll} style={[s.screen, token && mode === "passenger" && { backgroundColor: onayDark.background }]} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+  return <View style={{ flex: 1, backgroundColor: token && mode === "passenger" ? (passengerTheme === "light" ? "#f4f6f4" : onayDark.background) : "#F3F6F4" }}>
+    <ScrollView ref={homeScroll} style={[s.screen, token && mode === "passenger" && { backgroundColor: passengerTheme === "light" ? "#f4f6f4" : onayDark.background }]} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
     {token && profile && activeRole === "passenger" && mode === "passenger" ? <OnayPassengerHome
       activeOrder={passengerHasActiveOrder}
       onViewActiveOrder={() => selectPassengerTab("trips")}

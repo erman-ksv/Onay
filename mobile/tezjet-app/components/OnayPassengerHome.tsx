@@ -13,19 +13,19 @@ type Props = {
   onThemeChange?: (value: "light" | "dark") => void;
 };
 
-function TripCard({ title, description, symbol, onPress, primary = false, testID }: {
-  title: string; description: string; symbol: string; onPress: () => void; primary?: boolean; testID: string;
+function TripCard({ title, description, symbol, onPress, primary = false, testID, light = false }: {
+  title: string; description: string; symbol: string; onPress: () => void; primary?: boolean; testID: string; light?: boolean;
 }) {
   return <Pressable
     testID={testID}
     accessibilityRole="button"
     onPress={onPress}
-    style={[h.modeCard, primary ? h.primaryMode : h.secondaryMode]}
+    style={[h.modeCard, primary ? h.primaryMode : h.secondaryMode, light && !primary && h.secondaryModeLight]}
   >
-    <View style={[h.modeIcon, primary && h.primaryIcon]}><Text style={[h.modeIconText, primary && h.primaryIconText]}>{symbol}</Text></View>
+    <View style={[h.modeIcon, primary && h.primaryIcon, light && !primary && h.modeIconLight]}><Text style={[h.modeIconText, primary && h.primaryIconText, light && !primary && h.modeIconTextLight]}>{symbol}</Text></View>
     <View style={h.modeCopy}>
-      <Text style={[h.modeTitle, primary && h.modeTitlePrimary]}>{title}</Text>
-      <Text style={[h.modeDescription, primary && h.modeDescriptionPrimary]}>{description}</Text>
+      <Text style={[h.modeTitle, primary && h.modeTitlePrimary, light && !primary && h.modeTitleLight]}>{title}</Text>
+      <Text style={[h.modeDescription, primary && h.modeDescriptionPrimary, light && !primary && h.modeDescriptionLight]}>{description}</Text>
     </View>
     {primary ? <Text style={h.arrow}>›</Text> : null}
   </Pressable>;
@@ -50,14 +50,14 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
       <Image testID="onay-home-original-logo" source={require("../assets/onay-confirmed-logo.jpg")} style={h.logoImage} resizeMode="contain" accessibilityLabel="Onay" />
       <Pressable
         accessibilityRole="button" testID="onay-home-location"
-        style={h.location} onPress={onChooseLocation}
+        style={[h.location, light && h.locationLight]} onPress={onChooseLocation}
       >
-        <Text style={h.pin}>⌖</Text>
+        <Text style={[h.pin, light && h.lightText]}>⌖</Text>
         <View style={h.locationCopy}>
-          <Text style={h.locationCaption}>Точка отправления</Text>
-          <Text style={h.locationTitle}>Выбрать остановку</Text>
+          <Text style={[h.locationCaption, light && h.lightMuted]}>Точка отправления</Text>
+          <Text style={[h.locationTitle, light && h.lightText]}>Выбрать остановку</Text>
         </View>
-        <Text style={h.locationChevron}>›</Text>
+        <Text style={[h.locationChevron, light && h.lightMuted]}>›</Text>
       </Pressable>
     </View>
     {menuOpen ? <View testID="onay-home-settings-menu" style={[h.settingsPanel, light && { backgroundColor: "#ffffff", borderColor: "#e3e8e4" }]}>
@@ -88,10 +88,10 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
       accessibilityRole="button"
       accessibilityLabel="Посмотреть активную поездку"
       onPress={onViewActiveOrder}
-      style={h.activeBanner}
+      style={[h.activeBanner, light && h.activeBannerLight]}
     >
-      <Text style={h.activeText}>У вас есть активная поездка</Text>
-      <Text style={[h.activeText, { fontWeight: "700", marginTop: 5 }]}>Посмотреть детали ›</Text>
+      <Text style={[h.activeText, light && h.lightText]}>У вас есть активная поездка</Text>
+      <Text style={[h.activeText, light && h.lightText, { fontWeight: "700", marginTop: 5 }]}>Посмотреть детали ›</Text>
     </Pressable> : null}
     <View testID="onay-home-map-schematic" style={h.map}>
       <View style={h.gridOne}/>
@@ -108,18 +108,18 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
         <Text style={h.mapFootnote}>Не GPS · данные и наличие водителей — в форме заказа</Text>
       </View>
     </View>
-    <Text style={h.heading}>Куда поедем?</Text>
+    <Text style={[h.heading, light && h.lightText]}>Куда поедем?</Text>
     <View style={h.modes}>
       <TripCard testID="onay-home-to-city" title="В город" description="Из села в город"
-        symbol="▤" primary onPress={() => onChoose("city")} />
+        symbol="▤" primary light={light} onPress={() => onChoose("city")} />
       <View style={h.modeRow}>
         <View style={h.half}>
           <TripCard testID="onay-home-to-village" title="В село" description="Из города домой"
-            symbol="⌂" onPress={() => onChoose("village")} />
+            symbol="⌂" light={light} onPress={() => onChoose("village")} />
         </View>
         <View style={h.half}>
           <TripCard testID="onay-home-to-address" title="По своему адресу" description="Машина приедет за вами"
-            symbol="⌖" onPress={() => onChoose("address")} />
+            symbol="⌖" light={light} onPress={() => onChoose("address")} />
         </View>
       </View>
     </View>
@@ -127,6 +127,15 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
 }
 
 const h = StyleSheet.create({
+  lightText: { color: "#0e1a14" },
+  lightMuted: { color: "#63776c" },
+  locationLight: { backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#e3e8e4" },
+  activeBannerLight: { backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#e3e8e4" },
+  secondaryModeLight: { backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#e3e8e4" },
+  modeIconLight: { backgroundColor: "#e7f5e8" },
+  modeIconTextLight: { color: "#116339" },
+  modeTitleLight: { color: "#0e1a14" },
+  modeDescriptionLight: { color: "#63776c" },
   logoImage: { width: 40, height: 46 },
   menuToggle: { width: 43, height: 46, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: onayDark.card },
   settingsPanel: { borderWidth: 1, borderColor: onayDark.border, borderRadius: 18, backgroundColor: onayDark.card, padding: 16, marginBottom: 14, gap: 12 },
