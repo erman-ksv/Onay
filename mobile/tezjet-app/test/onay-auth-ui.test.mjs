@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { onayDark, ONAY_COUNTRY_CODE, uzPhoneDigits, toOnayApiPhone, isCompleteOnayPhone, onayPhoneFromInput, onayPhonePrefix, onayPhoneInput } from "../lib/onay-auth-ui.ts";
+import { onayDark, ONAY_COUNTRY_CODE, uzPhoneDigits, toOnayApiPhone, isCompleteOnayPhone, onayPhoneFromInput, onayPhonePrefix, onayPhoneInput, onayEntryScreen } from "../lib/onay-auth-ui.ts";
 
 test("auth tokens match the ONAY V2 Claude design reference", () => {
   assert.equal(onayDark.background, "#0a1d15");
@@ -31,4 +31,12 @@ test("browser driver registration may use +7 without silently rewriting country 
   assert.equal(isCompleteOnayPhone(pasted), true);
   assert.equal(onayPhoneFromInput(pasted, "7779001234"), pasted);
   assert.equal(isCompleteOnayPhone("+77779"), false);
+});
+
+test("restore session cannot expose a transient legacy auth button to browser or user", () => {
+  const base = { token: "", apiBase: "http://127.0.0.1:5000", showEndpointSettings: false };
+  assert.equal(onayEntryScreen({ ...base, sessionLoading: true }), "loading");
+  assert.equal(onayEntryScreen({ ...base, sessionLoading: false }), "auth");
+  assert.equal(onayEntryScreen({ ...base, sessionLoading: false, showEndpointSettings: true }), "legacy");
+  assert.equal(onayEntryScreen({ ...base, sessionLoading: false, token: "session-token" }), "legacy");
 });

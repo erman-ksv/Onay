@@ -54,3 +54,17 @@ export function isCompleteOnayPhone(value: string): boolean {
   if (value.startsWith(ONAY_COUNTRY_CODE)) return /^\+998\d{9}$/.test(value);
   return /^\+[1-9]\d{9,14}$/.test(value);
 }
+
+export type OnayEntryScreen = "loading" | "auth" | "legacy";
+
+/** Never show the old auth UI before session restoration settles. */
+export function onayEntryScreen(input: {
+  sessionLoading: boolean;
+  token: string;
+  apiBase: string;
+  showEndpointSettings: boolean;
+}): OnayEntryScreen {
+  if (input.sessionLoading) return "loading";
+  if (!input.token && input.apiBase && !input.showEndpointSettings) return "auth";
+  return "legacy";
+}

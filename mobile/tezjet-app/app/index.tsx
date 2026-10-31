@@ -8,6 +8,7 @@ import { API, ApiError, errorMessage, request, setApiEndpoint, validateApiEndpoi
 import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextDriverTripStatus, nextTripLabel, ridePickupLabel, rideDestinationLabel, statusLabels, type RideOrder } from "../lib/orders";
 import { registrationFullName } from "../lib/registration";
 import OnayAuthScreen from "../components/OnayAuthScreen";
+import { onayDark, onayEntryScreen } from "../lib/onay-auth-ui";
 import DriverRoutePicker from "../components/DriverRoutePicker";
 import PassengerRouteOrder from "../components/PassengerRouteOrder";
 import { createPassengerBookingGate } from "../lib/passenger-booking-gate";
@@ -762,7 +763,14 @@ export default function Home() {
 
   // Auth UI is native React Native; the original backend OTP flow remains in login().
   // Do not hide the existing API setup and session-recovery screens.
-  if (!token && !sessionLoading && apiBase && !showEndpointSettings) {
+  const entryScreen = onayEntryScreen({ sessionLoading, token, apiBase, showEndpointSettings });
+  if (entryScreen === "loading") {
+    return <View style={{ flex: 1, backgroundColor: onayDark.background, alignItems: "center", justifyContent: "center" }}>
+      <ActivityIndicator color={onayDark.accent} />
+      <Text style={{ color: onayDark.muted, marginTop: 12 }}>Восстанавливаем вход…</Text>
+    </View>;
+  }
+  if (entryScreen === "auth") {
     return <OnayAuthScreen
       mode={mode}
       registering={registering}
