@@ -7,6 +7,7 @@ import { ActivityIndicator, Alert, AppState, Pressable, ScrollView, StyleSheet, 
 import { API, ApiError, errorMessage, request, setApiEndpoint, validateApiEndpoint, type Availability } from "../lib/api";
 import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextDriverTripStatus, nextTripLabel, ridePickupLabel, rideDestinationLabel, statusLabels, type RideOrder } from "../lib/orders";
 import { registrationFullName } from "../lib/registration";
+import OnayAuthScreen from "../components/OnayAuthScreen";
 import DriverRoutePicker from "../components/DriverRoutePicker";
 import PassengerRouteOrder from "../components/PassengerRouteOrder";
 import { createPassengerBookingGate } from "../lib/passenger-booking-gate";
@@ -757,6 +758,32 @@ export default function Home() {
       await refreshOrders();
     } catch (e) { Alert.alert("Статус поездки", e instanceof Error ? e.message : "Не удалось обновить поездку."); }
     finally { setBusy(false); }
+  }
+
+  // Auth UI is native React Native; the original backend OTP flow remains in login().
+  // Do not hide the existing API setup and session-recovery screens.
+  if (!token && !sessionLoading && apiBase && !showEndpointSettings) {
+    return <OnayAuthScreen
+      mode={mode}
+      registering={registering}
+      requested={requested}
+      busy={busy}
+      phone={phone}
+      name={name}
+      surname={surname}
+      otp={otp}
+      demoCode={demoCode}
+      error={profileError}
+      onPhone={setPhone}
+      onName={setName}
+      onSurname={setSurname}
+      onOtp={setOtp}
+      onRegisterMode={(value) => { setRegistering(value); setRequested(false); setOtp(""); setDemoCode(""); }}
+      onMode={(value) => { void switchMode(value); }}
+      onBackToPhone={() => { setRequested(false); setOtp(""); setDemoCode(""); }}
+      onSubmit={(verify) => { void login(verify); }}
+      onServerSettings={() => setShowEndpointSettings(true)}
+    />;
   }
 
   return <ScrollView style={s.screen} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
