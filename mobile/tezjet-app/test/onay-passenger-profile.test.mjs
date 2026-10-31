@@ -32,3 +32,11 @@ test("theme setting is persisted independently of authentication tokens", () => 
   assert.match(app, /AsyncStorage\.setItem\("onay_passenger_theme_v1", value\)/);
   assert.match(app, /theme=\{passengerTheme\}/);
 });
+
+test("profile header uses the real authenticated phone and has a safe fallback", () => {
+  assert.match(profile, /testID="onay-profile-header-phone"/);
+  assert.match(profile, /phoneNumber \|\| "Аккаунт пассажира"/);
+  assert.match(app, /phoneNumber=\{profile\.phone_number\}/);
+  assert.match(app, /fullName=\{profile\.full_name \|\| ""\}/);
+  assert.doesNotMatch(profile, /\+998 90 123 45 67/);
+});
