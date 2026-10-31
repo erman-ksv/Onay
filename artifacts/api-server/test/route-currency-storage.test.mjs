@@ -8,7 +8,7 @@ import { build } from "esbuild";
 
 const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const schema = `route_currency_${randomUUID().replaceAll("-", "")}`;
-const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes", "tezjet_admin_audit_events"];
+const tables = ["tezjet_offer_policy", "tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes", "tezjet_admin_audit_events"];
 const envKeys = ["DATABASE_URL", "TEZJET_STORAGE_ADAPTER", "NODE_ENV", "SESSION_SECRET", "LOG_LEVEL"];
 const previous = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
 let directory, production, database, adminPool, store, observer, createdSchema = false, phoneSequence = 0;

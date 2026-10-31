@@ -1,7 +1,7 @@
 import { applyRoutePricingPatch, normalizeRoutePricing } from "../utils/routePricing";
 import { assertVehicleQueueCapacity, assertVehicleReview, createDriverVehicle, hasRequiredDriverApproval } from "../utils/driverVehicle";
 import { randomUUID } from "node:crypto";
-import { OFFER_TIMEOUT_MS, OTP_TTL_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
+import { OTP_TTL_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
 import { normalizePhone } from "../utils/phone";
 import type { RouteCreateInput, RouteMetadataPatch, RouteOrderResolution, DriverRouteChoiceInput, ExternalPickupSelectionInput, OtpLimitResult, OtpVerifyResult, RouteLayoutInput, RouteOrderAvailability, RouteOrderInput, RouteOrderSelectionInput, Store } from "./storeContract";
 import { emptyOtpRateState, OTP_CLEANUP_BATCH_SIZE, otpFailureState, otpPhoneBlock, otpRateExpiresAt, otpRateKey, recordOtpFailure, takeOtpIp, takeOtpSend } from "./otpProtection";
@@ -19,7 +19,9 @@ import type { AdminMutationActor } from "./storeContract";
 import { routeMetadataEvent } from "./routeAudit";
 import { assertLineOrderTransition, createLineCollectionState, isCollecting, lineOrderIds, prepareLineDeparture } from "./lineCollection";
 import { assertExternalQuoteCurrent, buildConfirmedExternalOrder, buildExternalPickupDetails, eligibleExternalCandidate, externalPickupLeaseMs, liveExternalOfferValid, nextOrderUpdatedAt, normalizeExternalPickupSettings, repriceExternalOrder, validateExternalPickupSelectionInput } from "./externalPickup";
+import { offerTimeoutPolicy, validateOfferTimeoutChange, OFFER_TIMEOUT_KEY } from "../utils/offerTimeout";
 import type {
+  OfferTimeoutPolicy,
   AdminAuditEvent,
   Coordinates,
   DeviceRegistration,
@@ -43,6 +45,7 @@ import type {
 } from "../types/domain";
 
 class MemoryStore implements Store {
+  private offerTimeout: OfferTimeoutPolicy = offerTimeoutPolicy();
   private readonly users = new Map<string, User>();
   private readonly usersByPhone = new Map<string, string>();
   private readonly otpChallenges = new Map<string, OtpChallenge>();
@@ -58,6 +61,24 @@ class MemoryStore implements Store {
   private readonly routes = new Map<string, RouteDefinition>();
 
   initialize(): void {}
+
+  getOfferTimeout(): OfferTimeoutPolicy { return structuredClone(this.offerTimeout); }
+
+  setOfferTimeoutAsAdmin(seconds: number, expectedRevision: string | null, actor: AdminMutationActor): OfferTimeoutPolicy {
+    if (!actor || actor.expectedSessionVersion === undefined) throw new AppError(401, "Session is required", "UNAUTHORIZED");
+    this.requireCurrentRole(actor.adminId, "admin", actor.expectedSessionVersion);
+    validateOfferTimeoutChange(seconds, expectedRevision);
+    const before = this.getOfferTimeout();
+    if (before.revision !== expectedRevision) throw new AppError(409, "Offer timeout changed; reload before saving", "OFFER_TIMEOUT_CHANGED");
+    if (before.revision !== null && before.seconds === seconds) return before;
+    const next = { seconds, revision: randomUUID(), updatedAt: new Date().toISOString() };
+    const event: AdminAuditEvent = { id: randomUUID(), actorId: actor.adminId, action: "settings.offer_timeout_changed",
+      settingKey: OFFER_TIMEOUT_KEY, previousValue: before.seconds, nextValue: seconds,
+      ...(before.revision === null ? {} : { previousVersion: before.revision }), nextVersion: next.revision, createdAt: next.updatedAt };
+    this.offerTimeout = next;
+    this.adminAuditEvents.push(event);
+    return this.getOfferTimeout();
+  }
 
   constructor() {
     const now = new Date().toISOString();
@@ -533,7 +554,7 @@ class MemoryStore implements Store {
     }
     const order = buildConfirmedExternalOrder(quote, route, {
       id: passenger.id, phoneNumber: passenger.phoneNumber,
-    }, existing, now);
+    }, existing, now, this.offerTimeout.seconds * 1000);
     // No await occurs between validation and publishing either value. Build
     // both first so failed validation cannot leave a partial reservation.
     const reserved = reserveQueueOffer(entry, order);
@@ -636,7 +657,7 @@ class MemoryStore implements Store {
       status: "searching",
       driverId: undefined,
       offeredDriverId: next.driverId,
-      offerExpiresAt: now + OFFER_TIMEOUT_MS,
+      offerExpiresAt: now + this.offerTimeout.seconds * 1000,
       attemptedDriverIds: [next.driverId],
       seatLockExpiresAt: undefined,
     };
@@ -706,7 +727,7 @@ class MemoryStore implements Store {
     }
     this.writeOrder(order, {
       offeredDriverId: next?.driverId,
-      offerExpiresAt: next ? now + OFFER_TIMEOUT_MS : undefined,
+      offerExpiresAt: next ? now + this.offerTimeout.seconds * 1000 : undefined,
       attemptedDriverIds,
     }, now);
     return { order: order.routeContext ? structuredClone(order) : { ...order }, ...(previousDriverId ? { previousDriverId } : {}) };

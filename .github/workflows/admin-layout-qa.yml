@@ -12,6 +12,7 @@ on:
       - "scripts/admin-monitoring-client.test.mjs"
       - "scripts/admin-directory-client.test.mjs"
       - "scripts/admin-statistics-client.test.mjs"
+      - "scripts/admin-offer-timeout-client.test.mjs"
       - ".github/workflows/admin-layout-qa.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -31,6 +32,7 @@ on:
       - "scripts/admin-monitoring-client.test.mjs"
       - "scripts/admin-directory-client.test.mjs"
       - "scripts/admin-statistics-client.test.mjs"
+      - "scripts/admin-offer-timeout-client.test.mjs"
       - ".github/workflows/admin-layout-qa.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -107,6 +109,8 @@ jobs:
         run: node --experimental-transform-types --test-reporter=tap scripts/admin-directory-client.test.mjs
       - name: Admin statistics client regressions
         run: node --experimental-transform-types --test-reporter=tap scripts/admin-statistics-client.test.mjs
+      - name: Admin offer timeout client regressions
+        run: node --experimental-transform-types --test-reporter=tap scripts/admin-offer-timeout-client.test.mjs
       - name: Typecheck
         run: pnpm run typecheck
 

@@ -178,6 +178,19 @@ export const routesTable = pgTable("tezjet_routes", {
 ]);
 
 
+export const offerPolicyTable = pgTable("tezjet_offer_policy", {
+  id: text("id").primaryKey(),
+  seconds: integer("seconds"),
+  revision: text("revision"),
+  updatedAt: text("updated_at"),
+}, table => [
+  check("tezjet_offer_policy_id_check", sql`${table.id} = 'offer-timeout'`),
+  check("tezjet_offer_policy_value_check", sql`(
+    (${table.seconds} IS NULL AND ${table.revision} IS NULL AND ${table.updatedAt} IS NULL) OR
+    (${table.seconds} BETWEEN 1 AND 3600 AND ${table.seconds} IS NOT NULL AND ${table.revision} IS NOT NULL AND length(${table.revision}) > 0 AND ${table.updatedAt} IS NOT NULL)
+  )`),
+]);
+
 /** Append-only administrative action receipts; never store secrets or GPS. */
 export const adminAuditEventsTable = pgTable("tezjet_admin_audit_events", {
   id: text("id").primaryKey(),
@@ -190,10 +203,19 @@ export const adminAuditEventsTable = pgTable("tezjet_admin_audit_events", {
   changedFields: jsonb("changed_fields").$type<string[]>(),
   previousVersion: text("previous_version"),
   nextVersion: text("next_version"),
+  settingKey: text("setting_key"),
+  previousValue: integer("previous_value"),
+  nextValue: integer("next_value"),
   fromStatus: text("from_status"),
   toStatus: text("to_status"),
   createdAt: text("created_at").notNull(),
 }, table => [
+  check("tezjet_admin_audit_offer_timeout_check", sql`(
+    ${table.action} <> 'settings.offer_timeout_changed' OR
+    (${table.settingKey} = 'offer-timeout' AND ${table.settingKey} IS NOT NULL AND
+     ${table.previousValue} BETWEEN 1 AND 3600 AND ${table.previousValue} IS NOT NULL AND
+     ${table.nextValue} BETWEEN 1 AND 3600 AND ${table.nextValue} IS NOT NULL AND ${table.nextVersion} IS NOT NULL)
+  )`),
   index("tezjet_admin_audit_created_idx").on(table.createdAt, table.id),
   index("tezjet_admin_audit_order_created_idx").on(table.orderId, table.createdAt, table.id),
   index("tezjet_admin_audit_driver_created_idx").on(table.driverId, table.createdAt, table.id),

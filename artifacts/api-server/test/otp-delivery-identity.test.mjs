@@ -40,7 +40,7 @@ before(async () => {
   database = production.pool;
   adminPool = new database.constructor({ connectionString: originalUrl, max: 4 });
   await adminPool.query(`CREATE SCHEMA "${schema}"`); schemaCreated = true;
-  for (const table of ['tezjet_otp_challenges', 'otp_rate_limits', 'tezjet_routes']) {
+  for (const table of ['tezjet_offer_policy', 'tezjet_otp_challenges', 'otp_rate_limits', 'tezjet_routes']) {
     await adminPool.query(`CREATE TABLE "${schema}"."${table}" (LIKE public."${table}" INCLUDING ALL)`);
   }
   store = new production.PostgresStore(); otherStore = new production.PostgresStore();

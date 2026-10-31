@@ -10,7 +10,7 @@ import { build } from "esbuild";
 // external DevSMS transport is substituted: these tests can never send SMS.
 const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const schema = `otp_sms_http_${randomUUID().replaceAll("-", "")}`;
-const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes", "tezjet_admin_audit_events"];
+const tables = ["tezjet_offer_policy", "tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes", "tezjet_admin_audit_events"];
 const smsEnvKeys = ["TEZJET_SMS_PROVIDER", "TEZJET_SMS_SEND_ENABLED", "DEVSMS_API_KEY", "TEZJET_SMS_SERVICE_NAME", "TEZJET_SMS_TIMEOUT_MS"];
 const envKeys = ["DATABASE_URL", "TEZJET_STORAGE_ADAPTER", "NODE_ENV", "SESSION_SECRET", "LOG_LEVEL", "ADMIN_PHONE", "TEZJET_OTP_IP_MAX", ...smsEnvKeys];
 const originalEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));

@@ -241,9 +241,10 @@ export async function saveAdminRouteLayout(token: string, routeId: string, layou
 
 export type AdminAuditFilters = { orderId: string; driverId: string; routeId: string; limit: number };
 export type AdminAuditEvent = {
-  id: string; actorId: string; action: "order.cancelled" | "driver.approval_changed" | "route.updated";
+  id: string; actorId: string; action: "order.cancelled" | "driver.approval_changed" | "route.updated" | "settings.offer_timeout_changed";
   createdAt: string; orderId?: string; driverId?: string; routeId?: string;
   fromStatus?: string; toStatus?: string; vehicleRevision?: string;
+  settingKey?: "offer-timeout"; previousValue?: number; nextValue?: number;
   changedFields?: string[]; previousVersion?: string; nextVersion?: string;
 };
 
@@ -264,15 +265,21 @@ export async function loadAdminAuditEvents(token: string, filters: AdminAuditFil
     const text = (key: string): string | undefined => typeof event[key] === "string" && event[key] ? event[key] as string : undefined;
     const action = text("action");
     if (!text("id") || !text("actorId") || !text("createdAt") || !Number.isFinite(Date.parse(text("createdAt")!)) ||
-      !["order.cancelled", "driver.approval_changed", "route.updated"].includes(action ?? "")) throw new AdminApiError(502, "Некорректное событие журнала.");
+      !["order.cancelled", "driver.approval_changed", "route.updated", "settings.offer_timeout_changed"].includes(action ?? "")) throw new AdminApiError(502, "Некорректное событие журнала.");
     if (action === "order.cancelled" && (!text("orderId") || !text("fromStatus") || text("toStatus") !== "cancelled") ||
       action === "driver.approval_changed" && (!text("driverId") || !text("fromStatus") || !text("toStatus")) ||
       action === "route.updated" && (!text("routeId") || !Array.isArray(event.changedFields) || !event.changedFields.every(field => typeof field === "string") || !text("previousVersion") || !text("nextVersion"))) throw new AdminApiError(502, "Неполное событие журнала.");
+    if (action === "settings.offer_timeout_changed" && (event.settingKey !== "offer-timeout" ||
+      typeof event.previousValue !== "number" || !Number.isSafeInteger(event.previousValue) || event.previousValue < 1 || event.previousValue > 3600 ||
+      typeof event.nextValue !== "number" || !Number.isSafeInteger(event.nextValue) || event.nextValue < 1 || event.nextValue > 3600 || !text("nextVersion"))) {
+      throw new AdminApiError(502, "Некорректное изменение времени ответа.");
+    }
     // Deliberately project known fields; raw payloads and any future personal data are not rendered.
     return { id: text("id")!, actorId: text("actorId")!, action: action as AdminAuditEvent["action"], createdAt: text("createdAt")!,
       orderId: text("orderId"), driverId: text("driverId"), routeId: text("routeId"), fromStatus: text("fromStatus"), toStatus: text("toStatus"),
       vehicleRevision: text("vehicleRevision"), changedFields: action === "route.updated" ? [...event.changedFields as string[]] : undefined,
-      previousVersion: text("previousVersion"), nextVersion: text("nextVersion") };
+      previousVersion: text("previousVersion"), nextVersion: text("nextVersion"),
+      ...(action === "settings.offer_timeout_changed" ? { settingKey: "offer-timeout" as const, previousValue: event.previousValue as number, nextValue: event.nextValue as number } : {}) };
   });
 }
 

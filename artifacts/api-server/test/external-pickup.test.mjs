@@ -12,7 +12,7 @@ import { build } from "esbuild";
 const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const schema = `external_pickup_${randomUUID().replaceAll("-", "")}`;
 const applicationName = `external-pickup-${randomUUID()}`;
-const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes", "tezjet_admin_audit_events"];
+const tables = ["tezjet_offer_policy", "tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes", "tezjet_admin_audit_events"];
 const envKeys = ["DATABASE_URL", "TEZJET_STORAGE_ADAPTER", "NODE_ENV", "SESSION_SECRET", "LOG_LEVEL", "REQUIRE_DRIVER_APPROVAL", "PYATAK_CENTER_LAT", "PYATAK_CENTER_LNG", "TEZJET_OFFER_TIMEOUT_SECONDS", "TEZJET_OSRM_URL"];
 const originalEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
 let moduleDirectory, production, database, adminPool, store, otherStore, server, baseUrl;
@@ -1414,4 +1414,37 @@ test("KZT external pickup still signs and verifies the legacy v1 purpose and cla
   assert.equal(claims.totalKzt, quoted.quote.total_kzt); assert.equal(Object.hasOwn(claims, "total"), false);
   const confirmed = await confirm(passenger, quoted); assert.equal(confirmed.status, 201, JSON.stringify(confirmed.body));
   assertCanonicalExternalFare(confirmed.body.order.fare);
+});
+
+test("external confirmation uses the current offer policy while confirmed receipt retains its original deadline in both stores", async t => {
+  for (const adapter of [store, new production.MemoryStore()]) await t.test(adapter.constructor.name, async child => {
+    const f = await fixture(child, adapter), initial = await f.configured();
+    const settings = { enabled: true, serviceRadiusMeters: policy.service_radius_meters, pricePerKmKzt: policy.price_per_km_kzt,
+      gpsMaxAgeSeconds: policy.gps_max_age_seconds, quoteTtlSeconds: policy.quote_ttl_seconds,
+      pickupGraceSeconds: policy.pickup_grace_seconds, maxPickupSeconds: policy.max_pickup_seconds, fareRounding: policy.fare_rounding };
+    const route = await adapter.updateExternalPickupSettings(initial.id, { expectedUpdatedAt: initial.updatedAt, settings });
+    const admin = await f.createUser("admin"), actor = { adminId: admin.user.id, expectedSessionVersion: admin.user.sessionVersion };
+    const driver = await f.planned(route), passenger = await f.createUser("passenger");
+    await f.storedJoin(driver, route);
+    const quoted = await signedStoreQuote(adapter, driver, passenger, route);
+    const original = await adapter.getOfferTimeout();
+    try {
+      const configured = await adapter.setOfferTimeoutAsAdmin(97, original.revision, actor);
+      const first = await adapter.confirmExternalPickupQuote(quoted, passenger.user.id, passenger.user.sessionVersion);
+      assert.equal(first.order.offerExpiresAt - Date.parse(first.order.createdAt), 97_000);
+      await adapter.setOfferTimeoutAsAdmin(31, configured.revision, actor);
+      const replay = await adapter.confirmExternalPickupQuote(quoted, passenger.user.id, passenger.user.sessionVersion);
+      assert.equal(replay.created, false); assert.equal(replay.order.id, first.order.id);
+      assert.equal(replay.order.offerExpiresAt, first.order.offerExpiresAt);
+      assert.equal((await capacityInvariant(adapter, driver, 4)).availableSeats, 3);
+      await adapter.rejectOrderOffer(first.order.id, driver.user.id);
+      assert.equal((await capacityInvariant(adapter, driver, 4)).availableSeats, 4);
+      const nextQuote = await signedStoreQuote(adapter, driver, passenger, route);
+      const next = await adapter.confirmExternalPickupQuote(nextQuote, passenger.user.id, passenger.user.sessionVersion);
+      assert.equal(next.order.offerExpiresAt - Date.parse(next.order.updatedAt), 31_000);
+    } finally {
+      const current = await adapter.getOfferTimeout();
+      await adapter.setOfferTimeoutAsAdmin(original.seconds, current.revision, actor);
+    }
+  });
 });

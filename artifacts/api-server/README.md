@@ -185,7 +185,10 @@ When upgrading an existing PostgreSQL database, stop the previous API and run
 `pnpm --filter @workspace/db run migrate` before starting the new API. Migration
 `0001_order_offers` adds the pending reservation/deadline fields, reopens legacy
 searching offers that have no deadline, and enforces one pending offer per driver.
-Offers last 60 seconds by default; set `TEZJET_OFFER_TIMEOUT_SECONDS` to change
+Offers last 60 seconds by default. An administrator can persist a new-offer
+timeout (1–3600 seconds) in the admin Settings panel; see
+[`offer-timeout-settings.md`](../../docs/offer-timeout-settings.md). Until an
+explicit administrator save, set `TEZJET_OFFER_TIMEOUT_SECONDS` to change
 the duration. The server checks stored offer deadlines and seat locks on startup
 and every second, so deadlines continue after a process restart. Queue joins,
 departures, rejection, acceptance, cancellation, and status changes also trigger

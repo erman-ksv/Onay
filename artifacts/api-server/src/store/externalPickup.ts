@@ -265,7 +265,7 @@ function assertRequote(quote: ExternalPickupQuote, existing: Order, passengerId:
   }
 }
 
-export function buildConfirmedExternalOrder(quote: ExternalPickupQuote, route: RouteDefinition, passenger: { id: string; phoneNumber: string }, existing?: Order, now = Date.now()): Order {
+export function buildConfirmedExternalOrder(quote: ExternalPickupQuote, route: RouteDefinition, passenger: { id: string; phoneNumber: string }, existing?: Order, now = Date.now(), offerTimeoutMs = OFFER_TIMEOUT_MS): Order {
   const verified = validateExternalPickupQuote(quote);
   if (existing) assertRequote(verified, existing, passenger.id);
   else if (verified.orderId || passenger.id !== verified.passengerId) throw new AppError(409, "Pickup quote does not create this order", "PICKUP_QUOTE_CHANGED");
@@ -277,7 +277,7 @@ export function buildConfirmedExternalOrder(quote: ExternalPickupQuote, route: R
     ...details, id: existing?.id ?? verified.quoteId, passengerId: passenger.id, passengerPhone: passenger.phoneNumber,
     pickupLocation: structuredClone(verified.pickupLocation), seats: verified.seats, status: "searching",
     fare: withCanonicalFare({ ...details.fare, total: money.total, ...(money.currency === "KZT" ? { totalKzt: money.total } : {}) }), driverId: undefined,
-    offeredDriverId: verified.driverId, offerExpiresAt: now + OFFER_TIMEOUT_MS, seatLockExpiresAt: undefined,
+    offeredDriverId: verified.driverId, offerExpiresAt: now + offerTimeoutMs, seatLockExpiresAt: undefined,
     attemptedDriverIds: [...new Set([...(existing?.attemptedDriverIds ?? []), verified.driverId])],
     createdAt: existing?.createdAt ?? timestamp, updatedAt: existing ? nextOrderUpdatedAt(existing.updatedAt, now) : timestamp,
     externalPickup: {

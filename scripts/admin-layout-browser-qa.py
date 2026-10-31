@@ -83,6 +83,7 @@ class AdminLayoutQA:
         self.monitor_network_failure = False
         self.directory_network_failure = False
         self.statistics_network_failure = False
+        self.timeout_conflict_observed = False
         self.block_conflict_path = None
         self.block_network_failure_path = None
         self.admin_requests = []
@@ -1181,6 +1182,7 @@ class AdminLayoutQA:
         self.admin_orders(passenger["access_token"])
         self.admin_statistics(passenger["access_token"])
         self.driver_block_acceptance()
+        self.offer_timeout_acceptance()
 
         with self.response_for("/auth/logout", "POST") as pending:
             self.page.get_by_role("button", name="Выйти", exact=True).click()
@@ -1328,6 +1330,125 @@ class AdminLayoutQA:
         finally:
             self.page.remove_listener("request", observe)
 
+    def offer_timeout_acceptance(self):
+        path = "/admin/settings/offer-timeout"
+        initial = expect_status(api_request(self.args.api_url, path, token=self.token), 200, "Read initial durable offer policy")["offer_timeout"]
+        panel = self.page.get_by_test_id("admin-offer-timeout")
+        writes = []
+        observe = lambda request: writes.append(request) if urlparse(request.url).path == "/api" + path and request.method == "PUT" else None
+        self.page.on("request", observe)
+        def open_settings():
+            with self.response_for(path, "GET") as pending:
+                self.page.get_by_role("button", name="Настройки", exact=True).click()
+            require(pending.value.status == 200, "Settings must use a real durable GET")
+            self.expect(panel.get_by_label("Тайм-аут предложения, секунд")).to_be_enabled()
+        def current():
+            return expect_status(api_request(self.args.api_url, path, token=self.token), 200, "Read actual policy")["offer_timeout"]
+        def refresh():
+            with self.response_for(path, "GET"):
+                panel.get_by_role("button", name="Обновить настройку", exact=True).click()
+            self.expect(panel.get_by_label("Тайм-аут предложения, секунд")).to_be_enabled()
+        def save(seconds):
+            panel.get_by_label("Тайм-аут предложения, секунд").fill(str(seconds))
+            with self.response_for(path, "PUT") as pending:
+                panel.get_by_role("button", name="Сохранить время ответа", exact=True).click()
+            require(pending.value.status == 200, "UI policy write must be accepted")
+            self.expect(panel.get_by_test_id("offer-timeout-current")).to_have_text(f"Текущее время ответа: {seconds} с")
+            self.expect(panel.get_by_role("button", name="Сохранить время ответа", exact=True)).to_be_disabled()
+            return pending.value.json()["offer_timeout"]
+        try:
+            open_settings()
+            self.expect(panel.get_by_test_id("offer-timeout-current")).to_have_text(f"Текущее время ответа: {initial['seconds']} с")
+            panel.get_by_label("Тайм-аут предложения, секунд").fill("0")
+            panel.get_by_role("button", name="Сохранить время ответа", exact=True).click()
+            self.expect(panel.get_by_role("alert")).to_be_visible()
+            require(len(writes) == 0, "Invalid seconds must not produce a PUT")
+            first = save(75)
+            require(current() == first and writes[-1].post_data_json == {"seconds": 75, "expected_revision": initial["revision"]}, "Save must bind the displayed receipt")
+            self.passed("Task9.6 bounded timeout form saves a server-confirmed value with its exact revision")
+
+            external = expect_status(api_request(self.args.api_url, path, "PUT", {"seconds": 90, "expected_revision": first["revision"]}, self.token), 200, "Another actual administrator update")["offer_timeout"]
+            panel.get_by_label("Тайм-аут предложения, секунд").fill("80")
+            with self.response_for(path, "PUT") as pending:
+                panel.get_by_role("button", name="Сохранить время ответа", exact=True).click()
+            require(pending.value.status == 409 and pending.value.json()["error"]["code"] == "OFFER_TIMEOUT_CHANGED", "Stale save must be rejected by the real compare-and-swap")
+            self.timeout_conflict_observed = True
+            self.expect(panel.get_by_role("alert")).to_contain_text("другого администратора")
+            self.expect(panel.get_by_label("Тайм-аут предложения, секунд")).to_have_value("80")
+            self.expect(panel.get_by_role("button", name="Сохранить время ответа", exact=True)).to_be_disabled()
+            require(current() == external, "Conflict must preserve the other saved decision")
+            refresh()
+            self.expect(panel.get_by_label("Тайм-аут предложения, секунд")).to_have_value("90")
+            self.passed("Task9.6 genuine stale revision preserves draft and blocks saving until explicit fresh read")
+
+            self.page.evaluate("""() => {
+              const original = window.fetch; let lost = false;
+              window.__restoreTimeoutFetch = () => { window.fetch = original; delete window.__restoreTimeoutFetch; };
+              window.fetch = async (...args) => {
+                const response = await original(...args);
+                if (!lost && new URL(typeof args[0] === 'string' ? args[0] : args[0].url, location.href).pathname === '/api/admin/settings/offer-timeout' && args[1]?.method === 'PUT') {
+                  lost = true; if (response.status !== 200) throw new Error('Expected committed real settings write');
+                  throw new TypeError('Deliberately lost committed settings response');
+                }
+                return response;
+              };
+            }""")
+            try:
+                before = len(writes)
+                panel.get_by_label("Тайм-аут предложения, секунд").fill("140")
+                panel.get_by_role("button", name="Сохранить время ответа", exact=True).click()
+                self.expect(panel.get_by_role("alert")).to_contain_text("не подтверждён")
+                self.expect(panel.get_by_test_id("offer-timeout-current")).to_have_text("Нет подтверждённой настройки")
+                self.expect(panel.get_by_role("button", name="Сохранить время ответа", exact=True)).to_be_disabled()
+                require(current()["seconds"] == 140 and len(writes) == before + 1, "Unknown response must not automatically retry the committed write")
+                refresh()
+                self.expect(panel.get_by_test_id("offer-timeout-current")).to_have_text("Текущее время ответа: 140 с")
+            finally:
+                self.page.evaluate("() => window.__restoreTimeoutFetch?.()")
+            self.passed("Task9.6 committed response loss gives unknown state without retry and explicit refresh recovers durable140")
+
+            self.page.evaluate("""() => {
+              const original = window.fetch; let held = false;
+              window.__restoreTimeoutFetch = () => { window.fetch = original; delete window.__restoreTimeoutFetch; };
+              window.fetch = async (...args) => {
+                const response = await original(...args);
+                if (!held && new URL(typeof args[0] === 'string' ? args[0] : args[0].url, location.href).pathname === '/api/admin/settings/offer-timeout') {
+                  held = true; return new Promise(resolve => { window.__releaseTimeoutResponse = () => { delete window.__releaseTimeoutResponse; resolve(response); }; });
+                }
+                return response;
+              };
+            }""")
+            try:
+                panel.get_by_role("button", name="Обновить настройку", exact=True).click()
+                self.page.wait_for_function("typeof window.__releaseTimeoutResponse === 'function'")
+                self.page.get_by_role("button", name="Маршруты и остановки", exact=True).click()
+                self.expect(panel).to_have_count(0)
+                self.page.evaluate("() => window.__releaseTimeoutResponse()")
+                self.expect(panel).to_have_count(0)
+            finally:
+                self.page.evaluate("() => { window.__releaseTimeoutResponse?.(); window.__restoreTimeoutFetch?.(); }")
+            open_settings()
+            self.expect(panel.get_by_test_id("offer-timeout-current")).to_have_text("Текущее время ответа: 140 с")
+            self.passed("Task9.6 late real GET cannot revive an unmounted settings panel")
+
+            for width in (1440, 390):
+                self.page.set_viewport_size({"width": width, "height": 900})
+                require(self.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "Settings must fit actual viewport")
+                self.screenshot(f"offer-timeout-{width}")
+            with self.response_for("/admin/audit-events", "GET") as pending:
+                self.page.get_by_role("button", name="Журнал действий", exact=True).click()
+            events = pending.value.json()["events"]
+            require(any(e.get("action") == "settings.offer_timeout_changed" and e.get("previousValue") == 90 and e.get("nextValue") == 140 for e in events), "Actual audit must record committed before/after seconds")
+            journal = self.page.get_by_test_id("admin-audit-journal")
+            self.expect(journal).to_contain_text("Время ответа: 90 с → 140 с")
+            self.screenshot("offer-timeout-audit-390")
+            self.passed("Task9.6 desktop/mobile controls and journal render durable before/after settings")
+        finally:
+            self.page.remove_listener("request", observe)
+            self.page.evaluate("() => { window.__releaseTimeoutResponse?.(); window.__restoreTimeoutFetch?.(); }")
+            latest = current()
+            expect_status(api_request(self.args.api_url, path, "PUT", {"seconds": initial["seconds"], "expected_revision": latest["revision"]}, self.token), 200, "Restore initial test policy")
+
     def assert_console_health(self):
         errors = []
         for entry in self.console:
@@ -1346,7 +1467,8 @@ class AdminLayoutQA:
             expected_statistics = self.statistics_network_failure and urlparse(entry["url"]).path == "/api/admin/statistics/trips" and bool(re.fullmatch(r"Failed to load resource: net::ERR_CONNECTION_FAILED", entry["text"]))
             expected_block_conflict = self.block_conflict_path and urlparse(entry["url"]).path == self.block_conflict_path and bool(re.fullmatch(r"Failed to load resource: the server responded with a status of 409 \(Conflict\)", entry["text"]))
             expected_block_network = self.block_network_failure_path and urlparse(entry["url"]).path == self.block_network_failure_path and bool(re.fullmatch(r"Failed to load resource: net::ERR_CONNECTION_FAILED", entry["text"]))
-            if not expected_block_conflict and not expected_block_network and not expected and not expected_vehicle and not expected_audit and not expected_order_conflict and not expected_order_network and not expected_monitor and not expected_directory and not expected_statistics:
+            expected_timeout = self.timeout_conflict_observed and urlparse(entry["url"]).path == "/api/admin/settings/offer-timeout" and bool(re.fullmatch(r"Failed to load resource: the server responded with a status of 409 \(Conflict\)", entry["text"]))
+            if not expected_timeout and not expected_block_conflict and not expected_block_network and not expected and not expected_vehicle and not expected_audit and not expected_order_conflict and not expected_order_network and not expected_monitor and not expected_directory and not expected_statistics:
                 errors.append(entry)
         require(not errors and not self.page_errors, f"Browser errors: {redact(errors)}; page errors: {self.page_errors}")
 

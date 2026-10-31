@@ -12,6 +12,7 @@ import { normalizeExternalPickupSettings } from "../store/externalPickup";
 import { processOrderDispatch, publishOrderOfferChanges } from "../services/orderDispatchService";
 import type { RouteMetadataPatch } from "../store/storeContract";
 import { buildTripStatistics } from "../utils/tripStatistics";
+import { validateOfferTimeoutChange } from "../utils/offerTimeout";
 
 export async function listAdminAuditEvents(request: Request, response: Response): Promise<void> {
   if (Object.keys(request.query).some(key => !["order_id", "driver_id", "route_id", "limit"].includes(key))) {
@@ -397,4 +398,23 @@ export async function updateDriverBlock(request: Request, response: Response): P
   if (!driver) throw new AppError(404, "Driver not found", "DRIVER_NOT_FOUND");
   if (fields.blocked) await processOrderDispatch(request.app.locals.io);
   response.json({ driver: serializeUser(driver) });
+}
+
+/** Effective setting is read from storage, never from a process-local cache. */
+export async function getOfferTimeout(request: Request, response: Response): Promise<void> {
+  if (!request.auth || request.auth.role !== "admin") throw new AppError(403, "Administrator role is required", "FORBIDDEN");
+  response.json({ offer_timeout: await store.getOfferTimeout() });
+}
+
+export async function updateOfferTimeout(request: Request, response: Response): Promise<void> {
+  if (!request.auth || request.auth.role !== "admin") throw new AppError(403, "Administrator role is required", "FORBIDDEN");
+  const raw: unknown = request.body;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw) || Object.keys(raw).some(key => !["seconds", "expected_revision"].includes(key))) {
+    throw new AppError(400, "Invalid offer timeout request", "VALIDATION_ERROR");
+  }
+  const body = raw as Record<string, unknown>;
+  validateOfferTimeoutChange(body.seconds, body.expected_revision);
+  const policy = await store.setOfferTimeoutAsAdmin(body.seconds as number, body.expected_revision as string | null,
+    { adminId: request.auth.userId, expectedSessionVersion: request.auth.user.sessionVersion });
+  response.json({ offer_timeout: policy });
 }
