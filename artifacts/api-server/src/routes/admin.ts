@@ -16,6 +16,7 @@ import {
   listPassengers,
   listRoutes,
   updateDriverApproval,
+  updateDriverBlock,
   updateQueuePoint,
   updateRoute,
   updateRouteLayout,
@@ -45,6 +46,7 @@ router.get("/admin/drivers", ...adminOnly, listDrivers);
 router.get("/admin/passengers", ...adminOnly, listPassengers);
 router.get("/admin/queue-point", ...adminOnly, getQueuePoint);
 router.patch("/admin/queue-point", ...adminOnly, updateQueuePoint);
+router.patch("/admin/drivers/:driverId/block", ...adminOnly, updateDriverBlock);
 router.patch(
   "/admin/drivers/:driverId/approval",
   ...adminOnly,

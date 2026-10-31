@@ -1,12 +1,12 @@
 export type DriverVehicle = { revision: string; make: string; model: string; plate_number: string; seat_capacity: number; updated_at: string };
-export type DriverVehicleSnapshot = { driver_vehicle: DriverVehicle | null; approval_status: "pending" | "approved" | "rejected" };
+export type DriverVehicleSnapshot = { driver_vehicle: DriverVehicle | null; approval_status: "pending" | "approved" | "rejected" | "blocked" };
 export type VehicleDraft = { make: string; model: string; plate_number: string; seat_capacity: number };
 
 export function parseDriverVehicleSnapshot(value: unknown): DriverVehicleSnapshot {
   const invalid = () => new Error("Не удалось подтвердить профиль автомобиля. Повтори обновление.");
   if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
   const root = value as Record<string, unknown>;
-  if (!["pending", "approved", "rejected"].includes(root.approval_status as string)) throw invalid();
+  if (!["pending", "approved", "rejected", "blocked"].includes(root.approval_status as string)) throw invalid();
   if (root.driver_vehicle === null) return { driver_vehicle: null, approval_status: root.approval_status as DriverVehicleSnapshot["approval_status"] };
   if (!root.driver_vehicle || typeof root.driver_vehicle !== "object" || Array.isArray(root.driver_vehicle)) throw invalid();
   const raw = root.driver_vehicle as Record<string, unknown>;

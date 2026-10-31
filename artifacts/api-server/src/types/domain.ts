@@ -15,7 +15,7 @@ export type DriverQueueStatus =
   | "en_route_to_c"
   | "arrived_at_c"
   | "in_transit";
-export type DriverApprovalStatus = "pending" | "approved" | "rejected";
+export type DriverApprovalStatus = "pending" | "approved" | "rejected" | "blocked";
 
 export interface Coordinates {
   lat: number;

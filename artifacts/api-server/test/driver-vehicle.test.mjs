@@ -368,3 +368,154 @@ test("socket authentication keeps submitted-car review mandatory while retaining
     assert.equal(await handshake(driver.token), "Driver approval required");
   } finally { await new Promise(resolve => realtime.close(resolve)); }
 });
+
+const blockBody = (blocked, revision = null) => ({ blocked, expected_vehicle_revision: revision });
+const blockPath = driver => "/admin/drivers/" + driver.user.id + "/block";
+
+test("Only a current administrator can explicitly block a driver; invalid bodies and targets do not mutate", async t => {
+  const f = await fixture(t), driver = await f.createUser(), admin = await f.createUser("admin");
+  const path = blockPath(driver);
+  assertError(await request(path, { method: "PATCH", body: blockBody(true) }), 401, "UNAUTHORIZED");
+  for (const role of ["passenger", "driver"]) {
+    const actor = await f.createUser(role);
+    assertError(await request(path, { token: actor.token, method: "PATCH", body: blockBody(true) }), 403, "FORBIDDEN");
+  }
+  for (const body of [{}, { blocked: true }, blockBody("true"), blockBody(1), blockBody(null),
+    { ...blockBody(true), driver_id: "forged" }, { ...blockBody(true), expected_vehicle_revision: {} }]) {
+    assertError(await request(path, { token: admin.token, method: "PATCH", body }), 400, "VALIDATION_ERROR");
+  }
+  assert.equal((await store.getUser(driver.user.id)).driverApprovalStatus, "approved");
+  assert.equal((await store.listAdminAuditEvents(undefined, 100, driver.user.id)).length, 0);
+  const passenger = await f.createUser("passenger");
+  assertError(await request(blockPath(passenger), { token: admin.token, method: "PATCH", body: blockBody(true) }), 404, "DRIVER_NOT_FOUND");
+  assertError(await request("/admin/drivers/missing/block", { token: admin.token, method: "PATCH", body: blockBody(true) }), 404, "DRIVER_NOT_FOUND");
+  await store.invalidateSessions(admin.user.id);
+  assertError(await request(path, { token: admin.token, method: "PATCH", body: blockBody(true) }), 401, "UNAUTHORIZED");
+  assert.equal((await store.getUser(driver.user.id)).driverApprovalStatus, "approved");
+});
+
+test("Block persists after vehicle edits and restart; stale reviews cannot unblock; explicit unblock requires reapproval", async t => {
+  const f = await fixture(t), driver = await f.createUser(), admin = await f.createUser("admin"), first = await savedVehicle(driver);
+  const patch = body => request(blockPath(driver), { token: admin.token, method: "PATCH", body });
+  assert.equal((await patch(blockBody(true, first.revision))).body.driver.driver_approval_status, "blocked");
+  const audit = () => store.listAdminAuditEvents(undefined, 100, driver.user.id);
+  assert.equal((await audit()).length, 1);
+  assert.equal((await patch(blockBody(true, first.revision))).status, 200);
+  assert.equal((await audit()).length, 1, "Repeated block is an audit no-op");
+  const edited = await request("/driver/vehicle", { token: driver.token, method: "PUT", body: { ...car, model: "Blocked Nexia", expected_revision: first.revision } });
+  assert.equal(edited.status, 200); assert.equal(edited.body.approval_status, "blocked");
+  const current = edited.body.driver_vehicle;
+  const fresh = new production.PostgresStore(); await fresh.initialize();
+  assert.equal((await fresh.getUser(driver.user.id)).driverApprovalStatus, "blocked");
+  assertError(await patch(blockBody(false, first.revision)), 409, "VEHICLE_REVIEW_CHANGED");
+  for (const status of ["approved", "rejected", "pending"]) {
+    assertError(await request("/admin/drivers/" + driver.user.id + "/approval", {
+      token: admin.token, method: "PATCH", body: { status, expected_vehicle_revision: current.revision },
+    }), 409, "DRIVER_BLOCKED");
+  }
+  assert.equal((await audit()).length, 1);
+  assert.equal((await patch(blockBody(false, current.revision))).body.driver.driver_approval_status, "pending");
+  assertError(await request("/driver/routes", { token: driver.token }), 403, "DRIVER_APPROVAL_REQUIRED");
+  const approved = await request("/admin/drivers/" + driver.user.id + "/approval", {
+    token: admin.token, method: "PATCH", body: { status: "approved", expected_vehicle_revision: current.revision },
+  });
+  assert.equal(approved.status, 200);
+  assert.equal((await request("/driver/routes", { token: driver.token })).status, 200);
+  assert.equal((await patch(blockBody(false, current.revision))).body.driver.driver_approval_status, "approved", "Repeated unblock must not reset approved to pending");
+  const events = await audit();
+  assert.equal(events.length, 3);
+  assert.deepEqual(events.map(event => [event.fromStatus, event.toStatus]), [["pending", "approved"], ["blocked", "pending"], ["pending", "blocked"]]);
+  assert.ok(events.every(event => event.actorId === admin.user.id && event.driverId === driver.user.id));
+});
+
+test("Driver block survives passenger/driver role switches and cannot be changed through profile fields", async t => {
+  const f = await fixture(t), driver = await f.createUser(), admin = await f.createUser("admin");
+  assert.equal((await request(blockPath(driver), { token: admin.token, method: "PATCH", body: blockBody(true) })).status, 200);
+  const passenger = await request("/auth/switch-role", { token: driver.token, method: "POST", body: { role: "passenger" } });
+  assert.equal(passenger.status, 200); assert.equal(passenger.body.user.driver_approval_status, "blocked");
+  const restored = await request("/auth/switch-role", { token: passenger.body.access_token, method: "POST", body: { role: "driver" } });
+  assert.equal(restored.status, 200); assert.equal(restored.body.user.driver_approval_status, "blocked");
+  assertError(await request("/driver/routes", { token: restored.body.access_token }), 403, "DRIVER_APPROVAL_REQUIRED");
+  await request("/auth/profile", { token: restored.body.access_token, method: "PATCH", body: { driver_approval_status: "approved" } });
+  assert.equal((await store.getUser(driver.user.id)).driverApprovalStatus, "blocked");
+});
+
+test("Explicit blocking cannot be bypassed by the legacy approval development switch without a car", async t => {
+  const module = await storesWithLegacyApprovalBypass(t);
+  await module.runtimeStore.initialize();
+  const f = await fixture(t), driver = await f.createUser(), admin = await f.createUser("admin");
+  await store.setDriverBlockedAsAdmin(driver.user.id, true, null, admin.user.id, admin.user.sessionVersion);
+  const listener = await new Promise(resolve => { const value = module.app.listen(0, "127.0.0.1", () => resolve(value)); });
+  const previous = process.env.REQUIRE_DRIVER_APPROVAL; process.env.REQUIRE_DRIVER_APPROVAL = "false";
+  try {
+    const response = await fetch("http://127.0.0.1:" + listener.address().port + "/api/driver/routes", { headers: { authorization: "Bearer " + driver.token } });
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).error.code, "DRIVER_APPROVAL_REQUIRED");
+  } finally {
+    if (previous === undefined) delete process.env.REQUIRE_DRIVER_APPROVAL; else process.env.REQUIRE_DRIVER_APPROVAL = previous;
+    await new Promise((resolve, reject) => listener.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+test("Block versus concurrent vehicle edit either preserves the block or rejects a stale administrator receipt", { timeout: 10_000 }, async t => {
+  const f = await fixture(t), driver = await f.createUser(), admin = await f.createUser("admin"), first = await savedVehicle(driver);
+  const [block, edit] = await Promise.allSettled([
+    store.setDriverBlockedAsAdmin(driver.user.id, true, first.revision, admin.user.id, admin.user.sessionVersion),
+    otherStore.setDriverVehicle(driver.user.id, input({ ...car, model: "Concurrent Nexia", expected_revision: first.revision }), driver.user.sessionVersion),
+  ]);
+  assert.equal(edit.status, "fulfilled");
+  const user = await store.getUser(driver.user.id);
+  assert.equal(user.driverVehicle.model, "Concurrent Nexia");
+  if (block.status === "fulfilled") {
+    assert.equal(user.driverApprovalStatus, "blocked");
+    assert.equal((await store.listAdminAuditEvents(undefined, 100, driver.user.id)).length, 1);
+  } else {
+    assert.equal(block.reason.code, "VEHICLE_REVIEW_CHANGED");
+    assert.equal(user.driverApprovalStatus, "pending");
+    assert.equal((await store.listAdminAuditEvents(undefined, 100, driver.user.id)).length, 0);
+  }
+});
+
+test("Blocking releases a pending offer once and preserves an accepted trip until explicit administrator cancellation", async t => {
+  const f = await fixture(t), route = await f.configured(), admin = await f.createUser("admin"), passenger = await f.createUser("passenger");
+  const drivers = [await f.planned(route), await f.planned(route)];
+  for (const driver of drivers) await f.storedJoin(driver, route, 3);
+  const original = await f.storedOrder(passenger, route);
+  const first = drivers.find(driver => driver.user.id === original.offeredDriverId);
+  const second = drivers.find(driver => driver !== first);
+  assert.ok(first && second);
+  const block = driver => request(blockPath(driver), { token: admin.token, method: "PATCH", body: blockBody(true) });
+  assert.equal((await block(first)).status, 200);
+  const moved = await store.getOrder(original.id);
+  assert.equal(moved.offeredDriverId, second.user.id);
+  assert.equal((await store.getQueueEntry(first.user.id)).availableSeats, 3);
+  assert.equal((await store.getQueueEntry(second.user.id)).availableSeats, 2);
+  assert.equal((await block(first)).status, 200);
+  assert.equal((await store.getOrder(original.id)).offerExpiresAt, moved.offerExpiresAt);
+  const accepted = await store.acceptOrderOffer(original.id, second.user.id, Date.now(), second.user.sessionVersion);
+  assert.ok(accepted.driverId);
+  assert.equal((await block(second)).status, 200);
+  assert.deepEqual(await store.getOrder(original.id), accepted, "Blocking never silently cancels or releases an assigned ride");
+  const cancelled = await request("/admin/orders/" + original.id + "/cancel", {
+    token: admin.token, method: "POST", body: { expected_status: accepted.status },
+  });
+  assert.equal(cancelled.status, 200); assert.equal(cancelled.body.order.status, "cancelled");
+  assert.equal((await store.getQueueEntry(second.user.id)).availableSeats, 3);
+});
+
+test("MemoryStore preserves explicit blocks, repeat receipts and stale-review protection", async () => {
+  const adapter = new production.MemoryStore(); await adapter.initialize();
+  const admin = await adapter.createUser({ role: "admin", fullName: "Block admin", phoneNumber: "+77770009981", locale: "ru" });
+  const driver = await adapter.createUser({ role: "driver", fullName: "Block driver", phoneNumber: "+77770009982", locale: "ru" });
+  adapter.setDriverBlockedAsAdmin(driver.id, true, null, admin.id, admin.sessionVersion);
+  assert.throws(() => adapter.setDriverApprovalAsAdmin(driver.id, "approved", null, admin.id, admin.sessionVersion), error => error.code === "DRIVER_BLOCKED");
+  const edited = adapter.setDriverVehicle(driver.id, input(), driver.sessionVersion);
+  assert.equal(edited.driverApprovalStatus, "blocked");
+  assert.equal(adapter.setDriverBlockedAsAdmin(driver.id, true, edited.driverVehicle.revision, admin.id, admin.sessionVersion).driverApprovalStatus, "blocked");
+  assert.equal(adapter.listAdminAuditEvents(undefined, 100, driver.id).length, 1);
+  const passenger = adapter.activateUserRole(driver.id, "passenger", driver.sessionVersion);
+  const restored = adapter.activateUserRole(driver.id, "driver", passenger.sessionVersion);
+  assert.equal(restored.driverApprovalStatus, "blocked");
+  assert.throws(() => adapter.setDriverBlockedAsAdmin(driver.id, false, null, admin.id, admin.sessionVersion), error => error.code === "VEHICLE_REVIEW_CHANGED");
+  assert.equal(adapter.setDriverBlockedAsAdmin(driver.id, false, edited.driverVehicle.revision, admin.id, admin.sessionVersion).driverApprovalStatus, "pending");
+});

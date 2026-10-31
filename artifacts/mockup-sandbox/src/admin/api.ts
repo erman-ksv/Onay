@@ -11,7 +11,7 @@ export type AdminRecord = {
   roles: string[];
   full_name: string;
   phone_number: string;
-  driver_approval_status?: "pending" | "approved" | "rejected";
+  driver_approval_status?: "pending" | "approved" | "rejected" | "blocked";
   driver_vehicle?: { revision: string; make: string; model: string; plate_number: string; seat_capacity: number; updated_at: string };
   created_at: string;
 };
@@ -274,4 +274,17 @@ export async function loadAdminAuditEvents(token: string, filters: AdminAuditFil
       vehicleRevision: text("vehicleRevision"), changedFields: action === "route.updated" ? [...event.changedFields as string[]] : undefined,
       previousVersion: text("previousVersion"), nextVersion: text("nextVersion") };
   });
+}
+
+/** Capture the displayed car receipt; a stale decision must never target a new car. */
+export async function setDriverBlocked(token: string, driverId: string, blocked: boolean, revision: string | null): Promise<AdminRecord> {
+  const result = await adminRequest<{ driver: AdminRecord }>(`/admin/drivers/${encodeURIComponent(driverId)}/block`, {
+    token, method: "PATCH", body: { blocked, expected_vehicle_revision: revision },
+  });
+  const driver = result?.driver;
+  if (!driver || driver.id !== driverId || (driver.driver_vehicle?.revision ?? null) !== revision ||
+      (blocked ? driver.driver_approval_status !== "blocked" : !["pending", "approved", "rejected"].includes(driver.driver_approval_status ?? ""))) {
+    throw new AdminApiError(502, "Не удалось подтвердить состояние блокировки. Обновите список.");
+  }
+  return driver;
 }

@@ -274,7 +274,7 @@ class MemoryStore implements Store {
       throw new AppError(409, "Finish active orders and leave the queue before changing the vehicle", "DRIVER_VEHICLE_BUSY");
     }
     user.driverVehicle = createDriverVehicle(input, user.driverVehicle);
-    user.driverApprovalStatus = "pending";
+    if (user.driverApprovalStatus !== "blocked") user.driverApprovalStatus = "pending";
     return structuredClone(user);
   }
 
@@ -893,7 +893,7 @@ class MemoryStore implements Store {
     return structuredClone(user);
   }
 
-  setDriverApprovalAsAdmin(userId: string, status: DriverApprovalStatus, expectedVehicleRevision: string | null | undefined, adminId: string, expectedSessionVersion: number): User | undefined {
+  setDriverApprovalAsAdmin(userId: string, status: DriverApprovalStatus, expectedVehicleRevision: string | null | undefined, adminId: string, expectedSessionVersion: number, blockAction = false): User | undefined {
     if (expectedSessionVersion === undefined) throw new AppError(401, "Session is required", "UNAUTHORIZED");
     this.requireCurrentRole(adminId, "admin", expectedSessionVersion);
     const user = this.users.get(userId);
@@ -903,12 +903,19 @@ class MemoryStore implements Store {
     }
     assertVehicleReview(user, expectedVehicleRevision);
     const previous = user.driverApprovalStatus ?? "pending";
+    if (previous === "blocked" && !blockAction) throw new AppError(409, "Unblock the driver explicitly before reviewing the vehicle", "DRIVER_BLOCKED");
+    if (blockAction && status === "pending" && previous !== "blocked") return structuredClone(user);
     if (previous !== status) {
       const event: AdminAuditEvent = { id: randomUUID(), actorId: adminId, action: "driver.approval_changed", driverId: userId,
         ...(user.driverVehicle ? { vehicleRevision: user.driverVehicle.revision } : {}), fromStatus: previous, toStatus: status, createdAt: new Date().toISOString() };
       user.driverApprovalStatus = status; this.adminAuditEvents.push(event);
     }
     return structuredClone(user);
+  }
+
+  setDriverBlockedAsAdmin(userId: string, blocked: boolean, expectedVehicleRevision: string | null | undefined, adminId: string, expectedSessionVersion: number): User | undefined {
+    if (typeof blocked !== "boolean") throw new AppError(400, "blocked must be a boolean", "VALIDATION_ERROR");
+    return this.setDriverApprovalAsAdmin(userId, blocked ? "blocked" : "pending", expectedVehicleRevision, adminId, expectedSessionVersion, true);
   }
 
   listRoutes(): RouteDefinition[] {

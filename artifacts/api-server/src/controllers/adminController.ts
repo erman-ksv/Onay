@@ -376,3 +376,25 @@ export async function updateDriverApproval(request: Request, response: Response)
   response.json({ driver: serializeUser(user) });
 }
 
+
+/** Blocking is distinct from reviewing a vehicle; only this command unblocks. */
+export async function updateDriverBlock(request: Request, response: Response): Promise<void> {
+  if (!request.auth || request.auth.role !== "admin") throw new AppError(403, "Administrator role is required", "FORBIDDEN");
+  const body: unknown = request.body;
+  if (!body || typeof body !== "object" || Array.isArray(body) ||
+      Object.keys(body).some(key => !["blocked", "expected_vehicle_revision"].includes(key))) {
+    throw new AppError(400, "Invalid driver block request", "VALIDATION_ERROR");
+  }
+  const fields = body as Record<string, unknown>;
+  if (typeof fields.blocked !== "boolean" || !Object.hasOwn(fields, "expected_vehicle_revision") ||
+      (fields.expected_vehicle_revision !== null && (typeof fields.expected_vehicle_revision !== "string" || !fields.expected_vehicle_revision.trim() || fields.expected_vehicle_revision.length > 80))) {
+    throw new AppError(400, "An explicit block decision and vehicle revision are required", "VALIDATION_ERROR");
+  }
+  const driver = await store.setDriverBlockedAsAdmin(
+    requiredString(request.params["driverId"], "driver_id", 80), fields.blocked,
+    fields.expected_vehicle_revision as string | null, request.auth.userId, request.auth.user.sessionVersion,
+  );
+  if (!driver) throw new AppError(404, "Driver not found", "DRIVER_NOT_FOUND");
+  if (fields.blocked) await processOrderDispatch(request.app.locals.io);
+  response.json({ driver: serializeUser(driver) });
+}

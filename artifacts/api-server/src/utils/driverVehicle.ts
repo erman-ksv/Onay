@@ -68,5 +68,6 @@ export function hasRequiredDriverApproval(
   user: { driverApprovalStatus?: unknown; driverVehicle?: unknown } | null | undefined,
   requireLegacyApproval: boolean,
 ): boolean {
-  return !!user && (user.driverApprovalStatus === "approved" || (!requireLegacyApproval && !user.driverVehicle));
+  return !!user && user.driverApprovalStatus !== "blocked" &&
+    (user.driverApprovalStatus === "approved" || (!requireLegacyApproval && !user.driverVehicle));
 }
