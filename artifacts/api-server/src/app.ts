@@ -55,9 +55,9 @@ app.use("/api/admin", (_request, response, next) => {
   response.set("Cache-Control", "no-store");
   next();
 });
-// Orders and queue snapshots include private trip, account and location data.
+// Orders, queue snapshots and driver profiles/choices contain private data.
 // Cover early parser/auth failures as well as successful reads and mutations.
-app.use(["/api/orders", "/api/queue"], (_request, response, next) => {
+app.use(["/api/orders", "/api/queue", "/api/driver"], (_request, response, next) => {
   response.set("Cache-Control", "no-store");
   next();
 });

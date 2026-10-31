@@ -8,7 +8,7 @@ import { build } from "esbuild";
 // Exercise the real Express application, including middleware ordering.
 // Isolated MemoryStore fixtures send no SMS and require no external account.
 const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const envKeys = ["NODE_ENV", "TEZJET_STORAGE_ADAPTER", "SESSION_SECRET", "LOG_LEVEL", "TEZJET_SMS_PROVIDER", "TEZJET_SMS_SEND_ENABLED"];
+const envKeys = ["NODE_ENV", "TEZJET_STORAGE_ADAPTER", "SESSION_SECRET", "LOG_LEVEL", "TEZJET_SMS_PROVIDER", "TEZJET_SMS_SEND_ENABLED", "REQUIRE_DRIVER_APPROVAL"];
 const originalEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
 let directory, production, server, baseUrl;
 let sequence = 0;
@@ -18,6 +18,7 @@ before(async () => {
   process.env.TEZJET_STORAGE_ADAPTER = "memory";
   process.env.SESSION_SECRET = "auth-cache-isolated-regression-secret";
   process.env.LOG_LEVEL = "silent";
+  process.env.REQUIRE_DRIVER_APPROVAL = "true";
   delete process.env.TEZJET_SMS_PROVIDER;
   process.env.TEZJET_SMS_SEND_ENABLED = "false";
   directory = await mkdtemp(path.join(apiRoot, ".auth-cache-test-"));
@@ -27,6 +28,7 @@ before(async () => {
       contents: [
         'export { default as app } from "./src/app";',
         'export { store } from "./src/store";',
+        'export { createAccessToken } from "./src/utils/token";',
         'export { OTP_LIMITS } from "./src/utils/config";',
         'export { otpClientKey } from "./src/utils/otpRequest";',
       ].join("\n"),
@@ -151,4 +153,115 @@ test("OTP IP rate-limit early response keeps no-store and Retry-After before JSO
   assert.ok(Number(result.headers.get("retry-after")) > 0);
   assert.equal(result.body.demo_code, undefined);
   assert.equal(result.body.access_token, undefined);
+});
+
+async function driverActor(role = "driver", approval = "approved") {
+  const user = await production.store.createUser({
+    role, fullName: "Private driver cache", phoneNumber: phone(), locale: "ru",
+  });
+  if (role === "driver") await production.store.setDriverApproval(user.id, approval);
+  return {
+    user,
+    token: production.createAccessToken({
+      sub: user.id, role, locale: user.locale,
+      sessionVersion: user.sessionVersion, sessionId: "driver-cache-" + user.id,
+    }),
+  };
+}
+
+test("Private driver vehicle reads, HEAD and edits forbid storage", async () => {
+  const actor = await driverActor("driver", "pending");
+  const empty = await request("/api/driver/vehicle", { token: actor.token });
+  noStore(empty, 200);
+  assert.equal(empty.body.driver_vehicle, null);
+  const saved = await request("/api/driver/vehicle", {
+    method: "PUT", token: actor.token,
+    body: { make: "Chevrolet", model: "Cobalt", plate_number: "01 A123 BC", seat_capacity: 3, expected_revision: null },
+  });
+  noStore(saved, 200);
+  assert.equal(saved.body.driver_vehicle.plate_number, "01 A123 BC");
+  assert.equal(saved.body.approval_status, "pending");
+  const read = await request("/api/driver/vehicle", { token: actor.token });
+  noStore(read, 200);
+  assert.deepEqual(read.body, saved.body);
+  const head = await request("/api/driver/vehicle", { method: "HEAD", token: actor.token });
+  noStore(head, 200);
+  assert.equal(head.text, "");
+});
+
+test("Saved driver route, catalog, HEAD, choice mutations and no-content response forbid storage", async () => {
+  const actor = await driverActor();
+  const initial = await request("/api/driver/route", { token: actor.token });
+  noStore(initial, 200);
+  assert.equal(initial.body.choice, null);
+  const draft = await production.store.createRoute({
+    id: "driver-cache-route-" + actor.user.id, name: "Private route cache", pricePerStopKzt: 500, active: true,
+  });
+  const route = await production.store.updateRouteLayout(draft.id, {
+    expectedUpdatedAt: draft.updatedAt,
+    pitaks: { aStopCode: "A", bStopCode: "B", radiusMeters: 175 },
+    stops: [
+      { code: "A", name: "A", location: { lat: 41.31, lng: 69.27 } },
+      { code: "B", name: "B", location: { lat: 41.32, lng: 69.28 } },
+    ],
+  });
+  const catalog = await request("/api/driver/routes", { token: actor.token });
+  noStore(catalog, 200);
+  assert.ok(catalog.body.routes.some(value => value.id === route.id));
+  const saved = await request("/api/driver/route", {
+    method: "PUT", token: actor.token,
+    body: { route_id: route.id, direction: "b_to_a", expected_updated_at: route.updatedAt },
+  });
+  noStore(saved, 200);
+  assert.equal(saved.body.choice.routeId, route.id);
+  assert.equal(saved.body.choice.direction, "b_to_a");
+  const read = await request("/api/driver/route", { token: actor.token });
+  noStore(read, 200);
+  assert.deepEqual(read.body, saved.body);
+  for (const pathname of ["/api/driver/route", "/api/driver/routes"]) {
+    const head = await request(pathname, { method: "HEAD", token: actor.token });
+    noStore(head, 200);
+    assert.equal(head.text, "");
+  }
+  const cleared = await request("/api/driver/route", { method: "DELETE", token: actor.token });
+  noStore(cleared, 204);
+  assert.equal(cleared.text, "");
+  const absent = await request("/api/driver/route", { token: actor.token });
+  noStore(absent, 200);
+  assert.equal(absent.body.choice, null);
+});
+
+test("Driver cache policy covers unauthorized, role, approval, validation, parser and revoked-session errors", async () => {
+  const passenger = await driverActor("passenger");
+  const pending = await driverActor("driver", "pending");
+  const actor = await driverActor();
+  for (const pathname of ["/api/driver/vehicle", "/api/driver/route", "/api/driver/routes"]) {
+    noStore(await request(pathname), 401);
+    noStore(await request(pathname, { token: "invalid" }), 401);
+    noStore(await request(pathname, { token: passenger.token }), 403);
+  }
+  noStore(await request("/api/driver/route", { token: pending.token }), 403);
+  noStore(await request("/api/driver/vehicle", { method: "PUT", token: actor.token, body: {} }), 400);
+  noStore(await request("/api/driver/route", { method: "PUT", token: actor.token, body: {} }), 400);
+  // Parser failures happen before authenticate and controller-local cache headers.
+  for (const pathname of ["/api/driver/vehicle", "/api/driver/route"]) {
+    noStore(await request(pathname, { method: "PUT", raw: "{" }), 400);
+    noStore(await request(pathname, { method: "PUT", body: { padding: "x".repeat(110000) } }), 413);
+  }
+  await production.store.invalidateSessions(actor.user.id);
+  noStore(await request("/api/driver/route", { token: actor.token }), 401);
+  noStore(await request("/api/driver/vehicle", { token: actor.token }), 401);
+  const head = await request("/api/driver/vehicle", { method: "HEAD", token: actor.token });
+  noStore(head, 401);
+  assert.equal(head.text, "");
+});
+
+test("Driver namespace misses and case variants are private without changing unrelated cache policy", async () => {
+  noStore(await request("/api/driver/missing"), 404);
+  noStore(await request("/API/DRIVER/VEHICLE/"), 401);
+  for (const pathname of ["/api/healthz", "/api/driver-extra/missing", "/api/notifications/config"]) {
+    const result = await request(pathname);
+    assert.equal(result.status, pathname.includes("driver-extra") ? 404 : 200);
+    assert.notEqual(result.headers.get("cache-control"), "no-store");
+  }
 });
