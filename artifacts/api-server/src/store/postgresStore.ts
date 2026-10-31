@@ -552,7 +552,7 @@ export class PostgresStore implements Store {
       )).limit(1);
       if (newQueue || active) throw new AppError(409, "Finish active orders and leave the queue before changing the vehicle", "DRIVER_VEHICLE_BUSY");
       const vehicle = createDriverVehicle(input, asUser(row as unknown as Record<string, unknown>).driverVehicle);
-      const [updated] = await tx.update(usersTable).set({ driverVehicle: vehicle as unknown as Record<string, unknown>, driverApprovalStatus: "pending" })
+      const [updated] = await tx.update(usersTable).set({ driverVehicle: vehicle as unknown as Record<string, unknown>, driverApprovalStatus: row.driverApprovalStatus === "blocked" ? "blocked" : "pending" })
         .where(eq(usersTable.id, userId)).returning();
       return asUser(updated as unknown as Record<string, unknown>);
     });
@@ -1723,8 +1723,13 @@ export class PostgresStore implements Store {
     return this.setDriverApprovalInternal(userId, status, expectedVehicleRevision, { adminId, expectedSessionVersion });
   }
 
+  async setDriverBlockedAsAdmin(userId: string, blocked: boolean, expectedVehicleRevision: string | null | undefined, adminId: string, expectedSessionVersion: number): Promise<User | undefined> {
+    if (typeof blocked !== "boolean") throw new AppError(400, "blocked must be a boolean", "VALIDATION_ERROR");
+    return this.setDriverApprovalInternal(userId, blocked ? "blocked" : "pending", expectedVehicleRevision, { adminId, expectedSessionVersion, blockAction: true });
+  }
+
   private async setDriverApprovalInternal(userId: string, status: DriverApprovalStatus, expectedVehicleRevision?: string | null,
-    audit?: { adminId: string; expectedSessionVersion: number }): Promise<User | undefined> {
+    audit?: { adminId: string; expectedSessionVersion: number; blockAction?: boolean }): Promise<User | undefined> {
     const { db, usersTable, adminAuditEventsTable } = await this.database();
     return db.transaction(async tx => {
       if (audit) {
@@ -1754,6 +1759,8 @@ export class PostgresStore implements Store {
       const driver = asUser(row as unknown as Record<string, unknown>);
       assertVehicleReview(driver, expectedVehicleRevision);
       const previous = driver.driverApprovalStatus ?? "pending";
+      if (audit && previous === "blocked" && !audit.blockAction) throw new AppError(409, "Unblock the driver explicitly before reviewing the vehicle", "DRIVER_BLOCKED");
+      if (audit?.blockAction && status === "pending" && previous !== "blocked") return driver;
       if (audit && previous === status) return driver;
       const [updated] = await tx.update(usersTable).set({ driverApprovalStatus: status }).where(eq(usersTable.id, userId)).returning();
       if (audit) await tx.insert(adminAuditEventsTable).values({ id: randomUUID(), actorId: audit.adminId, action: "driver.approval_changed", driverId: userId,

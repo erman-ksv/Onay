@@ -4,7 +4,7 @@ import { AdminApiError, loadAdminAuditEvents, type AdminAuditEvent, type AdminAu
 
 const initialFilters: AdminAuditFilters = { orderId: "", driverId: "", routeId: "", limit: 50 };
 const actions = { "order.cancelled": "Заказ отменён администратором", "driver.approval_changed": "Решение по водителю изменено", "route.updated": "Маршрут изменён" };
-const statuses: Record<string, string> = { pending: "На проверке", approved: "Одобрен", rejected: "Отклонён", searching: "Поиск водителя", en_route_to_c: "Едет к точке посадки", arrived_at_c: "Прибыл к точке посадки", boarded_waiting: "Ожидает отправления", in_transit: "В пути", completed: "Завершён", cancelled: "Отменён" };
+const statuses: Record<string, string> = { pending: "На проверке", approved: "Одобрен", rejected: "Отклонён", blocked: "Заблокирован", searching: "Поиск водителя", en_route_to_c: "Едет к точке посадки", arrived_at_c: "Прибыл к точке посадки", boarded_waiting: "Ожидает отправления", in_transit: "В пути", completed: "Завершён", cancelled: "Отменён" };
 const fields: Record<string, string> = { name: "Название", active: "Активность", pricePerStop: "Тариф", pricePerStopKzt: "Тариф" };
 function dateTime(value: string) {
   return new Intl.DateTimeFormat("ru-RU", { dateStyle: "medium", timeStyle: "medium" }).format(new Date(value));

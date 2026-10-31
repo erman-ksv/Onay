@@ -25,3 +25,11 @@ test("passenger sees reviewed identity/capacity without the private owner receip
   assert.equal(JSON.stringify(driver).includes("private"), false);
   for (const vehicle of [null, {}, { ...car, seat_capacity: 99 }]) assert.throws(() => parsePassengerDriver({ driver: { ...raw.driver, vehicle } }, "driver"));
 });
+
+test("Explicit blocked status is retained with or without a car; editing does not imply approval", () => {
+  for (const driver_vehicle of [null, car]) {
+    const value = parseDriverVehicleSnapshot({ driver_vehicle, approval_status: "blocked" });
+    assert.equal(value.approval_status, "blocked");
+    assert.deepEqual(value.driver_vehicle, driver_vehicle);
+  }
+});

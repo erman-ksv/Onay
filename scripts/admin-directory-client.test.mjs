@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AdminApiError, filterDirectory, loadDirectories } from "../artifacts/mockup-sandbox/src/admin/api.ts";
+import { AdminApiError, filterDirectory, loadDirectories, setDriverBlocked } from "../artifacts/mockup-sandbox/src/admin/api.ts";
 
 const passenger = { id: "person-1", full_name: "Алишер Каримов", phone_number: "+998901234567", role: "passenger", roles: ["passenger"], created_at: "2026-10-28" };
 const driver = { ...passenger, id: "driver-2", role: "driver", roles: ["passenger", "driver"] };
@@ -69,4 +69,35 @@ test("Directory cancellation propagates to both actual read options", async () =
     controller.abort();
     await assert.rejects(loadDirectories("session", controller.signal), error => error.name === "AbortError");
   });
+});
+
+test("Driver block commands capture explicit choice, encoded ID and car revision with private authentication", async () => {
+  for (const blocked of [true, false]) await mocked(async (url, options) => {
+    assert.equal(url, "/api/admin/drivers/" + encodeURIComponent("driver /?") + "/block");
+    assert.equal(options.method, "PATCH"); assert.equal(options.headers.Authorization, "Bearer private-session");
+    assert.equal(options.cache, "no-store"); assert.equal(options.credentials, "omit");
+    assert.deepEqual(JSON.parse(options.body), { blocked, expected_vehicle_revision: null });
+    return reply({ driver: { ...driver, id: "driver /?", driver_approval_status: blocked ? "blocked" : "pending" } });
+  }, async () => assert.equal((await setDriverBlocked("private-session", "driver /?", blocked, null)).driver_approval_status, blocked ? "blocked" : "pending"));
+});
+
+test("Wrong driver, receipt or block decision cannot be reported as confirmed", async () => {
+  for (const value of [null, {}, { ...driver, driver_approval_status: "approved" },
+    { ...driver, id: "other", driver_approval_status: "blocked" },
+    { ...driver, driver_approval_status: "blocked", driver_vehicle: { revision: "different" } }]) {
+    await mocked(async () => reply({ driver: value }), () => assert.rejects(setDriverBlocked("session", driver.id, true, null), error => error instanceof AdminApiError && error.status === 502));
+  }
+});
+
+test("Driver block errors and unknown outcomes never automatically retry", async () => {
+  for (const status of [401, 403, 404, 409, 503]) {
+    let calls = 0;
+    await mocked(async () => { calls++; return reply({ error: { code: "VEHICLE_REVIEW_CHANGED" } }, status); },
+      () => assert.rejects(setDriverBlocked("session", driver.id, true, null), error => error instanceof AdminApiError && error.status === status));
+    assert.equal(calls, 1);
+  }
+  let calls = 0;
+  await mocked(async () => { calls++; throw new TypeError("Lost response"); },
+    () => assert.rejects(setDriverBlocked("session", driver.id, true, null), TypeError));
+  assert.equal(calls, 1);
 });

@@ -228,6 +228,41 @@ class DriverRouteQA:
             self.expect(self.control("driver-route-" + route["id"])).to_contain_text(route["name"])
         self.passed("Actual Expo app performs driver OTP registration and waits for real approval")
 
+
+    def driver_block_acceptance(self):
+        path = "/admin/drivers/" + self.driver_id + "/block"
+        blocked = expect_status(api_request(self.args.api_url, path, "PATCH", {"blocked": True, "expected_vehicle_revision": None}, self.admin_token), 200, "Explicitly block real driver")
+        require(blocked["driver"]["driver_approval_status"] == "blocked", "Block must persist")
+        self.page.reload(wait_until="domcontentloaded")
+        self.expect(self.page.get_by_text("Профиль заблокирован", exact=True)).to_be_visible()
+        self.expect(self.control("driver-route-picker")).to_have_count(0)
+        self.expect(self.control("driver-queue-join")).to_have_count(0)
+        self.expect(self.control("driver-blocked-status")).to_be_visible()
+        for field, value in [("make", "Chevrolet"), ("model", "Blocked QA car"), ("plate", "01 B123 QA"), ("seats", "8")]:
+            self.control("driver-vehicle-" + field).fill(value)
+        with self.response_for("/driver/vehicle", "PUT") as pending:
+            self.control("driver-vehicle-save").click()
+        require(pending.value.status == 200 and pending.value.json()["approval_status"] == "blocked", "Actual app vehicle edit must retain block")
+        revision = pending.value.json()["driver_vehicle"]["revision"]
+        self.expect(self.control("driver-vehicle-notice")).to_contain_text("Блокировка водителя остаётся")
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        require(self.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "Blocked actual Expo app must fit390px")
+        self.screenshot("mobile-390-driver-blocked")
+        self.passed("Task9.3 actual Expo reload shows block, hides work controls and preserves block after real vehicle editing")
+
+        unblocked = expect_status(api_request(self.args.api_url, path, "PATCH", {"blocked": False, "expected_vehicle_revision": revision}, self.admin_token), 200, "Explicitly unblock actual driver")
+        require(unblocked["driver"]["driver_approval_status"] == "pending", "Unblock requires separate approval")
+        expect_status(api_request(self.args.api_url, "/admin/drivers/" + self.driver_id + "/approval", "PATCH", {"status": "approved", "expected_vehicle_revision": revision}, self.admin_token), 200, "Explicit current-car approval after unblock")
+        with self.response_for("/auth/me", "GET"):
+            self.page.get_by_role("button", name="Проверить статус", exact=True).click()
+        with self.response_for("/driver/vehicle", "GET"):
+            self.control("driver-vehicle-refresh").click()
+        self.expect(self.control("driver-blocked-status")).to_have_count(0)
+        self.expect(self.control("driver-route-picker")).to_be_visible()
+        self.expect(self.control("driver-queue-join")).to_be_enabled()
+        self.page.set_viewport_size({"width": 1440, "height": 1000})
+        self.passed("Task9.3 explicit unblock plus separate current-car approval restores actual Expo work controls")
+
     def snapshot(self):
         return expect_status(api_request(self.args.api_url, "/driver/route", token=self.driver_token), 200, "Read persisted driver route choice")
 
@@ -387,6 +422,7 @@ class DriverRouteQA:
         expect_status(api_request(self.args.api_url, "/healthz"), 200, "Actual API health")
         self.admin_login_and_routes()
         self.driver_login_and_approval()
+        self.driver_block_acceptance()
         for route in self.routes:
             for direction in ("a_to_b", "b_to_a"):
                 self.select_draft(route, direction)

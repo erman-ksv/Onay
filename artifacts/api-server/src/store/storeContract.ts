@@ -189,6 +189,8 @@ export interface Store {
   cancelOrderAsAdmin(orderId: string, adminId: string, expectedStatus: OrderStatus, expectedSessionVersion: number): MaybePromise<Order | undefined>;
   listAdminAuditEvents(orderId?: string, limit?: number, driverId?: string, routeId?: string): MaybePromise<AdminAuditEvent[]>;
   setDriverApprovalAsAdmin(userId: string, status: DriverApprovalStatus, expectedVehicleRevision: string | null | undefined, adminId: string, expectedSessionVersion: number): MaybePromise<User | undefined>;
+  /** Explicit block transitions cannot be cleared by a stale vehicle approval. */
+  setDriverBlockedAsAdmin(userId: string, blocked: boolean, expectedVehicleRevision: string | null | undefined, adminId: string, expectedSessionVersion: number): MaybePromise<User | undefined>;
   claimOrderForDriver(
     orderId: string,
     driverId: string,

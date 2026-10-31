@@ -83,6 +83,8 @@ class AdminLayoutQA:
         self.monitor_network_failure = False
         self.directory_network_failure = False
         self.statistics_network_failure = False
+        self.block_conflict_path = None
+        self.block_network_failure_path = None
         self.admin_requests = []
         self.token = None
         self.route_id = None
@@ -1178,6 +1180,7 @@ class AdminLayoutQA:
         self.audit_journal(passenger["access_token"])
         self.admin_orders(passenger["access_token"])
         self.admin_statistics(passenger["access_token"])
+        self.driver_block_acceptance()
 
         with self.response_for("/auth/logout", "POST") as pending:
             self.page.get_by_role("button", name="Выйти", exact=True).click()
@@ -1193,6 +1196,135 @@ class AdminLayoutQA:
         self.passed("UI logout returns to login and invalidates the admin token")
         self.assert_console_health()
         self.passed("No unexpected browser console errors, page errors or framework overlays")
+
+
+    def driver_block_acceptance(self):
+        phone = "+77774" + str(uuid.uuid4().int % 1_000_000).zfill(6)
+        challenge = expect_status(api_request(self.args.api_url, "/auth/request-otp", "POST", {"phone_number": phone, "full_name": "CI blocked driver", "role": "driver", "locale": "ru"}), 202, "Block fixture OTP")
+        session = expect_status(api_request(self.args.api_url, "/auth/verify-otp", "POST", {"phone_number": phone, "code": challenge["demo_code"]}), 200, "Block fixture login")
+        driver, token = session["user"], session["access_token"]
+        car = {"make": "Chevrolet", "model": "Block Cobalt", "plate_number": "01 B123 QA", "seat_capacity": 4, "expected_revision": None}
+        first = expect_status(api_request(self.args.api_url, "/driver/vehicle", "PUT", car, token), 200, "Block fixture vehicle")["driver_vehicle"]
+        approval = "/admin/drivers/" + driver["id"] + "/approval"
+        path = "/admin/drivers/" + driver["id"] + "/block"
+        expect_status(api_request(self.args.api_url, approval, "PATCH", {"status": "approved", "expected_vehicle_revision": first["revision"]}, self.token), 200, "Block fixture approval")
+        self.page.set_viewport_size({"width": 1440, "height": 1000})
+        self.page.get_by_role("button", name="Пользователи", exact=True).click()
+        self.page.get_by_role("tab", name="Водители", exact=True).click()
+        with self.response_for("/admin/drivers", "GET"):
+            self.page.get_by_role("button", name="Обновить", exact=True).click()
+        card = self.page.get_by_test_id("driver-vehicle-review-" + driver["id"])
+        row = self.page.locator("tr").filter(has=card)
+        block = self.page.get_by_test_id("driver-block-" + driver["id"])
+        writes = []
+        observe = lambda request: writes.append(request) if urlparse(request.url).path == "/api" + path and request.method == "PATCH" else None
+        self.page.on("request", observe)
+        try:
+            block.click()
+            dialog = card.get_by_role("alertdialog")
+            self.expect(dialog).to_contain_text("Активные заказы автоматически не отменяются")
+            dialog.get_by_role("button", name="Отмена", exact=True).click()
+            require(len(writes) == 0, "Cancelling block confirmation must send no write")
+            block.click()
+            with self.response_for(path, "PATCH") as pending:
+                dialog.get_by_role("button", name="Подтвердить", exact=True).click()
+            require(pending.value.status == 200 and pending.value.request.post_data_json == {"blocked": True, "expected_vehicle_revision": first["revision"]}, "Confirmed UI block must bind displayed vehicle")
+            self.expect(row).to_contain_text("Заблокирован")
+            self.expect(self.page.get_by_test_id("driver-vehicle-approve-" + driver["id"])).to_be_disabled()
+            require(expect_status(api_request(self.args.api_url, "/auth/me", token=token), 200, "Read blocked fixture")["user"]["driver_approval_status"] == "blocked", "Real driver profile must be blocked")
+            expect_status(api_request(self.args.api_url, "/driver/routes", token=token), 403, "Blocked driver work denied")
+            self.screenshot("desktop-driver-blocked")
+            self.passed("Task9.3 actual admin block requires confirmation, cancel writes nothing, and real driver work is denied")
+
+            edited = expect_status(api_request(self.args.api_url, "/driver/vehicle", "PUT", {**car, "model": "Block Nexia", "expected_revision": first["revision"]}, token), 200, "Blocked car edit")
+            require(edited["approval_status"] == "blocked", "Vehicle edit must retain block")
+            block.click()
+            with self.response_for(path, "PATCH") as pending:
+                dialog.get_by_role("button", name="Подтвердить", exact=True).click()
+            require(pending.value.status == 409 and pending.value.json()["error"]["code"] == "VEHICLE_REVIEW_CHANGED", "Stale unblock must fail exactly")
+            self.block_conflict_path = "/api" + path
+            self.expect(card.get_by_role("alert")).to_contain_text("Автомобиль изменился")
+            with self.response_for("/admin/drivers", "GET"):
+                self.page.get_by_role("button", name="Обновить", exact=True).click()
+            self.expect(card).to_contain_text("Block Nexia")
+            self.expect(row).to_contain_text("Заблокирован")
+            block.click()
+            with self.response_for(path, "PATCH") as pending:
+                dialog.get_by_role("button", name="Подтвердить", exact=True).click()
+            require(pending.value.status == 200 and pending.value.json()["driver"]["driver_approval_status"] == "pending", "Explicit unblock must require reapproval")
+            self.expect(row).to_contain_text("На проверке")
+            expect_status(api_request(self.args.api_url, "/driver/routes", token=token), 403, "Unblock alone must not approve vehicle")
+            with self.response_for(approval, "PATCH") as pending:
+                self.page.get_by_test_id("driver-vehicle-approve-" + driver["id"]).click()
+            require(pending.value.status == 200, "Separate fresh approval must succeed")
+            self.expect(row).to_contain_text("Одобрен")
+            self.passed("Task9.3 block survives car edit; stale unblock fails; explicit fresh unblock and separate review restore approval")
+
+            pattern = "**/api" + path
+            def disconnect(route):
+                self.block_network_failure_path = "/api" + path
+                route.abort("connectionfailed")
+            self.page.route(pattern, disconnect)
+            try:
+                before = len(writes)
+                block.click()
+                with self.page.expect_request(lambda request: urlparse(request.url).path == "/api" + path):
+                    dialog.get_by_role("button", name="Подтвердить", exact=True).click()
+                self.expect(card.get_by_role("alert")).to_contain_text("Результат блокировки не подтверждён")
+                require(len(writes) == before + 1, "Unknown outcome must not automatically retry")
+            finally:
+                self.page.unroute(pattern, disconnect)
+            with self.response_for("/admin/drivers", "GET"):
+                self.page.get_by_role("button", name="Обновить", exact=True).click()
+            block.click()
+            with self.response_for(path, "PATCH") as pending:
+                dialog.get_by_role("button", name="Подтвердить", exact=True).click()
+            require(pending.value.status == 200, "Explicit retry after fresh read must block")
+            self.expect(row).to_contain_text("Заблокирован")
+            self.page.set_viewport_size({"width": 390, "height": 844})
+            require(self.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "390px block controls must not overflow")
+            self.screenshot("mobile-390-driver-blocked")
+            self.passed("Task9.3 unknown block outcome gives an error without retry; explicit refresh/retry recovers on390px")
+
+            block.click()
+            with self.response_for(path, "PATCH"):
+                dialog.get_by_role("button", name="Подтвердить", exact=True).click()
+            self.expect(row).to_contain_text("На проверке")
+            self.page.evaluate("""() => {
+              const original = window.fetch;
+              window.__restoreBlockFetch = () => { window.fetch = original; delete window.__restoreBlockFetch; };
+              let held = false;
+              window.fetch = async (...args) => {
+                const response = await original(...args);
+                if (!held && new URL(typeof args[0] === 'string' ? args[0] : args[0].url, location.href).pathname.endsWith('/block')) {
+                  held = true;
+                  return new Promise(resolve => { window.__releaseBlockResponse = () => { delete window.__releaseBlockResponse; resolve(response); }; });
+                }
+                return response;
+              };
+            }""")
+            try:
+                block.click()
+                dialog.get_by_role("button", name="Подтвердить", exact=True).click()
+                self.page.wait_for_function("typeof window.__releaseBlockResponse === 'function'")
+                self.page.get_by_role("button", name="Маршруты и остановки", exact=True).click()
+                self.page.evaluate("() => window.__releaseBlockResponse()")
+                self.expect(card).to_have_count(0)
+            finally:
+                self.page.evaluate("() => { window.__releaseBlockResponse?.(); window.__restoreBlockFetch?.(); }")
+            with self.response_for("/admin/audit-events", "GET"):
+                self.page.get_by_role("button", name="Журнал действий", exact=True).click()
+            panel = self.page.get_by_test_id("admin-audit-journal")
+            panel.get_by_label("ID водителя", exact=True).fill(driver["id"])
+            with self.response_for("/admin/audit-events", "GET") as pending:
+                panel.get_by_role("button", name="Применить фильтры", exact=True).click()
+            events = pending.value.json()["events"]
+            require(any(event.get("toStatus") == "blocked" for event in events), "Actual durable audit must record block")
+            self.expect(panel).to_contain_text("Заблокирован")
+            self.expect(panel.locator("ol > li")).to_have_count(len(events))
+            self.passed("Task9.3 delayed committed block response is discarded on unmount; fresh audit shows actual block decisions")
+        finally:
+            self.page.remove_listener("request", observe)
 
     def assert_console_health(self):
         errors = []
@@ -1210,7 +1342,9 @@ class AdminLayoutQA:
             expected_monitor = self.monitor_network_failure and urlparse(entry["url"]).path == "/api/admin/queue" and bool(re.fullmatch(r"Failed to load resource: net::ERR_CONNECTION_FAILED", entry["text"]))
             expected_directory = self.directory_network_failure and urlparse(entry["url"]).path == "/api/admin/drivers" and bool(re.fullmatch(r"Failed to load resource: net::ERR_CONNECTION_FAILED", entry["text"]))
             expected_statistics = self.statistics_network_failure and urlparse(entry["url"]).path == "/api/admin/statistics/trips" and bool(re.fullmatch(r"Failed to load resource: net::ERR_CONNECTION_FAILED", entry["text"]))
-            if not expected and not expected_vehicle and not expected_audit and not expected_order_conflict and not expected_order_network and not expected_monitor and not expected_directory and not expected_statistics:
+            expected_block_conflict = self.block_conflict_path and urlparse(entry["url"]).path == self.block_conflict_path and bool(re.fullmatch(r"Failed to load resource: the server responded with a status of 409 \(Conflict\)", entry["text"]))
+            expected_block_network = self.block_network_failure_path and urlparse(entry["url"]).path == self.block_network_failure_path and bool(re.fullmatch(r"Failed to load resource: net::ERR_CONNECTION_FAILED", entry["text"]))
+            if not expected_block_conflict and not expected_block_network and not expected and not expected_vehicle and not expected_audit and not expected_order_conflict and not expected_order_network and not expected_monitor and not expected_directory and not expected_statistics:
                 errors.append(entry)
         require(not errors and not self.page_errors, f"Browser errors: {redact(errors)}; page errors: {self.page_errors}")
 

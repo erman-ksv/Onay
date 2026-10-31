@@ -45,9 +45,9 @@ export default function DriverVehicleForm({ endpoint, token, blocked, onBusyChan
     const ticket = ++generation.current, controller = new AbortController(); activeController.current?.abort(); activeController.current = controller;
     const timer = setTimeout(() => controller.abort(), 15_000);
     try { const value = await call("PUT", controller.signal, body);
-      if (!value.driver_vehicle || value.approval_status !== "pending") throw new Error("Сервер не подтвердил сохранение автомобиля. Повтори обновление.");
+      if (!value.driver_vehicle || (value.approval_status !== "pending" && value.approval_status !== "blocked")) throw new Error("Сервер не подтвердил сохранение автомобиля. Повтори обновление.");
       if (generation.current !== ticket || controller.signal.aborted) return;
-      setSnapshot(value); setDraft(value.driver_vehicle!); setNotice("Автомобиль сохранён и отправлен администратору на проверку."); onSaved(value);
+      setSnapshot(value); setDraft(value.driver_vehicle!); setNotice(value.approval_status === "blocked" ? "Автомобиль сохранён. Блокировка водителя остаётся; снять её может только администратор." : "Автомобиль сохранён и отправлен администратору на проверку."); onSaved(value);
     } catch (reason) { if (generation.current === ticket) setError(reason instanceof Error && reason.name !== "AbortError" ? reason.message : "Ответ не получен. Обнови профиль, чтобы проверить результат сохранения."); }
     finally { clearTimeout(timer); savingRef.current = false; setSaving(false); onBusyChange(false); }
   }
@@ -56,6 +56,7 @@ export default function DriverVehicleForm({ endpoint, token, blocked, onBusyChan
   const dirty = !current || draft.make.trim() !== current.make || draft.model.trim() !== current.model || draft.plate_number.trim() !== current.plate_number || draft.seat_capacity !== current.seat_capacity;
   return <View style={s.card} testID="driver-vehicle-form"><Text style={s.heading}>Мой автомобиль</Text>
     <Text style={s.note}>После изменения нужна повторная проверка администратора.</Text>
+    {snapshot?.approval_status === "blocked" ? <Text testID="driver-blocked-status" style={s.note}>Работа водителем заблокирована администратором.</Text> : null}
     {loading ? <Text>Загружаем автомобиль…</Text> : null}
     <TextInput testID="driver-vehicle-make" accessibilityLabel="Марка автомобиля" placeholder="Марка автомобиля" style={s.input} editable={!disabled} value={draft.make} onChangeText={make => setDraft(value => ({ ...value, make }))} />
     <TextInput testID="driver-vehicle-model" accessibilityLabel="Модель автомобиля" placeholder="Модель автомобиля" style={s.input} editable={!disabled} value={draft.model} onChangeText={model => setDraft(value => ({ ...value, model }))} />
