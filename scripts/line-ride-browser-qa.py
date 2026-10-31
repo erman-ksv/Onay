@@ -38,6 +38,8 @@ class LineRideQA(shared.DriverRouteQA):
         self.history_abort_observed = False
         self.passenger_history_abort_observed = False
         self.history_fixture_ids = []
+        self.seat_order_ids = []
+        self.seats_network_failure = False
         passenger_page.on("console", self.on_console)
         passenger_page.on("pageerror", lambda error: self.page_errors.append(self.safe(str(error))))
         passenger_page.on("request", self.on_request)
@@ -211,6 +213,8 @@ class LineRideQA(shared.DriverRouteQA):
 
     def queue(self, label=None, seats=None, phase=None):
         snapshot = self.expected(api_request(self.args.api_url, "/queue", token=self.driver_token), 200, "Read actual driver queue")
+        if seats is not None:
+            self.expect(self.control("driver-free-seats")).to_have_text("Свободных мест сейчас: " + str(seats))
         if seats is not None:
             entry = snapshot.get("your_entry")
             require(isinstance(entry, dict), "Expected a retained real queue enrollment")
@@ -400,6 +404,7 @@ class LineRideQA(shared.DriverRouteQA):
         self.page.set_viewport_size({"width": 1440, "height": 1000})
         self.shot(self.page, "task4-14-history-desktop")
         self.passed("Task4.14 actual completed driver work shows frozen UZS sum and route on desktop and390px")
+        self.passed("Task4.13 actual UI follows server3→2 reservation, unchanged acceptance/boarding and exact3 return on completion")
 
     def close_retained_enrollment(self):
         with self.response_for("/queue", "GET") as pending:
@@ -571,8 +576,158 @@ class LineRideQA(shared.DriverRouteQA):
         require(not self.page_errors, "Logout must not produce a page exception")
         self.passed("Task3.14 logout discards an actual delayed history response and removes private rows")
 
+    def hold_queue(self):
+        self.page.evaluate("""() => {
+          const original = window.fetch;
+          window.__restoreSeatFetch = () => { window.fetch = original; delete window.__restoreSeatFetch; };
+          let hold = true;
+          window.fetch = async (...args) => {
+            const response = await original(...args);
+            if (hold && new URL(typeof args[0] === 'string' ? args[0] : args[0].url, location.href).pathname === '/api/queue') {
+              hold = false; return new Promise(resolve => { window.__releaseSeatResponse = () => { delete window.__releaseSeatResponse; resolve(response); }; });
+            }
+            return response;
+          };
+        }""")
+        self.control("driver-free-seats-refresh").click()
+        self.page.wait_for_function("typeof window.__releaseSeatResponse === 'function'")
+
+    def observe_seats(self):
+        self.page.evaluate("""() => {
+          window.__seatTexts = [];
+          window.__seatObserver = new MutationObserver(() => {
+            window.__seatTexts.push(document.querySelector('[data-testid="driver-free-seats"]')?.textContent ?? '');
+          });
+          window.__seatObserver.observe(document.body, {subtree:true,childList:true,characterData:true});
+        }""")
+
+    def release_queue(self):
+        self.page.evaluate("() => window.__releaseSeatResponse()")
+
+    def restore_queue(self):
+        self.page.evaluate("() => { window.__releaseSeatResponse?.(); window.__restoreSeatFetch?.(); window.__seatObserver?.disconnect(); }")
+
+    def seat_offer(self):
+        location = self.stop("B")["location"]
+        order = self.expected(api_request(self.args.api_url, "/orders/route", "POST", {
+            "route_id": self.route["id"], "direction": "b_to_a", "expected_updated_at": self.route["updatedAt"],
+            "pickup_stop_id": self.stop("B")["id"], "destination_stop_id": self.stop("A")["id"], "seats": 3,
+            "pickup_location": {"lat": location["lat"], "lng": location["lng"], "timestamp": int(time.time()*1000)},
+        }, self.passenger_token), 201, "Reserve all three actual remaining seats")["order"]
+        self.seat_order_ids.append(order["id"])
+        require(order.get("offered_driver_id") == self.driver_id, "Full-capacity fixture must reach this real FIFO driver")
+        return order
+
+    def free_seat_cases(self):
+        self.expect(self.control("driver-free-seats")).to_have_text("Свободных мест сейчас: 3")
+        # The held response really contained3 before the next reservation.
+        self.hold_queue()
+        try:
+            order = self.seat_offer()
+            self.expect(self.control("driver-incoming-order")).to_be_visible()
+            self.expect(self.control("driver-free-seats")).to_contain_text("не подтверждено")
+            self.observe_seats(); self.release_queue()
+            self.expect(self.control("driver-free-seats")).to_have_text("Свободных мест сейчас: 0")
+            texts = self.page.evaluate("window.__seatTexts")
+            require(not any(text == "Свободных мест сейчас: 3" for text in texts), "Delayed pre-reservation receipt must never restore3 after server reservation0")
+            self.queue("full-reservation-zero", 0, "collecting")
+        finally:
+            self.restore_queue()
+        self.passed("Task4.13 actual full reservation renders zero and a delayed genuine3-seat receipt cannot overwrite it")
+        with self.response_for("/orders/" + order["id"] + "/reject", "POST") as pending:
+            self.control("driver-order-reject").click()
+        require(pending.value.status == 200, "Actual driver rejection must succeed")
+        self.queue("rejection-restores-three", 3, "collecting")
+        self.expected(api_request(self.args.api_url, "/orders/" + order["id"] + "/cancel", "POST", token=self.passenger_token), 200, "Close rejected passenger search")
+        self.queue("cancel-rejected-no-double-release", 3, "collecting")
+        assigned = self.seat_offer()
+        self.expect(self.control("driver-free-seats")).to_have_text("Свободных мест сейчас: 0")
+        with self.response_for("/orders/" + assigned["id"] + "/accept", "POST") as pending:
+            self.control("driver-order-accept").click()
+        require(pending.value.status == 200, "Actual full-capacity acceptance must succeed")
+        self.queue("accept-no-second-reservation", 0, "collecting")
+        self.expected(api_request(self.args.api_url, "/orders/" + assigned["id"] + "/cancel", "POST", token=self.passenger_token), 200, "Passenger cancels assigned full-capacity ride")
+        self.queue("assigned-cancel-restores-three", 3, "collecting")
+        self.expected(api_request(self.args.api_url, "/orders/" + assigned["id"] + "/cancel", "POST", token=self.passenger_token), 409, "Repeated cancellation must not release twice")
+        self.queue("duplicate-cancel-still-three", 3, "collecting")
+        self.passed("Task4.13 real rejection and assigned cancellation restore seats once; acceptance and duplicate cancellation do not alter them again")
+        expiring = self.seat_offer()
+        self.expect(self.control("driver-free-seats")).to_have_text("Свободных мест сейчас: 0")
+        deadline = expiring.get("offer_expires_at")
+        require(isinstance(deadline, (int, float)) and 0 < deadline - time.time()*1000 <= 65_000, "Use the unchanged real offer deadline, not a fake clock or weakened timeout")
+        self.expect(self.control("driver-free-seats")).to_have_text("Свободных мест сейчас: 3", timeout=90_000)
+        self.queue("actual-offer-timeout-restores-three", 3, "collecting")
+        self.expected(api_request(self.args.api_url, "/orders/" + expiring["id"] + "/cancel", "POST", token=self.passenger_token), 200, "Close expired passenger search")
+        self.passed("Task4.13 real unmodified offer timeout restores the authoritative free-seat count without client arithmetic")
+        def disconnect(route):
+            self.seats_network_failure = True
+            route.abort("connectionfailed")
+        self.page.route("**/api/queue", disconnect)
+        try:
+            self.control("driver-free-seats-refresh").click()
+            self.expect(self.page.get_by_text("Нет актуальных данных", exact=True)).to_be_visible()
+            require(self.seats_network_failure, "The actual queue transport must have failed")
+            self.expect(self.control("driver-free-seats")).to_contain_text("не подтверждено")
+        finally:
+            self.page.unroute("**/api/queue", disconnect)
+        self.control("driver-free-seats-refresh").click()
+        self.expect(self.control("driver-free-seats")).to_have_text("Свободных мест сейчас: 3")
+        self.passed("Task4.13 failed queue read clears the number instead of showing stale seats or zero; explicit retry recovers")
+        self.page.reload(wait_until="domcontentloaded")
+        self.expect(self.control("driver-free-seats")).to_have_text("Свободных мест сейчас: 3")
+        previous = self.queue()["your_entry"]["collectionState"]["enrollmentId"]
+        self.hold_queue()
+        try:
+            with self.response_for("/queue/leave", "DELETE") as pending:
+                self.control("driver-queue-leave").click()
+            require(pending.value.status == 204, "Actual leave must remove the old enrollment")
+            self.expect(self.control("driver-line-join")).to_be_enabled()
+            self.page.get_by_text("−", exact=True).click()
+            self.gps(self.context, "B")
+            with self.response_for("/queue/line", "POST") as pending:
+                self.control("driver-line-join").click()
+            require(pending.value.status == 201 and pending.value.request.post_data_json["available_seats"] == 2, "A new enrollment must use the new two-seat choice")
+            entry = pending.value.json()["entry"]
+            require(entry["collectionState"]["enrollmentId"] != previous and entry["availableSeats"] == 2, "Server must confirm a distinct two-seat enrollment")
+            self.expect(self.control("driver-free-seats-refresh")).to_be_enabled()
+            self.observe_seats(); self.release_queue()
+            self.expect(self.control("driver-free-seats")).to_have_text("Свободных мест сейчас: 2")
+            require(not any(text == "Свободных мест сейчас: 3" for text in self.page.evaluate("window.__seatTexts")), "Old enrollment receipt must not restore its3-seat count")
+        finally:
+            self.restore_queue()
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        require(self.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "390px free-seat display must not overflow")
+        self.shot(self.page, "task4-13-free-seats-mobile-390")
+        self.page.set_viewport_size({"width": 1440, "height": 1000})
+        self.shot(self.page, "task4-13-free-seats-desktop")
+        unexpected = [entry for entry in self.console if entry["type"] == "error" and not (
+            (self.history_abort_observed or self.passenger_history_abort_observed) and urlparse(entry.get("url", "")).path == "/api/orders" and entry["text"] == "Failed to load resource: net::ERR_FAILED") and not (
+            self.seats_network_failure and urlparse(entry.get("url", "")).path == "/api/queue" and entry["text"] == "Failed to load resource: net::ERR_CONNECTION_FAILED")]
+        require(not unexpected and not self.page_errors, "Unexpected seat browser errors: " + str(self.safe(unexpected + self.page_errors)))
+        self.passed("Task4.13 reload restores server seats; leave/rejoin fences an old enrollment receipt and new two-seat UI fits desktop390px")
+
+    def driver_seats_logout(self):
+        self.hold_queue()
+        try:
+            self.page.get_by_text("Выйти", exact=True).click()
+            self.expect(self.control("driver-free-seats")).to_have_count(0)
+            self.release_queue()
+            self.expect(self.control("driver-free-seats")).to_have_count(0)
+            self.expect(self.page.get_by_placeholder("+998 90 123 45 67", exact=True)).to_be_visible()
+            require(not self.page_errors, "A delayed old-session receipt must not cause a page error")
+        finally:
+            self.restore_queue()
+        self.passed("Task4.13 logout removes private seat proof and discards a delayed real old-session queue response")
+
     def cleanup(self):
         failures = []
+        for order_id in self.seat_order_ids:
+            try:
+                order = self.expected(api_request(self.args.api_url, "/orders/" + order_id, token=self.passenger_token), 200, "Read own seat fixture for cleanup")["order"]
+                if order["status"] not in {"completed", "cancelled"}:
+                    self.expected(api_request(self.args.api_url, "/orders/" + order_id + "/cancel", "POST", token=self.passenger_token), 200, "Cancel own unfinished seat fixture")
+            except Exception as error:
+                failures.append("Seat fixture cleanup: " + self.safe(str(error)))
         if self.order_id and self.passenger_token:
             try:
                 order = self.expected(api_request(self.args.api_url, "/orders/" + self.order_id, token=self.passenger_token), 200, "Read own order for cleanup")["order"]
@@ -603,7 +758,8 @@ class LineRideQA(shared.DriverRouteQA):
         self.join_reverse()
         self.history_recovery()
         self.passenger_history()
-        require(len(self.checks) == 18, "Fourteen existing line/driver checks plus four passenger history checks must complete before logout")
+        self.free_seat_cases()
+        require(len(self.checks) == 24, "Eighteen existing checks plus six free-seat checks must complete before logout")
 
 
 def main():
@@ -655,7 +811,9 @@ def main():
                     elif report["status"] == "passed":
                         try:
                             qa.passenger_history_logout()
-                            require(len(qa.checks) == 19, "All fourteen original and five new passenger history checks must pass")
+                            require(len(qa.checks) == 25, "Nineteen existing and six free-seat checks must pass before driver logout")
+                            qa.driver_seats_logout()
+                            require(len(qa.checks) == 26, "All nineteen existing and seven free-seat checks must pass")
                         except Exception:
                             report["status"], exit_code = "failed", 1
                             raise
@@ -681,5 +839,6 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
 
 

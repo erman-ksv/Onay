@@ -18,6 +18,7 @@ import PassengerHistory from "../components/PassengerHistory";
 import type { DriverVehicleSnapshot } from "../lib/driver-vehicle";
 import { canBoardLinePassenger, canDepartLine, lineDepartBody, parseLineCollectionState, type LineCollectionState } from "../lib/driver-line";
 import { createQueueMutationGuard, driverQueueMembership, parseDriverQueueMembership, type DriverQueueSnapshot } from "../lib/driver-queue";
+import { DRIVER_SEATS_MAX_AGE_MS, driverSeatView, parseDriverSeatSnapshot, type DriverSeatSnapshot } from "../lib/driver-free-seats";
 import { passengerAvailabilityDisplay, verifiedDriverCount, type PassengerAvailability } from "../lib/passenger-availability";
 import { canJoinDriverQueue, driverQueueChoiceInput, driverRouteSessionKey, type DriverQueueContext, type DriverRouteGate } from "../lib/driver-routes";
 
@@ -57,7 +58,7 @@ export default function Home() {
   const [fare, setFare] = useState<(Fare & { pickup: string; destination: string }) | null>(null);
   const [address, setAddress] = useState("");
   const [seats, setSeats] = useState(1);
-  const [actionBusy, setBusy] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
   const [vehicleBusySession, setVehicleBusySession] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [driverSeats, setDriverSeats] = useState(3);
@@ -77,6 +78,7 @@ export default function Home() {
   const [socketConnected, setSocketConnected] = useState(false);
   const [incomingOrder, setIncomingOrder] = useState<RideOrder | null>(null);
   const [orders, setOrders] = useState<RideOrder[]>([]);
+  const [driverSeatSnapshot, setDriverSeatSnapshot] = useState<DriverSeatSnapshot | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState("");
@@ -104,23 +106,34 @@ export default function Home() {
   const queueEnrollmentRevision = useRef(0);
   const queuePresenceRevision = useRef(0);
   const queueMutationGuard = useRef(createQueueMutationGuard());
+  const seatRevision = useRef(0);
+  const invalidateDriverSeats = useCallback(() => {
+    seatRevision.current++;
+    setDriverSeatSnapshot(null);
+  }, []);
+  // Invalidate synchronously at both ends of a mutation: a GET received during
+  // a lost or delayed write cannot become visible when the action finishes.
+  const setBusy = useCallback((value: boolean) => { invalidateDriverSeats(); setActionBusy(value); }, [invalidateDriverSeats]);
   const updateQueueSnapshot = useCallback((next: DriverQueueSnapshot | null, acknowledgedWrite = false) => {
-    if (acknowledgedWrite) queueEnrollmentRevision.current += 1;
+    if (acknowledgedWrite) { queueEnrollmentRevision.current += 1; invalidateDriverSeats(); }
     queueSnapshotRef.current = next;
     setQueueSnapshot(next);
-  }, []);
+  }, [invalidateDriverSeats]);
   const applyOrder = useCallback((incoming: RideOrder) => {
+    invalidateDriverSeats();
     orderChanges.current.set(incoming.id, ++orderRevision.current);
     trackedOrders.current = mergeOrder(trackedOrders.current, incoming);
     bookingGate.setActiveOrder(trackedOrders.current.some(order => order.passenger_id === profile?.id && !isClosed(order)));
     setOrders(trackedOrders.current);
-  }, [bookingGate, profile?.id]);
+  }, [bookingGate, profile?.id, invalidateDriverSeats]);
   const driverApproved = activeRole === "driver" && profile?.driver_approval_status === "approved";
   const busy = actionBusy || vehicleBusySession === driverRouteSession;
   const vehicleBusyChange = useCallback((value: boolean) => {
+    invalidateDriverSeats();
     setVehicleBusySession(previous => value ? driverRouteSession : previous === driverRouteSession ? null : previous);
-  }, [driverRouteSession]);
+  }, [driverRouteSession, invalidateDriverSeats]);
   const queueMembership = driverQueueMembership(queueSnapshot, driverRouteSession);
+  const freeSeats = driverSeatView(driverSeatSnapshot, { sessionKey: driverRouteSession, driverId: profile?.id ?? "", revision: seatRevision.current }, now, queueMembership);
   const canJoinQueue = canJoinDriverQueue(driverRouteGate, driverRouteSession);
   const maxDriverSeats = profile?.driver_vehicle?.seat_capacity ?? 8;
   const vehicleSaved = useCallback((value: DriverVehicleSnapshot) => {
@@ -243,8 +256,9 @@ export default function Home() {
     return () => { active = false; };
   }, [token, activeRole, a, b, profileRefresh]);
 
-  const refreshOrders = useCallback(async () => {
+  const refreshOrders = useCallback(async function readOrders(): Promise<void> {
     if (!token || !profile?.id || (activeRole !== "passenger" && !driverApproved)) return;
+    if (currentToken.current !== token || API !== apiBase) return;
     if (ordersRequestInFlight.current === token) return;
     ordersRequestInFlight.current = token;
     const bookingReadRevision = bookingGate.beginOrdersRead();
@@ -252,14 +266,16 @@ export default function Home() {
     const queueRevisionAtStart = queueRevision.current;
     const enrollmentRevisionAtStart = queueEnrollmentRevision.current;
     const presenceRevisionAtStart = queuePresenceRevision.current;
+    const seatRevisionAtStart = seatRevision.current;
+    let queueReceivedAt: number | undefined;
     const results = await Promise.allSettled([
       request<{ orders: RideOrder[] }>("/api/orders", token),
-      driverApproved ? request<{ your_position: number | null; your_entry: { routeContext?: DriverQueueContext; collectionState?: unknown } | null }>("/api/queue", token) : Promise.resolve(undefined),
+      driverApproved ? request<{ your_position: number | null; your_entry: { routeContext?: DriverQueueContext; collectionState?: unknown } | null }>("/api/queue", token).then(value => { queueReceivedAt = Date.now(); return value; }) : Promise.resolve(undefined),
     ]);
     const ordersResult = results[0];
     const queueResult = results[1];
     if (ordersRequestInFlight.current === token) ordersRequestInFlight.current = null;
-    if (currentToken.current !== token) return;
+    if (currentToken.current !== token || API !== apiBase) return;
     if (ordersResult.status === "fulfilled" && ordersResult.value) {
       const list = (ordersResult.value as { orders: RideOrder[] }).orders || [];
       const changedAfterRequest = new Set([...orderChanges.current].filter(([, revision]) => revision > revisionAtStart).map(([id]) => id));
@@ -285,18 +301,32 @@ export default function Home() {
             setDriverQueueContext(queueResult.value.your_entry?.routeContext ?? null);
           }
           setRouteError("");
+          if (seatRevision.current === seatRevisionAtStart && queueReceivedAt !== undefined) {
+            try {
+              setDriverSeatSnapshot(parseDriverSeatSnapshot(queueResult.value, { sessionKey: driverRouteSessionKey(apiBase, token), driverId: profile.id, revision: seatRevisionAtStart }, queueReceivedAt));
+              setNow(Date.now());
+            } catch { setDriverSeatSnapshot(null); }
+          }
         }
       } catch {
         updateQueueSnapshot({ sessionKey: driverRouteSessionKey(apiBase, token), membership: "unknown" });
         setLineState(null); setRouteError("Не удалось подтвердить состояние очереди. Повтори обновление.");
+        if (seatRevision.current === seatRevisionAtStart) setDriverSeatSnapshot(null);
       }
     }
+    if (driverApproved && (queueResult.status === "rejected" || !queueResult.value) && seatRevision.current === seatRevisionAtStart) setDriverSeatSnapshot(null);
     const failed = results.find(result => result.status === "rejected");
     if (failed?.status === "rejected") {
       setDataError(errorMessage(failed.reason, "Не удалось обновить заказы."));
       if (results.some(result => result.status === "rejected" && result.reason instanceof ApiError && result.reason.status === 401)) await clearSession();
     } else setDataError("");
+    // Coalesce events into one fresh follow-up after an older pair settles.
+    // Never accept an old queue receipt or wait for the next ten-second poll.
+    if (driverApproved && currentToken.current === token && API === apiBase &&
+      (seatRevision.current !== seatRevisionAtStart || (queueReceivedAt !== undefined && Date.now() - queueReceivedAt >= DRIVER_SEATS_MAX_AGE_MS))) void readOrders();
   }, [token, apiBase, profile?.id, activeRole, driverApproved, clearSession, updateQueueSnapshot, bookingGate]);
+
+  useEffect(() => { if (driverApproved && !busy) void refreshOrders(); }, [busy, driverApproved, refreshOrders]);
 
   const refreshAvailability = useCallback(async () => {
     if (!token || activeRole !== "passenger" || !a) return null;
@@ -343,17 +373,19 @@ export default function Home() {
     if (!token || !profile?.id || (activeRole !== "passenger" && !driverApproved) || !API) return;
     const socket = io(API, { path: "/api/socket.io", auth: { token }, transports: ["websocket"] });
     socket.on("connect", () => { setSocketConnected(true); void refreshOrders(); void availabilityRef.current(); });
-    socket.on("disconnect", () => setSocketConnected(false));
-    socket.on("connect_error", () => setSocketConnected(false));
+    socket.on("disconnect", () => { setSocketConnected(false); invalidateDriverSeats(); });
+    socket.on("connect_error", () => { setSocketConnected(false); invalidateDriverSeats(); });
     socket.on("incoming_order", (payload: { order?: RideOrder }) => {
       if (!driverApproved || !payload.order || currentToken.current !== token) return;
       applyOrder(payload.order);
       const latest = trackedOrders.current.find(order => order.id === payload.order?.id);
       if (latest && isLiveOffer(latest, profile.id)) setIncomingOrder(latest);
+      void refreshOrders();
     });
     socket.on("order:offer_withdrawn", (payload: { order_id?: string; order?: RideOrder }) => {
       if (currentToken.current !== token) return;
       const orderId = payload.order_id ?? payload.order?.id;
+      if (!payload.order) invalidateDriverSeats();
       if (payload.order) applyOrder(payload.order);
       setIncomingOrder(current => current?.id === orderId ? null : current);
       void refreshOrders();
@@ -364,9 +396,11 @@ export default function Home() {
       if (!updatedOrder) return;
       applyOrder(updatedOrder);
       setIncomingOrder(current => current?.id === updatedOrder.id && !isLiveOffer(updatedOrder, profile.id) ? null : current);
+      if (driverApproved) void refreshOrders();
     });
     socket.on("queue:position", (payload: { position?: number | null; route_context?: DriverQueueContext | null }) => {
       if (!driverApproved || currentToken.current !== token) return;
+      invalidateDriverSeats();
       queueRevision.current += 1;
       setQueuePosition(payload.position ?? null);
       setDriverInQueue(payload.position != null);
@@ -375,10 +409,11 @@ export default function Home() {
         queuePresenceRevision.current += 1;
         updateQueueSnapshot({ sessionKey: driverRouteSessionKey(apiBase, token), membership: "enrolled" });
       }
+      void refreshOrders();
     });
-    socket.on("queue:update", () => { void availabilityRef.current(); if (driverApproved) void refreshOrders(); });
+    socket.on("queue:update", () => { void availabilityRef.current(); if (driverApproved) { invalidateDriverSeats(); void refreshOrders(); } });
     return () => { socket.disconnect(); setSocketConnected(false); };
-  }, [token, apiBase, profile?.id, activeRole, driverApproved, refreshOrders, applyOrder, updateQueueSnapshot]);
+  }, [token, apiBase, profile?.id, activeRole, driverApproved, refreshOrders, applyOrder, updateQueueSnapshot, invalidateDriverSeats]);
 
   async function login(verify: boolean) {
     const fullName = registering ? registrationFullName(name, surname) : null;
@@ -758,6 +793,9 @@ export default function Home() {
           <Text style={s.descDark}>Связь: {socketConnected ? "подключена" : "переподключение…"}</Text>
           <Text style={s.descDark} testID="driver-queue-status">Очередь: {queueMembership === "unknown" ? "проверяем состояние…" : driverInQueue ? `позиция ${queuePosition ?? "—"}` : activeDriverOrders.length ? "активный маршрут" : queueMembership === "enrolled" ? "рейс сохранён, позиция FIFO завершена" : "не в очереди"}</Text>
           {queueMembership === "enrolled" && driverQueueContext ? <View testID="driver-queue-context"><Text style={s.descDark}>{driverQueueContext.routeName} · питак {driverQueueContext.pitak}: {driverQueueContext.stopName}</Text><Text style={s.note}>{lineState?.phase === "departed" ? "Отправление подтверждено. После завершения поездок закрой рейс перед сменой направления." : "Маршрут и направление сохранены. Подходящие заказы распределяются по очереди и свободным местам."}</Text></View> : null}
+          <Text style={s.descDark} testID="driver-free-seats">Свободных мест сейчас: {busy || freeSeats.status === "unknown" ? "не подтверждено" : freeSeats.status === "absent" ? "нет активной очереди" : freeSeats.availableSeats}</Text>
+          {!busy && freeSeats.status === "known" && driverSeatSnapshot ? <Text style={s.note}>Подтверждено: {new Date(driverSeatSnapshot.checkedAt).toLocaleTimeString("ru-RU")}</Text> : null}
+          <Button title="Обновить места" testID="driver-free-seats-refresh" onPress={() => { invalidateDriverSeats(); void refreshOrders(); }} disabled={busy} secondary />
           <Text style={s.label}>МЕСТА ПРИ ВХОДЕ В ОЧЕРЕДЬ</Text><Stepper value={driverSeats} max={maxDriverSeats} onChange={setDriverSeats} disabled={busy || queueMembership !== "absent" || !!incomingOrder || activeDriverOrders.length > 0} />
           {queueMembership === "absent" && !activeDriverOrders.length ? <Button title={busy ? "Определяем местоположение…" : driverRouteGate.hasChoice ? `Встать в очередь питак ${driverRouteGate.pitak ?? "—"}` : "Встать в очередь"} testID="driver-queue-join" onPress={joinQueue} disabled={busy || !!incomingOrder || !canJoinQueue} /> : null}
           {queueMembership === "enrolled" ? <><Button title={busy ? "Обновляем…" : "Обновить местоположение"} testID="driver-queue-location" onPress={updateDriverLocation} disabled={busy} secondary /><Button title={lineState?.phase === "departed" ? "Завершить рейс и выйти с линии" : "Выйти из очереди"} testID="driver-queue-leave" onPress={leaveQueue} disabled={busy || !!incomingOrder || activeDriverOrders.length > 0} secondary /></> : null}
@@ -804,3 +842,4 @@ const s = StyleSheet.create({
  note:{color:"#175444",backgroundColor:"#E9F8EF",padding:12,borderRadius:10,marginTop:12},small:{fontSize:11,lineHeight:17,color:"#819088",textAlign:"center",marginTop:14},footer:{fontSize:9,fontWeight:"800",letterSpacing:1,color:"#9AA8A1",textAlign:"center",marginTop:12},
  stepper:{flexDirection:"row",alignItems:"center",gap:16},stepButton:{width:34,height:34,borderRadius:10,backgroundColor:"#E9F3ED",alignItems:"center",justifyContent:"center"},stepText:{fontSize:22,color:"#0D735C",fontWeight:"700"},stepValue:{minWidth:20,textAlign:"center",fontSize:16,color:"#102D26",fontWeight:"800"},seatsRow:{flexDirection:"row",alignItems:"center",justifyContent:"space-between",marginTop:8},loader:{marginTop:12}
 });
+
