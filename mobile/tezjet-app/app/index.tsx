@@ -8,6 +8,8 @@ import { API, ApiError, errorMessage, request, setApiEndpoint, validateApiEndpoi
 import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextDriverTripStatus, nextTripLabel, ridePickupLabel, rideDestinationLabel, statusLabels, type RideOrder } from "../lib/orders";
 import { registrationFullName } from "../lib/registration";
 import OnayAuthScreen from "../components/OnayAuthScreen";
+import OnayPassengerHome from "../components/OnayPassengerHome";
+import { onayPassengerHomeTarget, type OnayPassengerHomeMode } from "../lib/onay-home-modes";
 import { onayDark, onayEntryScreen } from "../lib/onay-auth-ui";
 import DriverRoutePicker from "../components/DriverRoutePicker";
 import PassengerRouteOrder from "../components/PassengerRouteOrder";
@@ -41,6 +43,9 @@ function Stepper({ value, onChange, min = 1, max = 8, disabled = false }: { valu
 
 export default function Home() {
   const [mode, setMode] = useState<Mode>("passenger");
+  const homeScroll = useRef<ScrollView>(null);
+  const [routeSectionY, setRouteSectionY] = useState(0);
+  const [legacySectionY, setLegacySectionY] = useState(0);
   const [apiBase, setApiBase] = useState(API);
   const [endpointInput, setEndpointInput] = useState(API);
   const [endpointError, setEndpointError] = useState("");
@@ -761,6 +766,14 @@ export default function Home() {
     finally { setBusy(false); }
   }
 
+  function openPassengerBooking(choice: OnayPassengerHomeMode) {
+    const target = onayPassengerHomeTarget(choice);
+    // The original configured-route booking retains server-side availability and
+    // booking admission; the home screen only navigates to it.
+    const offset = target.section === "route" ? routeSectionY : legacySectionY;
+    homeScroll.current?.scrollTo({ y: Math.max(0, offset - 24), animated: true });
+  }
+
   // Auth UI is native React Native; the original backend OTP flow remains in login().
   // Do not hide the existing API setup and session-recovery screens.
   const entryScreen = onayEntryScreen({ sessionLoading, token, apiBase, showEndpointSettings });
@@ -794,7 +807,12 @@ export default function Home() {
     />;
   }
 
-  return <ScrollView style={s.screen} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+  return <ScrollView ref={homeScroll} style={[s.screen, token && mode === "passenger" && { backgroundColor: onayDark.background }]} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+    {token && profile && activeRole === "passenger" && mode === "passenger" ? <OnayPassengerHome
+      activeOrder={passengerHasActiveOrder}
+      onChoose={openPassengerBooking}
+      onChooseLocation={() => openPassengerBooking("city")}
+    /> : null}
     <View style={s.header}><Text style={s.logo}>O</Text><View style={s.brandWrap}><Text style={s.brand}>Onay</Text><Text style={s.tag}>ТВОЙ ГОРОД. ТВОЙ МАРШРУТ.</Text></View>{token ? <Pressable onPress={logout} disabled={busy}><Text style={s.logout}>Выйти</Text></Pressable> : null}</View>
     <View style={s.hero}><Text style={s.kicker}>ОДНО ПРИЛОЖЕНИЕ · ANDROID + IOS</Text><Text style={s.title}>{mode === "passenger" ? "Куда едем?" : "Onay Driver"}</Text><Text style={s.desc}>{mode === "passenger" ? "Выбери маршрут — остальное сделает Onay." : "Подтверждённый водитель может встать в очередь и получать подходящие заказы."}</Text></View>
     <View style={s.switch}><Button title="Пассажир" onPress={() => switchMode("passenger")} disabled={busy || profileLoading} secondary={mode !== "passenger"} /><Button title="Водитель" onPress={() => switchMode("driver")} disabled={busy || profileLoading} secondary={mode !== "driver"} /></View>
@@ -845,8 +863,8 @@ export default function Home() {
       </>
     ) : <>
     {passengerOrders.filter(order => !isClosed(order)).map(passengerOrder => <View key={passengerOrder.id} style={s.card} testID={`passenger-trip-${passengerOrder.id}`}><Text style={s.heading}>Твоя поездка</Text><Text style={s.descDark}>{statusLabels[passengerOrder.status]}</Text><Text style={s.descDark}>Точка подачи: {ridePickupLabel(passengerOrder)}</Text><Text style={s.descDark}>Куда: {rideDestinationLabel(passengerOrder)}</Text><Text style={s.descDark}>Пассажиров: {passengerOrder.seats}</Text>{passengerOrder.status === "searching" && passengerOrder.offered_driver_id ? <Text style={s.note}>Ждём ответа водителя.</Text> : null}<PassengerDriverCard key={`${driverRouteSession}:${passengerOrder.id}:${passengerOrder.driver_id ?? ""}:${passengerOrder.status}`} endpoint={apiBase} token={token} order={passengerOrder} /><Button title={busy ? "Отменяем…" : "Отменить заказ"} onPress={() => cancelOrder(passengerOrder)} disabled={busy} secondary /></View>)}
-    <PassengerRouteOrder key={driverRouteSession} endpoint={apiBase} userId={profile.id} token={token} busy={busy} activeOrder={passengerHasActiveOrder} bookingGate={bookingGate} onCreated={refreshOrders} />
-    <View style={s.card}>
+    <View onLayout={event => setRouteSectionY(event.nativeEvent.layout.y)}><PassengerRouteOrder key={driverRouteSession} endpoint={apiBase} userId={profile.id} token={token} busy={busy} activeOrder={passengerHasActiveOrder} bookingGate={bookingGate} onCreated={refreshOrders} /></View>
+    <View onLayout={event => setLegacySectionY(event.nativeEvent.layout.y)} style={s.card}>
       <Text style={s.heading}>Прежний маршрут C/D</Text>
       <Text style={s.label}>ТОЧКА А · ОТПРАВЛЕНИЕ</Text>{stops.filter(v => v.code === "C" || v.code === "D").map(v => <Pressable key={"a"+v.id} onPress={() => setA(v.code)} style={[s.stop, a===v.code && s.selected]}><Text style={s.stopText}>{v.name}</Text><Text>{v.code}</Text></Pressable>)}
       <Text style={s.label}>ТОЧКА Б · НАЗНАЧЕНИЕ</Text>{stops.map(v => <Pressable key={"b"+v.id} onPress={() => setB(v.code)} style={[s.stop, b===v.code && s.selected]}><Text style={s.stopText}>{v.name}</Text><Text>{v.code}</Text></Pressable>)}
