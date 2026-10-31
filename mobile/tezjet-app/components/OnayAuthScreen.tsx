@@ -176,16 +176,28 @@ export default function OnayAuthScreen(props: Props) {
                 {props.registering ? "Уже зарегистрирован? Войти" : "Нет аккаунта? Регистрация"}
               </Text>
             </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              testID="onay-auth-role-switch"
-              onPress={() => props.onMode(props.mode === "driver" ? "passenger" : "driver")}
-              disabled={props.busy}
-            >
-              <Text style={s.link}>
-                {props.mode === "driver" ? "Пассажир" : "Водитель"}
-              </Text>
-            </Pressable>
+            <View style={s.roleModes}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ selected: props.mode === "passenger", disabled: props.busy }}
+                testID="onay-auth-role-passenger"
+                onPress={() => props.onMode("passenger")}
+                disabled={props.busy}
+                style={[s.roleButton, props.mode === "passenger" && s.roleButtonActive]}
+              >
+                <Text style={[s.roleButtonLabel, props.mode === "passenger" && s.roleButtonLabelActive]}>Пассажир</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                testID="onay-auth-role-switch"
+                accessibilityState={{ selected: props.mode === "driver", disabled: props.busy }}
+                onPress={() => props.onMode("driver")}
+                disabled={props.busy}
+                style={[s.roleButton, props.mode === "driver" && s.roleButtonActive]}
+              >
+                <Text style={[s.roleButtonLabel, props.mode === "driver" && s.roleButtonLabelActive]}>Водитель</Text>
+              </Pressable>
+            </View>
             <Pressable testID="onay-auth-server-settings" onPress={props.onServerSettings} disabled={props.busy}>
               <Text style={s.serverLink}>Настройки сервера</Text>
             </Pressable>
@@ -230,5 +242,10 @@ const s = StyleSheet.create({
   info: { textAlign: "center", color: onayDark.muted, fontSize: 12, marginTop: 12 },
   links: { flexDirection: "row", justifyContent: "center", gap: 17, flexWrap: "wrap", marginTop: 18 },
   link: { color: onayDark.accent, fontSize: 13, fontWeight: "600" },
+  roleModes: { flexDirection: "row", borderWidth: 1, borderColor: onayDark.border, borderRadius: 14, padding: 4, backgroundColor: onayDark.card, gap: 4 },
+  roleButton: { paddingHorizontal: 12, paddingVertical: 9, borderRadius: 10, minHeight: 42, justifyContent: "center" },
+  roleButtonActive: { backgroundColor: onayDark.accent },
+  roleButtonLabel: { color: onayDark.muted, fontWeight: "600", fontSize: 13 },
+  roleButtonLabelActive: { color: onayDark.accentInk },
   serverLink: { color: onayDark.muted, fontSize: 12 },
 });
