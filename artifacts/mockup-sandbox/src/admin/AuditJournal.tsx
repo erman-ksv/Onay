@@ -3,13 +3,14 @@ import { CircleAlert, RefreshCw } from "lucide-react";
 import { AdminApiError, loadAdminAuditEvents, type AdminAuditEvent, type AdminAuditFilters } from "./api";
 
 const initialFilters: AdminAuditFilters = { orderId: "", driverId: "", routeId: "", limit: 50 };
-const actions = { "order.cancelled": "Заказ отменён администратором", "driver.approval_changed": "Решение по водителю изменено", "route.updated": "Маршрут изменён" };
+const actions = { "order.cancelled": "Заказ отменён администратором", "driver.approval_changed": "Решение по водителю изменено", "route.updated": "Маршрут изменён", "settings.offer_timeout_changed": "Время ответа водителя изменено" };
 const statuses: Record<string, string> = { pending: "На проверке", approved: "Одобрен", rejected: "Отклонён", blocked: "Заблокирован", searching: "Поиск водителя", en_route_to_c: "Едет к точке посадки", arrived_at_c: "Прибыл к точке посадки", boarded_waiting: "Ожидает отправления", in_transit: "В пути", completed: "Завершён", cancelled: "Отменён" };
 const fields: Record<string, string> = { name: "Название", active: "Активность", pricePerStop: "Тариф", pricePerStopKzt: "Тариф" };
 function dateTime(value: string) {
   return new Intl.DateTimeFormat("ru-RU", { dateStyle: "medium", timeStyle: "medium" }).format(new Date(value));
 }
 function Details({ event }: { event: AdminAuditEvent }) {
+  if (event.action === "settings.offer_timeout_changed") return <p>Время ответа: {event.previousValue} с → {event.nextValue} с</p>;
   if (event.action === "route.updated") return <>
     <p>Изменены поля: {event.changedFields?.map(field => fields[field] ?? field).join(", ") || "—"}</p>
     <p className="mt-1 text-xs text-slate-500">Предыдущая версия: <span className="break-all">{event.previousVersion || "—"}</span></p>
@@ -56,7 +57,7 @@ export default function AuditJournal({ token, onAccessExpired }: { token: string
   }
   return <section aria-label="Журнал действий администраторов" data-testid="admin-audit-journal" className="min-w-0">
     <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-      <div><h1 className="text-3xl font-bold tracking-tight">Журнал действий</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">Отмены заказов, решения по водителям и изменения названия, активности и тарифа маршрутов. Изменения остановок и геометрии пока не входят в журнал.</p></div>
+      <div><h1 className="text-3xl font-bold tracking-tight">Журнал действий</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">Отмены заказов, решения по водителям, время ответа и изменения названия, активности и тарифа маршрутов. Изменения остановок и геометрии пока не входят в журнал.</p></div>
       <button type="button" disabled={loading} onClick={() => { setEvents(null); setRevision(value => value + 1); }} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium disabled:opacity-50"><RefreshCw size={16} className={loading ? "animate-spin" : ""}/>Обновить журнал</button>
     </div>
     <form onSubmit={apply} aria-label="Фильтры журнала" className="mb-5 grid gap-4 rounded-2xl border border-slate-200 bg-white p-5 sm:grid-cols-2 lg:grid-cols-4">
@@ -77,7 +78,7 @@ export default function AuditJournal({ token, onAccessExpired }: { token: string
       <p role="status" className="mb-4 text-sm text-slate-500">Показано событий: {events.length}. Последние не более {applied.limit} по заданным фильтрам, новые сверху. Время устройства.</p>
       {events.length === 0 ? <p className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-500">По заданным фильтрам событий нет.</p> : <ol className="space-y-3" aria-label="События журнала">{events.map(event => <li key={event.id} data-testid={`audit-event-${event.id}`} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 text-sm">
         <div className="flex flex-wrap items-start justify-between gap-2"><h2 className="font-semibold text-slate-900">{actions[event.action]}</h2><time dateTime={event.createdAt} className="text-xs text-slate-500">{dateTime(event.createdAt)}</time></div>
-        <dl className="my-3 grid min-w-0 gap-2 text-xs text-slate-500 sm:grid-cols-2"><div>Администратор<dd className="mt-1 break-all font-mono text-slate-700">{event.actorId}</dd></div><div>{event.routeId ? "Маршрут" : event.driverId ? "Водитель" : "Заказ"}<dd className="mt-1 break-all font-mono text-slate-700">{event.routeId ?? event.driverId ?? event.orderId}</dd></div></dl>
+        <dl className="my-3 grid min-w-0 gap-2 text-xs text-slate-500 sm:grid-cols-2"><div>Администратор<dd className="mt-1 break-all font-mono text-slate-700">{event.actorId}</dd></div><div>{event.routeId ? "Маршрут" : event.driverId ? "Водитель" : "Заказ"}<dd className="mt-1 break-all font-mono text-slate-700">{event.routeId ?? event.driverId ?? event.orderId ?? "Время ответа водителя"}</dd></div></dl>
         <div className="text-slate-600"><Details event={event}/></div>
         <p className="mt-3 break-all font-mono text-[11px] text-slate-400">Событие: {event.id}</p>
       </li>)}</ol>}

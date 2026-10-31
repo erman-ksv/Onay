@@ -60,3 +60,11 @@ test('aborted reads and expired permissions preserve failures for the component 
       async () => assert.rejects(loadAdminAuditEvents('session', filters), error => error instanceof AdminApiError && error.status === status));
   }
 });
+
+test('settings audit retains bounded before/after seconds and receipt while rejecting incomplete events', async () => {
+  const event = { ...common, action: 'settings.offer_timeout_changed', settingKey: 'offer-timeout', previousValue: 60, nextValue: 90, nextVersion: 'new-receipt' };
+  await withFetch(async () => response({ events: [{ ...event, secret: 'discard' }] }), async () => { const result = await loadAdminAuditEvents('session', filters); assert.deepEqual(JSON.parse(JSON.stringify(result)), [event]); assert.equal('secret' in result[0], false); });
+  for (const patch of [{ settingKey: 'other' }, { previousValue: null }, { nextValue: 3601 }, { nextValue: 1.5 }, { nextVersion: undefined }]) {
+    await withFetch(async () => response({ events: [{ ...event, ...patch }] }), async () => assert.rejects(loadAdminAuditEvents('session', filters), error => error.status === 502));
+  }
+});

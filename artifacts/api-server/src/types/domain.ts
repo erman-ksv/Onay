@@ -308,10 +308,16 @@ export interface OrderOfferChange {
   previousDriverId?: string;
 }
 
+export interface OfferTimeoutPolicy {
+  seconds: number;
+  revision: string | null;
+  updatedAt: string | null;
+}
+
 export interface AdminAuditEvent {
   id: string;
   actorId: string;
-  action: "order.cancelled" | "driver.approval_changed" | "route.updated";
+  action: "order.cancelled" | "driver.approval_changed" | "route.updated" | "settings.offer_timeout_changed";
   orderId?: string;
   driverId?: string;
   vehicleRevision?: string;
@@ -319,6 +325,9 @@ export interface AdminAuditEvent {
   changedFields?: string[];
   previousVersion?: string;
   nextVersion?: string;
+  settingKey?: "offer-timeout";
+  previousValue?: number;
+  nextValue?: number;
   fromStatus?: OrderStatus | DriverApprovalStatus;
   toStatus?: "cancelled" | DriverApprovalStatus;
   createdAt: string;

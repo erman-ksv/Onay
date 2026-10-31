@@ -64,6 +64,7 @@ before(async () => {
   await database.query(await readFile(new URL('../../../lib/db/drizzle/0009_admin_audit_events.sql', import.meta.url), 'utf8'));
   await database.query(await readFile(new URL('../../../lib/db/drizzle/0010_driver_approval_audit.sql', import.meta.url), 'utf8'));
   await database.query(await readFile(new URL('../../../lib/db/drizzle/0011_route_metadata_audit.sql', import.meta.url), 'utf8'));
+  await database.query(await readFile(new URL('../../../lib/db/drizzle/0016_offer_timeout_policy.sql', import.meta.url), 'utf8'));
   store = new production.PostgresStore();
   otherStore = new production.PostgresStore();
   assert.ok(production.runtimeStore instanceof production.PostgresStore, "The HTTP app must use the actual durable adapter.");

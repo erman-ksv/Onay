@@ -9,7 +9,7 @@ import { build } from "esbuild";
 // Real HTTP middleware and PostgreSQL; private migrated tables, no SMS/provider.
 const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const schema = "gps_timestamp_" + randomUUID().replaceAll("-", "");
-const tables = ["tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes", "tezjet_admin_audit_events"];
+const tables = ["tezjet_offer_policy", "tezjet_users", "tezjet_otp_challenges", "otp_rate_limits", "tezjet_driver_queue", "tezjet_orders", "tezjet_device_registrations", "tezjet_routes", "tezjet_admin_audit_events"];
 const keys = ["DATABASE_URL", "NODE_ENV", "TEZJET_STORAGE_ADAPTER", "SESSION_SECRET", "LOG_LEVEL", "REQUIRE_DRIVER_APPROVAL", "PYATAK_CENTER_LAT", "PYATAK_CENTER_LNG"];
 const original = Object.fromEntries(keys.map(key => [key, process.env[key]]));
 let directory, production, database, adminPool, server, baseUrl, schemaCreated = false;

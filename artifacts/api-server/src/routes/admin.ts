@@ -17,6 +17,8 @@ import {
   listRoutes,
   updateDriverApproval,
   updateDriverBlock,
+  getOfferTimeout,
+  updateOfferTimeout,
   updateQueuePoint,
   updateRoute,
   updateRouteLayout,
@@ -27,6 +29,8 @@ import {
 const router: IRouter = Router();
 const adminOnly = [authenticate, requireRole("admin")] as const;
 
+router.get("/admin/settings/offer-timeout", ...adminOnly, getOfferTimeout);
+router.put("/admin/settings/offer-timeout", ...adminOnly, updateOfferTimeout);
 router.get("/admin/routes", ...adminOnly, listRoutes);
 router.get("/admin/routes/:routeId", ...adminOnly, getAdminRoute);
 router.put("/admin/routes/:routeId/layout", ...adminOnly, updateRouteLayout);

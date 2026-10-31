@@ -1,5 +1,6 @@
 import type {
   AdminAuditEvent,
+  OfferTimeoutPolicy,
   DeviceRegistration,
   Coordinates,
   DriverApprovalStatus,
@@ -104,6 +105,8 @@ export interface RouteOrderReceipt {
 
 export interface Store {
   initialize(): MaybePromise<void>;
+  getOfferTimeout(): MaybePromise<OfferTimeoutPolicy>;
+  setOfferTimeoutAsAdmin(seconds: number, expectedRevision: string | null, actor: AdminMutationActor): MaybePromise<OfferTimeoutPolicy>;
   createUser(input: {
     role: UserRole;
     fullName: string;

@@ -6,7 +6,6 @@ import { store } from "../store";
 import { statusTransitions } from "../store/orderLifecycle";
 import type { Coordinates, Order, OrderStatus, PickupPoint } from "../types/domain";
 import { AppError } from "../utils/errors";
-import { OFFER_TIMEOUT_MS } from "../utils/config";
 import { translate } from "../utils/i18n";
 import { emitOrderUpdate, emitQueueUpdate } from "../utils/realtime";
 import { serializeOrder } from "../utils/serialize";
@@ -213,7 +212,7 @@ export async function getRouteOrderAvailability(request: Request, response: Resp
   response.json({
     available: availability.available,
     eligible_driver_count: availability.eligibleDriverCount,
-    offer_timeout_seconds: OFFER_TIMEOUT_MS / 1000,
+    offer_timeout_seconds: (await store.getOfferTimeout()).seconds,
     fare: availability.fare,
   });
 }
@@ -269,7 +268,7 @@ export async function getOrderAvailability(request: Request, response: Response)
   response.json({
     available: availability.available,
     eligible_driver_count: availability.eligibleDriverCount,
-    offer_timeout_seconds: OFFER_TIMEOUT_MS / 1000,
+    offer_timeout_seconds: (await store.getOfferTimeout()).seconds,
   });
 }
 

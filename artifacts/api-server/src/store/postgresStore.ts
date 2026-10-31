@@ -13,7 +13,9 @@ import { assertLineOrderTransition, createLineCollectionState, lineOrderIds, pre
 import { assertExternalQuoteCurrent, buildConfirmedExternalOrder, buildExternalPickupDetails, eligibleExternalCandidate, externalPickupLeaseMs, liveExternalOfferValid, normalizeExternalPickupSettings, repriceExternalOrder, validateExternalPickupSelectionInput } from "./externalPickup";
 import { AppError } from "../utils/errors";
 import { assertRouteQueueLocation, assertRouteQueueTelemetry, resolveRouteQueue, routeQueueSnapshot, sameQueueLane } from "../utils/routeQueue";
+import { offerTimeoutPolicy, validateOfferTimeoutChange, OFFER_TIMEOUT_KEY } from "../utils/offerTimeout";
 import type {
+  OfferTimeoutPolicy,
   AdminAuditEvent,
   Coordinates,
   DeviceRegistration,
@@ -34,7 +36,7 @@ import type {
   User,
   UserRole,
 } from "../types/domain";
-import { OFFER_TIMEOUT_MS, OTP_TTL_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
+import { OTP_TTL_MS, REQUIRE_DRIVER_APPROVAL, SEAT_LOCK_TTL_MS } from "../utils/config";
 import { acceptQueueOffer, assertLegacyOrderInput, assertOrderOfferPatch, assertQueueOfferPatch, compareOfferDrivers, hasLiveOrderOffer, orderedOfferCandidates, releaseQueueOffer, reserveQueueOffer } from "./orderOffers";
 import { buildRouteOrder, validateRouteOrderSelectionInput } from "../utils/routeOrder";
 import { boundedInteger } from "../utils/validation";
@@ -185,6 +187,45 @@ export class PostgresStore implements Store {
     await this.database();
   }
 
+  async getOfferTimeout(): Promise<OfferTimeoutPolicy> {
+    const { db, offerPolicyTable } = await this.database();
+    const [row] = await db.select().from(offerPolicyTable).where(eq(offerPolicyTable.id, OFFER_TIMEOUT_KEY)).limit(1);
+    if (!row) throw new AppError(500, "Offer policy row is missing", "INTERNAL_SERVER_ERROR");
+    return offerTimeoutPolicy(row);
+  }
+
+  /** Non-locking MVCC read: settings updates never wait on driver/order locks. */
+  private async offerTimeoutMs(tx: DbTransaction): Promise<number> {
+    const { offerPolicyTable } = await this.database();
+    const [row] = await tx.select().from(offerPolicyTable).where(eq(offerPolicyTable.id, OFFER_TIMEOUT_KEY)).limit(1);
+    if (!row) throw new AppError(500, "Offer policy row is missing", "INTERNAL_SERVER_ERROR");
+    return offerTimeoutPolicy(row).seconds * 1000;
+  }
+
+  async setOfferTimeoutAsAdmin(seconds: number, expectedRevision: string | null, actor: AdminMutationActor): Promise<OfferTimeoutPolicy> {
+    if (!actor || actor.expectedSessionVersion === undefined) throw new AppError(401, "Session is required", "UNAUTHORIZED");
+    const { db, offerPolicyTable, usersTable, adminAuditEventsTable } = await this.database();
+    return db.transaction(async tx => {
+      // Settings UPDATE -> actor SHARE. Offer paths only read settings via MVCC,
+      // so no setting/user/order lock cycle is introduced.
+      const [row] = await tx.select().from(offerPolicyTable).where(eq(offerPolicyTable.id, OFFER_TIMEOUT_KEY)).for("update").limit(1);
+      if (!row) throw new AppError(500, "Offer policy row is missing", "INTERNAL_SERVER_ERROR");
+      const [admin] = await tx.select().from(usersTable).where(eq(usersTable.id, actor.adminId)).for("share").limit(1);
+      if (!admin || admin.sessionVersion !== actor.expectedSessionVersion) throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+      if (admin.role !== "admin") throw new AppError(403, "Administrator role is required", "FORBIDDEN");
+      validateOfferTimeoutChange(seconds, expectedRevision);
+      const before = offerTimeoutPolicy(row);
+      if (before.revision !== expectedRevision) throw new AppError(409, "Offer timeout changed; reload before saving", "OFFER_TIMEOUT_CHANGED");
+      if (before.revision !== null && before.seconds === seconds) return before;
+      const next = { seconds, revision: randomUUID(), updatedAt: new Date(await this.otpNow(tx)).toISOString() };
+      await tx.update(offerPolicyTable).set(next).where(eq(offerPolicyTable.id, OFFER_TIMEOUT_KEY));
+      await tx.insert(adminAuditEventsTable).values({ id: randomUUID(), actorId: actor.adminId, action: "settings.offer_timeout_changed",
+        settingKey: OFFER_TIMEOUT_KEY, previousValue: before.seconds, nextValue: seconds,
+        previousVersion: before.revision, nextVersion: next.revision, createdAt: next.updatedAt });
+      return next;
+    });
+  }
+
   private async database(): Promise<DbModule> {
     if (!process.env.DATABASE_URL) {
       throw new Error("DATABASE_URL is required to use PostgresStore");
@@ -208,6 +249,7 @@ export class PostgresStore implements Store {
             payload: seededRoute as unknown as Record<string, unknown>,
           })
           .onConflictDoNothing();
+        await mod.db.insert(mod.offerPolicyTable).values({ id: OFFER_TIMEOUT_KEY }).onConflictDoNothing();
         return mod;
       })();
     }
@@ -1016,7 +1058,7 @@ export class PostgresStore implements Store {
       if (!route || !entry) throw new AppError(409, "Selected driver is no longer available", "QUOTE_CHANGED");
       const order = buildConfirmedExternalOrder(quote, route, {
         id: passenger.id, phoneNumber: passenger.phoneNumber,
-      }, existing, now);
+      }, existing, now, await this.offerTimeoutMs(tx));
       await tx.update(driverQueueTable).set(queueValues(reserveQueueOffer(entry, order)))
         .where(eq(driverQueueTable.driverId, entry.driverId));
       await tx.update(ordersTable).set({
@@ -1198,7 +1240,7 @@ export class PostgresStore implements Store {
         status: "searching",
         driverId: undefined,
         offeredDriverId: candidate.driverId,
-        offerExpiresAt: now + OFFER_TIMEOUT_MS,
+        offerExpiresAt: now + await this.offerTimeoutMs(tx),
         seatLockExpiresAt: undefined,
         attemptedDriverIds: [candidate.driverId],
         cancelledBy: undefined,
@@ -1413,7 +1455,7 @@ export class PostgresStore implements Store {
       const updated: Order = {
         ...order,
         offeredDriverId: candidate?.driverId,
-        offerExpiresAt: candidate ? offerTime + OFFER_TIMEOUT_MS : undefined,
+        offerExpiresAt: candidate ? offerTime + await this.offerTimeoutMs(tx) : undefined,
         attemptedDriverIds: candidate ? [...attemptedDriverIds, candidate.driverId] : attemptedDriverIds,
         updatedAt: new Date(offerTime).toISOString(),
       };
@@ -1541,9 +1583,10 @@ export class PostgresStore implements Store {
     const { db, adminAuditEventsTable: events } = await this.database();
     const rows = await db.select().from(events).where(and(orderId ? eq(events.orderId, orderId) : undefined, driverId ? eq(events.driverId, driverId) : undefined, routeId ? eq(events.routeId, routeId) : undefined))
       .orderBy(desc(events.createdAt), desc(events.id)).limit(count);
-    return rows.map(({ orderId, driverId, vehicleRevision, routeId, changedFields, previousVersion, nextVersion, fromStatus, toStatus, ...event }) => ({ ...event,
+    return rows.map(({ orderId, driverId, vehicleRevision, routeId, changedFields, previousVersion, nextVersion, settingKey, previousValue, nextValue, fromStatus, toStatus, ...event }) => ({ ...event,
       ...(orderId ? { orderId } : {}), ...(driverId ? { driverId } : {}), ...(vehicleRevision ? { vehicleRevision } : {}),
       ...(routeId ? { routeId } : {}), ...(changedFields ? { changedFields } : {}), ...(previousVersion ? { previousVersion } : {}), ...(nextVersion ? { nextVersion } : {}),
+      ...(settingKey ? { settingKey, previousValue, nextValue } : {}),
       ...(fromStatus ? { fromStatus } : {}), ...(toStatus ? { toStatus } : {}) } as AdminAuditEvent));
   }
 
