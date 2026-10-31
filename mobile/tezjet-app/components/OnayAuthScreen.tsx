@@ -3,7 +3,7 @@ import {
   ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable,
   ScrollView, StyleSheet, Text, TextInput, View,
 } from "react-native";
-import { isCompleteOnayPhone, onayDark, toOnayApiPhone, uzPhoneDigits } from "../lib/onay-auth-ui";
+import { isCompleteOnayPhone, onayDark, onayPhoneFromInput, onayPhoneInput, onayPhonePrefix } from "../lib/onay-auth-ui";
 import { registrationFullName } from "../lib/registration";
 
 type Mode = "passenger" | "driver";
@@ -61,7 +61,7 @@ export default function OnayAuthScreen(props: Props) {
         <View style={s.form}>
           <Text style={s.heading}>
             {props.requested ? "Подтвердить номер телефона" :
-              props.registering ? "Регистрация в Onay" : "Войти по номеру телефона"}
+              props.registering ? (props.mode === "driver" ? "Регистрация водителя" : "Регистрация пассажира") : "Войти по номеру телефона"}
           </Text>
 
           {!props.requested ? (
@@ -94,13 +94,13 @@ export default function OnayAuthScreen(props: Props) {
               ) : null}
               <Text style={s.label}>Номер телефона</Text>
               <View style={s.phoneRow}>
-                <View style={s.country}><Text style={s.countryText}>+998</Text></View>
+                <View style={s.country}><Text style={s.countryText}>{onayPhonePrefix(props.phone)}</Text></View>
                 <TextInput
                   testID="onay-auth-phone"
                   style={[s.input, s.phoneInput]}
-                  value={uzPhoneDigits(props.phone)}
-                  onChangeText={v => props.onPhone(toOnayApiPhone(v))}
-                  placeholder="90 123 45 67"
+                  value={onayPhoneInput(props.phone)}
+                  onChangeText={v => props.onPhone(onayPhoneFromInput(props.phone, v))}
+                  placeholder="+998 90 123 45 67"
                   placeholderTextColor="#70857a"
                   keyboardType="phone-pad"
                   textContentType="telephoneNumber"
@@ -157,7 +157,7 @@ export default function OnayAuthScreen(props: Props) {
           >
             {props.busy ? <ActivityIndicator color={onayDark.accentInk}/> :
               <Text style={[s.primaryText, !canSubmit && s.primaryTextOff]}>
-                {props.requested ? "Подтвердить код" : "Получить код"}
+                {props.requested ? (props.mode === "driver" ? "Продолжить как водитель" : "Войти как пассажир") : "Получить код"}
               </Text>}
           </Pressable>
           <Text style={s.info}>
@@ -168,7 +168,7 @@ export default function OnayAuthScreen(props: Props) {
 
           <View style={s.links}>
             <Pressable
-              testID="onay-auth-toggle-registration"
+              testID={props.registering ? "auth-signin-mode" : "auth-signup-mode"}
               onPress={() => props.onRegisterMode(!props.registering)}
               disabled={props.busy}
             >
@@ -182,7 +182,7 @@ export default function OnayAuthScreen(props: Props) {
               disabled={props.busy}
             >
               <Text style={s.link}>
-                {props.mode === "driver" ? "Режим пассажира" : "Режим водителя"}
+                {props.mode === "driver" ? "Пассажир" : "Водитель"}
               </Text>
             </Pressable>
             <Pressable testID="onay-auth-server-settings" onPress={props.onServerSettings} disabled={props.busy}>

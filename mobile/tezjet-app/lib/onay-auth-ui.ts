@@ -17,17 +17,40 @@ export const onayDark = {
 
 export const ONAY_COUNTRY_CODE = "+998";
 
-/** Keep the backend auth contract unchanged: +998 followed by nine digits. */
+/** Presentation defaults to Uzbekistan; the backend also accepts other E.164 numbers. */
 export function uzPhoneDigits(value: string): string {
   const digits = value.replace(/\D/g, "");
-  return (digits.startsWith("998") && digits.length > 9 ? digits.slice(3) : digits).slice(0, 9);
+  return (digits.startsWith("998") ? digits.slice(3) : digits).slice(0, 9);
+}
+
+export function normalizeOnayPhone(value: string): string {
+  const digits = value.replace(/\D/g, "").slice(0, 15);
+  return digits ? "+" + digits : "";
 }
 
 export function toOnayApiPhone(value: string): string {
+  if (value.trim().startsWith("+") && !value.trim().startsWith("+998")) {
+    return normalizeOnayPhone(value);
+  }
   const digits = uzPhoneDigits(value);
   return digits ? ONAY_COUNTRY_CODE + digits : "";
 }
 
+/** The displayed prefix tracks the country when pasting a full international number. */
+export function onayPhonePrefix(value: string): string {
+  return value.startsWith("+7") ? "+7" : ONAY_COUNTRY_CODE;
+}
+
+export function onayPhoneInput(value: string): string {
+  const prefix = onayPhonePrefix(value);
+  return value.startsWith(prefix) ? value.slice(prefix.length) : value;
+}
+
+export function onayPhoneFromInput(previous: string, next: string): string {
+  return normalizeOnayPhone(next.trim().startsWith("+") ? next : onayPhonePrefix(previous) + next);
+}
+
 export function isCompleteOnayPhone(value: string): boolean {
-  return /^\+998\d{9}$/.test(value);
+  if (value.startsWith(ONAY_COUNTRY_CODE)) return /^\+998\d{9}$/.test(value);
+  return /^\+[1-9]\d{9,14}$/.test(value);
 }
