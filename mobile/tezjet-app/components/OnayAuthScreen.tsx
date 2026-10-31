@@ -177,6 +177,7 @@ export default function OnayAuthScreen(props: Props) {
               </Text>
             </Pressable>
             <Pressable
+              accessibilityRole="button"
               testID="onay-auth-role-switch"
               onPress={() => props.onMode(props.mode === "driver" ? "passenger" : "driver")}
               disabled={props.busy}
