@@ -156,7 +156,22 @@ class DriverRouteQA:
 
     def driver_login_and_approval(self):
         self.page.goto(self.args.base_url, wait_until="domcontentloaded")
-        self.page.get_by_role("button", name="Водитель", exact=True).click()
+        try:
+            self.page.get_by_role("button", name="Водитель", exact=True).click()
+        except Exception:
+            # Diagnostics only: preserve the original strict Playwright assertion
+            # and failure. Do not log auth inputs, requests, headers or tokens.
+            try:
+                print("QA ENTRY DIAGNOSTIC:", json.dumps({
+                    "url": self.page.url,
+                    "title": self.page.title(),
+                    "root_excerpt": self.page.locator("#root").inner_text(timeout=2000)[:450],
+                    "buttons": self.page.get_by_role("button").all_text_contents()[:12],
+                    "runtime_errors": self.page_errors[:3],
+                }, ensure_ascii=False), flush=True)
+            except Exception as diagnostic_error:
+                print("QA ENTRY DIAGNOSTIC unavailable:", type(diagnostic_error).__name__, flush=True)
+            raise
         self.control("auth-signup-mode").click()
         self.expect(self.page.get_by_text("Регистрация водителя", exact=True)).to_be_visible()
         self.page.get_by_placeholder("Имя", exact=True).fill("CI route")

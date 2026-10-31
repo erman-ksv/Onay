@@ -10,9 +10,10 @@ import { orderedDriverStops, parseDriverRouteCatalog, type DriverDirection, type
 import { createPassengerRouteRequestScope, passengerRouteSelection, passengerRouteSelectionKey, passengerRouteAvailabilityPath,
   parsePassengerRouteAvailability, passengerRouteOrderBody, passengerRouteCatalogStatus, routeBookingRecoveryKey, routeBookingRequestKey, resolveRouteBookingRequest, readRouteBookingRecovery, saveRouteBookingRecovery, clearRouteBookingRecovery, clearClosedRouteBookingRecovery, discardUnsentRouteBooking, confirmedRouteBookingPresent, isFreshPassengerRouteQuote, routeBookingDefinitivelyRejected, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability, type PassengerRouteSegment } from "../lib/passenger-route-orders";
 
-type Props = { token: string; endpoint: string; userId: string; busy: boolean; activeOrder: boolean; bookingGate: PassengerBookingGate; onCreated: () => Promise<void> };
+export type PassengerDirectionIntent = { direction: DriverDirection; revision: number };
+type Props = { token: string; endpoint: string; userId: string; busy: boolean; activeOrder: boolean; directionIntent?: PassengerDirectionIntent | null; bookingGate: PassengerBookingGate; onCreated: () => Promise<void> };
 const choices: DriverDirection[] = ["a_to_b", "b_to_a"];
-export default function PassengerRouteOrder({ token, endpoint, userId, busy, activeOrder, bookingGate, onCreated }: Props) {
+export default function PassengerRouteOrder({ token, endpoint, userId, busy, activeOrder, directionIntent, bookingGate, onCreated }: Props) {
   const [routes, setRoutes] = useState<DriverRouteOption[]>([]);
   const [routeId, setRouteId] = useState("");
   const [direction, setDirection] = useState<DriverDirection>("a_to_b");
@@ -33,6 +34,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
   const [message, setMessage] = useState("");
   const [availability, setAvailability] = useState<{ key: string; checkedAt: number; value: PassengerRouteAvailability } | null>(null);
   const requestScope = useRef(createPassengerRouteRequestScope());
+  const appliedDirectionIntent = useRef(0);
   const recoveryRevision = bookingGate.recoveryRevision();
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -108,6 +110,18 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
   }, [token, endpoint, catalogRetry]);
 
   useEffect(() => { setAvailability(null); setChecking(false); setMessage(""); setStopPicker(null); requestScope.current.cancelAvailability(); }, [key]);
+
+  useEffect(() => {
+    if (!directionIntent || directionIntent.revision <= appliedDirectionIntent.current || submitting || busy) return;
+    // Never carry a quote or stop segment across a change in direction.
+    appliedDirectionIntent.current = directionIntent.revision;
+    requestScope.current.cancelAvailability();
+    setChecking(false);
+    setAvailability(null);
+    setStopPicker(null);
+    setSegmentDraft(null);
+    setDirection(directionIntent.direction);
+  }, [directionIntent?.revision, submitting, busy]);
 
   function chooseStop(field: "pickup" | "destination", stopId: string) {
     if (!route || !segment || submitting) return;
