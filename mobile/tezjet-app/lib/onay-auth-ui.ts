@@ -64,7 +64,9 @@ export function onayEntryScreen(input: {
   apiBase: string;
   showEndpointSettings: boolean;
 }): OnayEntryScreen {
-  if (input.sessionLoading) return "loading";
+  // Keep the auth tree mounted while AsyncStorage restores the session.
+  // User actions stay disabled by sessionLoading until restoration settles.
   if (!input.token && input.apiBase && !input.showEndpointSettings) return "auth";
+  if (input.sessionLoading) return "loading";
   return "legacy";
 }

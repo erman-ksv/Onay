@@ -775,7 +775,7 @@ export default function Home() {
       mode={mode}
       registering={registering}
       requested={requested}
-      busy={busy}
+      busy={busy || sessionLoading}
       phone={phone}
       name={name}
       surname={surname}
