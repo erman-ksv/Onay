@@ -2,11 +2,12 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { onayDark } from "../lib/onay-auth-ui";
 import { ONAY_PASSENGER_TABS, type OnayPassengerTab } from "../lib/onay-passenger-tabs";
 
-export default function OnayPassengerTabBar({ active, onSelect }: {
+export default function OnayPassengerTabBar({ active, onSelect, theme = "dark" }: {
   active: OnayPassengerTab;
+  theme?: "light" | "dark";
   onSelect: (tab: OnayPassengerTab) => void;
 }) {
-  return <View testID="onay-passenger-bottom-nav" style={styles.container}>
+  return <View testID="onay-passenger-bottom-nav" style={[styles.container, theme === "light" && { backgroundColor: "#f4f6f4" }]}>
     <View accessibilityRole="tablist" style={styles.pill}>
       {ONAY_PASSENGER_TABS.map(tab => {
         const selected = active === tab.id;

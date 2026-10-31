@@ -1,3 +1,5 @@
+import { useState } from "react";
+import Constants from "expo-constants";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { onayDark } from "../lib/onay-auth-ui";
 import type { OnayPassengerHomeMode } from "../lib/onay-home-modes";
@@ -6,6 +8,8 @@ type Props = {
   onChoose: (mode: OnayPassengerHomeMode) => void;
   onChooseLocation: () => void;
   activeOrder?: boolean;
+  theme?: "light" | "dark";
+  onThemeChange?: (value: "light" | "dark") => void;
 };
 
 function TripCard({ title, description, symbol, onPress, primary = false, testID }: {
@@ -31,9 +35,17 @@ function TripCard({ title, description, symbol, onPress, primary = false, testID
  * The route drawing is a schematic, never a live map or a GPS claim.
  * The actual availability, quote and booking stay in PassengerRouteOrder.
  */
-export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOrder = false }: Props) {
-  return <View testID="onay-passenger-home" style={h.root}>
+export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOrder = false, theme = "dark", onThemeChange }: Props) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const light = theme === "light";
+  return <View testID="onay-passenger-home" style={[h.root, light && { backgroundColor: "#f4f6f4" }]}>
     <View style={h.header}>
+      <Pressable testID="onay-home-menu-open" accessibilityRole="button" accessibilityLabel="Открыть настройки"
+        accessibilityState={{ expanded: menuOpen }} onPress={() => setMenuOpen(value => !value)}
+        style={[h.menuToggle, light && { backgroundColor: "#e3e8e4" }]}>
+        <Text style={{ fontSize: 24, color: light ? "#0e1a14" : onayDark.text }}>{menuOpen ? "×" : "☰"}</Text>
+      </Pressable>
       <View style={h.logo}>
         <Text style={h.logoGlyph}>◉</Text>
         <Text style={h.logoName}>Onay</Text>
@@ -50,6 +62,29 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
         <Text style={h.locationChevron}>›</Text>
       </Pressable>
     </View>
+    {menuOpen ? <View testID="onay-home-settings-menu" style={[h.settingsPanel, light && { backgroundColor: "#ffffff", borderColor: "#e3e8e4" }]}>
+      <Text style={[h.settingsTitle, light && { color: "#0e1a14" }]}>Настройки</Text>
+      <View style={h.settingsRow}><Text style={[h.settingsLabel, light && { color: "#0e1a14" }]}>Способ оплаты</Text><Text style={h.settingsMuted}>Наличными</Text></View>
+      <View style={h.settingsRow}>
+        <Text style={[h.settingsLabel, light && { color: "#0e1a14" }]}>Режим света</Text>
+        <View style={h.themeControls}>
+          {(["light", "dark"] as const).map(value => <Pressable key={value} testID={"onay-home-theme-" + value}
+            accessibilityRole="button" accessibilityState={{ selected: theme === value }}
+            onPress={() => onThemeChange?.(value)}
+            style={[h.themeToggle, theme === value && h.themeActive]}>
+            <Text style={{ color: theme === value ? onayDark.accentInk : onayDark.text }}>{value === "light" ? "☀" : "☾"}</Text>
+          </Pressable>)}
+        </View>
+      </View>
+      <Pressable accessibilityRole="button" testID="onay-home-about" onPress={() => setAboutOpen(value => !value)} style={h.settingsRow}>
+        <Text style={[h.settingsLabel, light && { color: "#0e1a14" }]}>О приложении</Text>
+        <Text style={h.settingsMuted}>›</Text>
+      </Pressable>
+      {aboutOpen ? <Text testID="onay-home-about-details" style={h.settingsMuted}>
+        Onay — сервис междугородних поездок. ONAY OST E.K.K Technologies.
+      </Text> : null}
+      <Text style={[h.settingsVersion, light && { color: "#6a7b72" }]}>Onay · Версия {Constants.expoConfig?.version ?? "0.1.0"}</Text>
+    </View> : null}
     {activeOrder ? <View style={h.activeBanner}><Text style={h.activeText}>У вас есть активная поездка. Подробности — ниже.</Text></View> : null}
     <View testID="onay-home-map-schematic" style={h.map}>
       <View style={h.gridOne}/>
@@ -85,6 +120,16 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
 }
 
 const h = StyleSheet.create({
+  menuToggle: { width: 43, height: 46, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: onayDark.card },
+  settingsPanel: { borderWidth: 1, borderColor: onayDark.border, borderRadius: 18, backgroundColor: onayDark.card, padding: 16, marginBottom: 14, gap: 12 },
+  settingsTitle: { fontSize: 19, fontWeight: "800", color: onayDark.text },
+  settingsRow: { minHeight: 45, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  settingsLabel: { color: onayDark.text, fontSize: 14, fontWeight: "600" },
+  settingsMuted: { color: onayDark.muted, fontSize: 12, flexShrink: 1 },
+  themeControls: { flexDirection: "row", gap: 4 },
+  themeToggle: { height: 35, width: 40, backgroundColor: onayDark.cardRaised, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  themeActive: { backgroundColor: onayDark.accent },
+  settingsVersion: { textAlign: "center", marginTop: 25, color: onayDark.muted, fontSize: 12 },
   root: { backgroundColor: onayDark.background, paddingTop: 8, marginBottom: 16 },
   header: { flexDirection: "row", alignItems: "center", gap: 14, marginBottom: 15 },
   logo: { width: 38, alignItems: "center", justifyContent: "center" },

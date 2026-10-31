@@ -10,6 +10,7 @@ import { registrationFullName } from "../lib/registration";
 import OnayAuthScreen from "../components/OnayAuthScreen";
 import OnayPassengerHome from "../components/OnayPassengerHome";
 import OnayPassengerTabBar from "../components/OnayPassengerTabBar";
+import OnayPassengerProfile from "../components/OnayPassengerProfile";
 import { onayPassengerTabScrollY, type OnayPassengerTab } from "../lib/onay-passenger-tabs";
 import { onayPassengerHomeTarget, type OnayPassengerHomeMode } from "../lib/onay-home-modes";
 import { onayDark, onayEntryScreen } from "../lib/onay-auth-ui";
@@ -49,9 +50,23 @@ export default function Home() {
   const [routeSectionY, setRouteSectionY] = useState(0);
   const [legacySectionY, setLegacySectionY] = useState(0);
   const [passengerTab, setPassengerTab] = useState<OnayPassengerTab>("home");
+  const [passengerTheme, setPassengerTheme] = useState<"light" | "dark">("dark");
   const [tripsSectionY, setTripsSectionY] = useState(0);
   const [chatsSectionY, setChatsSectionY] = useState(0);
   const [profileSectionY, setProfileSectionY] = useState(0);
+  useEffect(() => {
+    let active = true;
+    AsyncStorage.getItem("onay_passenger_theme_v1")
+      .then(value => { if (active && (value === "light" || value === "dark")) setPassengerTheme(value); })
+      .catch(() => { /* Theme uses the safe dark default when unavailable. */ });
+    return () => { active = false; };
+  }, []);
+  function changePassengerTheme(value: "light" | "dark") {
+    setPassengerTheme(value);
+    void AsyncStorage.setItem("onay_passenger_theme_v1", value).catch(() => {
+      Alert.alert("Оформление", "Тема изменена, но не удалось сохранить настройку на устройстве.");
+    });
+  }
   // Each home-card tap creates a new instruction; repeating a card still
   // reapplies the direction after a manual change in the booking form.
   const [bookingDirectionIntent, setBookingDirectionIntent] = useState<{ direction: "a_to_b" | "b_to_a"; revision: number } | null>(null);
@@ -837,6 +852,8 @@ export default function Home() {
     <ScrollView ref={homeScroll} style={[s.screen, token && mode === "passenger" && { backgroundColor: onayDark.background }]} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
     {token && profile && activeRole === "passenger" && mode === "passenger" ? <OnayPassengerHome
       activeOrder={passengerHasActiveOrder}
+      theme={passengerTheme}
+      onThemeChange={changePassengerTheme}
       onChoose={openPassengerBooking}
       onChooseLocation={() => openPassengerBooking("city")}
     /> : null}
@@ -912,20 +929,21 @@ export default function Home() {
       <Text style={s.passengerPanelTitle}>Чаты</Text>
       <Text style={s.passengerPanelText}>Обмен сообщениями с водителями пока недоступен в этой версии приложения.</Text>
     </View>
-    <View testID="onay-passenger-profile" onLayout={event => setProfileSectionY(event.nativeEvent.layout.y)} style={s.passengerPanel}>
-      <Text style={s.passengerPanelTitle}>Профиль</Text>
-      <Text style={s.passengerPanelText}>{profile.full_name || "Пассажир Onay"}</Text>
-      <Text style={s.passengerPanelText}>Настройки и история поездок доступны в приложении.</Text>
-      <View style={s.passengerPanelActions}>
-        <Pressable testID="onay-profile-history" accessibilityRole="button" onPress={() => selectPassengerTab("trips")} style={s.passengerPanelAction}><Text style={s.passengerPanelActionText}>История поездок</Text></Pressable>
-        <Pressable testID="onay-profile-driver" accessibilityRole="button" onPress={() => { void switchMode("driver"); }} disabled={busy} style={s.passengerPanelAction}><Text style={s.passengerPanelActionText}>Режим водителя</Text></Pressable>
-        <Pressable testID="onay-profile-logout" accessibilityRole="button" onPress={logout} disabled={busy} style={s.passengerPanelAction}><Text style={s.passengerPanelActionText}>Выйти</Text></Pressable>
-      </View>
+    <View testID="onay-passenger-profile" onLayout={event => setProfileSectionY(event.nativeEvent.layout.y)}>
+      <OnayPassengerProfile
+        fullName={profile.full_name || ""}
+        busy={busy}
+        theme={passengerTheme}
+        onThemeChange={changePassengerTheme}
+        onHistory={() => selectPassengerTab("trips")}
+        onDriver={() => { void switchMode("driver"); }}
+        onLogout={logout}
+      />
     </View>
     </>}
     <Text style={s.footer}>TEZJET · ПАССАЖИР И ВОДИТЕЛЬ В ОДНОМ ПРИЛОЖЕНИИ</Text>
     </ScrollView>
-    {token && profile && activeRole === "passenger" && mode === "passenger" ? <OnayPassengerTabBar active={passengerTab} onSelect={selectPassengerTab} /> : null}
+    {token && profile && activeRole === "passenger" && mode === "passenger" ? <OnayPassengerTabBar active={passengerTab} theme={passengerTheme} onSelect={selectPassengerTab} /> : null}
   </View>;
 }
 
