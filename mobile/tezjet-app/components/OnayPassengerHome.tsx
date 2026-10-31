@@ -8,6 +8,7 @@ type Props = {
   onChoose: (mode: OnayPassengerHomeMode) => void;
   onChooseLocation: () => void;
   activeOrder?: boolean;
+  onViewActiveOrder: () => void;
   theme?: "light" | "dark";
   onThemeChange?: (value: "light" | "dark") => void;
 };
@@ -35,7 +36,7 @@ function TripCard({ title, description, symbol, onPress, primary = false, testID
  * The route drawing is a schematic, never a live map or a GPS claim.
  * The actual availability, quote and booking stay in PassengerRouteOrder.
  */
-export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOrder = false, theme = "dark", onThemeChange }: Props) {
+export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOrder = false, onViewActiveOrder, theme = "dark", onThemeChange }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const light = theme === "light";
@@ -82,7 +83,16 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
       </Text> : null}
       <Text style={[h.settingsVersion, light && { color: "#6a7b72" }]}>Onay · Версия {Constants.expoConfig?.version ?? "0.1.0"}</Text>
     </View> : null}
-    {activeOrder ? <View style={h.activeBanner}><Text style={h.activeText}>У вас есть активная поездка. Подробности — ниже.</Text></View> : null}
+    {activeOrder ? <Pressable
+      testID="onay-home-active-trip"
+      accessibilityRole="button"
+      accessibilityLabel="Посмотреть активную поездку"
+      onPress={onViewActiveOrder}
+      style={h.activeBanner}
+    >
+      <Text style={h.activeText}>У вас есть активная поездка</Text>
+      <Text style={[h.activeText, { fontWeight: "700", marginTop: 5 }]}>Посмотреть детали ›</Text>
+    </Pressable> : null}
     <View testID="onay-home-map-schematic" style={h.map}>
       <View style={h.gridOne}/>
       <View style={h.gridTwo}/>

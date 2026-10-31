@@ -859,6 +859,7 @@ export default function Home() {
     <ScrollView ref={homeScroll} style={[s.screen, token && mode === "passenger" && { backgroundColor: onayDark.background }]} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
     {token && profile && activeRole === "passenger" && mode === "passenger" ? <OnayPassengerHome
       activeOrder={passengerHasActiveOrder}
+      onViewActiveOrder={() => selectPassengerTab("trips")}
       theme={passengerTheme}
       onThemeChange={changePassengerTheme}
       onChoose={openPassengerBooking}
