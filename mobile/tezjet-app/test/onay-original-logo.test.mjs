@@ -2,18 +2,18 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-test("passenger home and auth use original Onay logo from user's HTML artifact", () => {
+test("screens use the newly confirmed logo while the earlier artifact remains preserved", () => {
   const home = readFileSync(new URL("../components/OnayPassengerHome.tsx", import.meta.url), "utf8");
   const auth = readFileSync(new URL("../components/OnayAuthScreen.tsx", import.meta.url), "utf8");
   for (const screen of [home, auth]) {
-    assert.match(screen, /source=\{require\("\.\.\/assets\/onay-original-logo\.png"\)\}/);
+    assert.match(screen, /source=\{require\("\.\.\/assets\/onay-confirmed-logo\.jpg"\)\}/);
     assert.match(screen, /accessibilityLabel="Onay"/);
   }
   assert.match(home, /testID="onay-home-original-logo"/);
   assert.match(auth, /testID="onay-auth-original-logo"/);
 });
 
-test("stored user logo is the valid 240px transparent PNG from Onay V2", () => {
+test("the earlier Onay V2 logo stays available as an unchanged 240px transparent PNG", () => {
   const png = readFileSync(new URL("../assets/onay-original-logo.png", import.meta.url));
   assert.deepEqual([...png.subarray(0, 8)], [137,80,78,71,13,10,26,10]);
   assert.equal(png.readUInt32BE(16), 240);
