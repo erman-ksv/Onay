@@ -46,6 +46,9 @@ export default function Home() {
   const homeScroll = useRef<ScrollView>(null);
   const [routeSectionY, setRouteSectionY] = useState(0);
   const [legacySectionY, setLegacySectionY] = useState(0);
+  // Each home-card tap creates a new instruction; repeating a card still
+  // reapplies the direction after a manual change in the booking form.
+  const [bookingDirectionIntent, setBookingDirectionIntent] = useState<{ direction: "a_to_b" | "b_to_a"; revision: number } | null>(null);
   const [apiBase, setApiBase] = useState(API);
   const [endpointInput, setEndpointInput] = useState(API);
   const [endpointError, setEndpointError] = useState("");
@@ -770,6 +773,12 @@ export default function Home() {
     const target = onayPassengerHomeTarget(choice);
     // The original configured-route booking retains server-side availability and
     // booking admission; the home screen only navigates to it.
+    if (target.direction) {
+      setBookingDirectionIntent(previous => ({
+        direction: target.direction!,
+        revision: (previous?.revision ?? 0) + 1,
+      }));
+    }
     const offset = target.section === "route" ? routeSectionY : legacySectionY;
     homeScroll.current?.scrollTo({ y: Math.max(0, offset - 24), animated: true });
   }
@@ -863,7 +872,7 @@ export default function Home() {
       </>
     ) : <>
     {passengerOrders.filter(order => !isClosed(order)).map(passengerOrder => <View key={passengerOrder.id} style={s.card} testID={`passenger-trip-${passengerOrder.id}`}><Text style={s.heading}>Твоя поездка</Text><Text style={s.descDark}>{statusLabels[passengerOrder.status]}</Text><Text style={s.descDark}>Точка подачи: {ridePickupLabel(passengerOrder)}</Text><Text style={s.descDark}>Куда: {rideDestinationLabel(passengerOrder)}</Text><Text style={s.descDark}>Пассажиров: {passengerOrder.seats}</Text>{passengerOrder.status === "searching" && passengerOrder.offered_driver_id ? <Text style={s.note}>Ждём ответа водителя.</Text> : null}<PassengerDriverCard key={`${driverRouteSession}:${passengerOrder.id}:${passengerOrder.driver_id ?? ""}:${passengerOrder.status}`} endpoint={apiBase} token={token} order={passengerOrder} /><Button title={busy ? "Отменяем…" : "Отменить заказ"} onPress={() => cancelOrder(passengerOrder)} disabled={busy} secondary /></View>)}
-    <View onLayout={event => setRouteSectionY(event.nativeEvent.layout.y)}><PassengerRouteOrder key={driverRouteSession} endpoint={apiBase} userId={profile.id} token={token} busy={busy} activeOrder={passengerHasActiveOrder} bookingGate={bookingGate} onCreated={refreshOrders} /></View>
+    <View onLayout={event => setRouteSectionY(event.nativeEvent.layout.y)}><PassengerRouteOrder key={driverRouteSession} directionIntent={bookingDirectionIntent} endpoint={apiBase} userId={profile.id} token={token} busy={busy} activeOrder={passengerHasActiveOrder} bookingGate={bookingGate} onCreated={refreshOrders} /></View>
     <View onLayout={event => setLegacySectionY(event.nativeEvent.layout.y)} style={s.card}>
       <Text style={s.heading}>Прежний маршрут C/D</Text>
       <Text style={s.label}>ТОЧКА А · ОТПРАВЛЕНИЕ</Text>{stops.filter(v => v.code === "C" || v.code === "D").map(v => <Pressable key={"a"+v.id} onPress={() => setA(v.code)} style={[s.stop, a===v.code && s.selected]}><Text style={s.stopText}>{v.name}</Text><Text>{v.code}</Text></Pressable>)}
