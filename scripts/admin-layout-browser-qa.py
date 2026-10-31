@@ -1308,6 +1308,8 @@ class AdminLayoutQA:
                 dialog.get_by_role("button", name="Подтвердить", exact=True).click()
                 self.page.wait_for_function("typeof window.__releaseBlockResponse === 'function'")
                 self.page.get_by_role("button", name="Маршруты и остановки", exact=True).click()
+                self.expect(self.page.get_by_role("button", name="Маршруты и остановки", exact=True)).to_have_attribute("aria-current", "page")
+                self.expect(card).to_have_count(0)
                 self.page.evaluate("() => window.__releaseBlockResponse()")
                 self.expect(card).to_have_count(0)
             finally:
