@@ -800,6 +800,13 @@ export default function Home() {
     });
   }
 
+  function openPassengerRoutePicker() {
+    // A location-chip tap must not change direction, clear a server quote,
+    // or assume the passenger's current GPS position.
+    setPassengerTab("home");
+    homeScroll.current?.scrollTo({ y: Math.max(0, routeSectionY - 24), animated: true });
+  }
+
   function openPassengerBooking(choice: OnayPassengerHomeMode) {
     setPassengerTab("home");
     const target = onayPassengerHomeTarget(choice);
@@ -855,7 +862,7 @@ export default function Home() {
       theme={passengerTheme}
       onThemeChange={changePassengerTheme}
       onChoose={openPassengerBooking}
-      onChooseLocation={() => openPassengerBooking("city")}
+      onChooseLocation={openPassengerRoutePicker}
     /> : null}
     {!(token && profile && activeRole === "passenger" && mode === "passenger") ? <>
     <View style={s.header}><Text style={s.logo}>O</Text><View style={s.brandWrap}><Text style={s.brand}>Onay</Text><Text style={s.tag}>ТВОЙ ГОРОД. ТВОЙ МАРШРУТ.</Text></View>{token ? <Pressable onPress={logout} disabled={busy}><Text style={s.logout}>Выйти</Text></Pressable> : null}</View>

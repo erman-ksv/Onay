@@ -53,8 +53,8 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
       >
         <Text style={h.pin}>⌖</Text>
         <View style={h.locationCopy}>
-          <Text style={h.locationCaption}>Я сейчас</Text>
-          <Text style={h.locationTitle}>Выбрать маршрут</Text>
+          <Text style={h.locationCaption}>Точка отправления</Text>
+          <Text style={h.locationTitle}>Выбрать остановку</Text>
         </View>
         <Text style={h.locationChevron}>›</Text>
       </Pressable>
