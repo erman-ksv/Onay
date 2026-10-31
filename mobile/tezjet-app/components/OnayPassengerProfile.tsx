@@ -47,7 +47,7 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
       </View>
       <View style={{ flex: 1 }}>
         <Text style={[s.personName, { color: foreground }]}>{fullName || "Пассажир Onay"}</Text>
-        <Text style={{ color: muted, marginTop: 5 }}>Аккаунт пассажира</Text>
+        <Text testID="onay-profile-header-phone" style={{ color: muted, marginTop: 5 }}>{phoneNumber || "Аккаунт пассажира"}</Text>
       </View>
     </View>
 
