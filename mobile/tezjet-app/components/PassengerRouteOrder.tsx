@@ -11,9 +11,9 @@ import { createPassengerRouteRequestScope, passengerRouteSelection, passengerRou
   parsePassengerRouteAvailability, passengerRouteOrderBody, passengerRouteCatalogStatus, routeBookingRecoveryKey, routeBookingRequestKey, resolveRouteBookingRequest, readRouteBookingRecovery, saveRouteBookingRecovery, clearRouteBookingRecovery, clearClosedRouteBookingRecovery, discardUnsentRouteBooking, confirmedRouteBookingPresent, isFreshPassengerRouteQuote, routeBookingDefinitivelyRejected, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability, type PassengerRouteSegment } from "../lib/passenger-route-orders";
 
 export type PassengerDirectionIntent = { direction: DriverDirection; revision: number };
-type Props = { token: string; endpoint: string; userId: string; busy: boolean; activeOrder: boolean; directionIntent?: PassengerDirectionIntent | null; bookingGate: PassengerBookingGate; onCreated: () => Promise<void> };
+type Props = { token: string; endpoint: string; userId: string; busy: boolean; activeOrder: boolean; directionIntent?: PassengerDirectionIntent | null; bookingGate: PassengerBookingGate; onCreated: () => Promise<void>; theme?: "light" | "dark" };
 const choices: DriverDirection[] = ["a_to_b", "b_to_a"];
-export default function PassengerRouteOrder({ token, endpoint, userId, busy, activeOrder, directionIntent, bookingGate, onCreated }: Props) {
+export default function PassengerRouteOrder({ token, endpoint, userId, busy, activeOrder, directionIntent, bookingGate, onCreated, theme = "dark" }: Props) {
   const [routes, setRoutes] = useState<DriverRouteOption[]>([]);
   const [routeId, setRouteId] = useState("");
   const [direction, setDirection] = useState<DriverDirection>("a_to_b");
@@ -275,93 +275,94 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
       } else setError(errorMessage(cause, "Не удалось оформить заказ."));
     } finally { bookingGate.finish("configured"); if (mounted.current) setSubmitting(false); }
   }
+  const themeStyles = theme === "light" ? { ...v, ...vLight } : v;
   const button = (title: string, onPress: () => void, disabled = false, primary = false, testID?: string) =>
     <Pressable testID={testID} accessibilityRole="button" accessibilityState={{ disabled }}
       onPress={onPress} disabled={disabled}
-      style={[v.button, primary ? v.buttonPrimary : v.buttonSecondary, disabled && v.disabled]}>
-      <Text style={[v.buttonLabel, primary ? v.primaryText : v.secondaryText]}>{title}</Text>
+      style={[themeStyles.button, primary ? themeStyles.buttonPrimary : themeStyles.buttonSecondary, disabled && themeStyles.disabled]}>
+      <Text style={[themeStyles.buttonLabel, primary ? themeStyles.primaryText : themeStyles.secondaryText]}>{title}</Text>
     </Pressable>;
 
-  return <View testID="configured-route-passenger" style={v.card}>
-    <Text style={v.eyebrow}>ONAY · МАРШРУТНОЕ ТАКСИ</Text>
-    <Text style={v.title}>Куда едем?</Text>
-    <Text style={v.subtitle}>Выберите линию и количество мест. Доступность водителей и цену проверит сервер.</Text>
-    {loading ? <ActivityIndicator color="#33DB9C" style={v.loader}/> : null}
-    {catalogStatus === "empty" && token && endpoint ? <Text style={v.hint}>Настроенных маршрутов пока нет.</Text> : null}
-    {catalogStatus === "error" ? <View><Text style={v.error}>Не удалось загрузить маршруты: {catalogError}</Text>
+  return <View testID="configured-route-passenger" style={themeStyles.card}>
+    <Text style={themeStyles.eyebrow}>ONAY · МАРШРУТНОЕ ТАКСИ</Text>
+    <Text style={themeStyles.title}>Куда едем?</Text>
+    <Text style={themeStyles.subtitle}>Выберите линию и количество мест. Доступность водителей и цену проверит сервер.</Text>
+    {loading ? <ActivityIndicator color="#33DB9C" style={themeStyles.loader}/> : null}
+    {catalogStatus === "empty" && token && endpoint ? <Text style={themeStyles.hint}>Настроенных маршрутов пока нет.</Text> : null}
+    {catalogStatus === "error" ? <View><Text style={themeStyles.error}>Не удалось загрузить маршруты: {catalogError}</Text>
       {button("Повторить загрузку маршрутов", () => setCatalogRetry(value => value + 1), submitting || busy, false, "route-catalog-retry")}</View> : null}
     {routes.map(item => <Pressable key={item.id} testID={"passenger-route-" + item.id}
       onPress={() => { if (item.id !== routeId) { setSegmentDraft(null); setRouteId(item.id); } }} disabled={submitting}
       accessibilityRole="button" accessibilityState={{ selected: item.id === routeId }}
-      style={[v.route, item.id === routeId && v.routeActive]}>
-      <View style={[v.indicator, item.id === routeId && v.indicatorActive]}/>
-      <View style={v.routeContent}>
-        <Text style={v.routeName}>{item.name}</Text>
-        <Text style={v.routeInfo}>Выбрать маршрут</Text>
+      style={[themeStyles.route, item.id === routeId && themeStyles.routeActive]}>
+      <View style={[themeStyles.indicator, item.id === routeId && themeStyles.indicatorActive]}/>
+      <View style={themeStyles.routeContent}>
+        <Text style={themeStyles.routeName}>{item.name}</Text>
+        <Text style={themeStyles.routeInfo}>Выбрать маршрут</Text>
       </View>
-      <Text style={v.chevron}>›</Text>
+      <Text style={themeStyles.chevron}>›</Text>
     </Pressable>)}
     {route ? <>
-      <Text style={v.sectionHeading}>НАПРАВЛЕНИЕ</Text>
-      <View style={v.directions}>
+      <Text style={themeStyles.sectionHeading}>НАПРАВЛЕНИЕ</Text>
+      <View style={themeStyles.directions}>
         {choices.map(value => <Pressable key={value} testID={"passenger-direction-" + value}
           onPress={() => { if (value !== direction) { setSegmentDraft(null); setDirection(value); } }} disabled={submitting}
           accessibilityRole="button" accessibilityState={{ selected: direction === value }}
-          style={[v.direction, direction === value && v.directionActive]}>
-          <Text style={[v.directionText, direction === value && v.directionTextActive]}>
+          style={[themeStyles.direction, direction === value && themeStyles.directionActive]}>
+          <Text style={[themeStyles.directionText, direction === value && themeStyles.directionTextActive]}>
             {value === "a_to_b" ? "A → B" : "B → A"}
           </Text>
         </Pressable>)}
       </View>
-      <View style={v.trip}>
-        <View style={v.tripDots}><View style={v.originDot}/><View style={v.tripLine}/><View style={v.destinationDot}/></View>
-        <View style={v.tripLabels}>
+      <View style={themeStyles.trip}>
+        <View style={themeStyles.tripDots}><View style={themeStyles.originDot}/><View style={themeStyles.tripLine}/><View style={themeStyles.destinationDot}/></View>
+        <View style={themeStyles.tripLabels}>
           <Pressable testID="passenger-pickup-open" accessibilityRole="button" accessibilityState={{ disabled: submitting }}
             accessibilityLabel={"Место посадки: " + stops[pickupIndex]?.name} disabled={submitting}
-            onPress={() => setStopPicker(stopPicker === "pickup" ? null : "pickup")} style={v.stopField}>
-            <Text style={v.tripName}>{stops[pickupIndex]?.name ?? "Выберите посадку"} ▾</Text>
-            <Text style={v.tripCaption}>Откуда · выбрать остановку</Text>
+            onPress={() => setStopPicker(stopPicker === "pickup" ? null : "pickup")} style={themeStyles.stopField}>
+            <Text style={themeStyles.tripName}>{stops[pickupIndex]?.name ?? "Выберите посадку"} ▾</Text>
+            <Text style={themeStyles.tripCaption}>Откуда · выбрать остановку</Text>
           </Pressable>
           <Pressable testID="passenger-destination-open" accessibilityRole="button" accessibilityState={{ disabled: submitting }}
             accessibilityLabel={"Назначение: " + stops[destinationIndex]?.name} disabled={submitting}
-            onPress={() => setStopPicker(stopPicker === "destination" ? null : "destination")} style={v.stopField}>
-            <Text style={v.tripName}>{stops[destinationIndex]?.name ?? "Выберите назначение"} ▾</Text>
-            <Text style={v.tripCaption}>Куда · выбрать остановку</Text>
+            onPress={() => setStopPicker(stopPicker === "destination" ? null : "destination")} style={themeStyles.stopField}>
+            <Text style={themeStyles.tripName}>{stops[destinationIndex]?.name ?? "Выберите назначение"} ▾</Text>
+            <Text style={themeStyles.tripCaption}>Куда · выбрать остановку</Text>
           </Pressable>
         </View>
       </View>
-      {stopPicker ? <View testID="passenger-stop-picker" accessibilityRole="radiogroup" style={v.stopPicker}>
-        <Text style={v.sectionHeading}>{stopPicker === "pickup" ? "ГДЕ САДИТЕСЬ?" : "КУДА ЕДЕТЕ?"}</Text>
+      {stopPicker ? <View testID="passenger-stop-picker" accessibilityRole="radiogroup" style={themeStyles.stopPicker}>
+        <Text style={themeStyles.sectionHeading}>{stopPicker === "pickup" ? "ГДЕ САДИТЕСЬ?" : "КУДА ЕДЕТЕ?"}</Text>
         {stops.map((stop, index) => {
           const disabled = submitting || (stopPicker === "pickup" ? index >= destinationIndex : index <= pickupIndex);
           const selected = stop.id === (stopPicker === "pickup" ? segment?.pickupStopId : segment?.destinationStopId);
           return <Pressable key={stop.id} testID={"passenger-" + stopPicker + "-" + stop.id}
             accessibilityRole="radio" accessibilityLabel={stop.name} accessibilityState={{ checked: selected, disabled }} aria-checked={selected}
             disabled={disabled} onPress={() => chooseStop(stopPicker, stop.id)}
-            style={[v.stopOption, selected && v.stopOptionSelected, disabled && v.disabled]}>
-            <Text style={v.stopOptionName}>{stop.name}{selected ? " ✓" : ""}</Text>
+            style={[themeStyles.stopOption, selected && themeStyles.stopOptionSelected, disabled && themeStyles.disabled]}>
+            <Text style={themeStyles.stopOptionName}>{stop.name}{selected ? " ✓" : ""}</Text>
           </Pressable>;
         })}
-        <Text style={v.tripCaption}>Посадка должна быть раньше назначения по выбранному направлению.</Text>
+        <Text style={themeStyles.tripCaption}>Посадка должна быть раньше назначения по выбранному направлению.</Text>
       </View> : null}
-      <View style={v.seats}>
-        <View><Text style={v.seatsTitle}>Пассажиры</Text><Text style={v.seatsDescription}>Места: от 1 до 8</Text></View>
-        <View style={v.stepper}>
+      <View style={themeStyles.seats}>
+        <View><Text style={themeStyles.seatsTitle}>Пассажиры</Text><Text style={themeStyles.seatsDescription}>Места: от 1 до 8</Text></View>
+        <View style={themeStyles.stepper}>
           <Pressable testID="route-seats-minus" accessibilityRole="button" accessibilityLabel="Уменьшить количество мест"
             disabled={seats <= 1 || submitting} onPress={() => setSeats(Math.max(1, seats - 1))}
-            style={[v.step, (seats <= 1 || submitting) && v.disabled]}><Text style={v.stepText}>−</Text></Pressable>
-          <Text style={v.count}>{seats}</Text>
+            style={[themeStyles.step, (seats <= 1 || submitting) && themeStyles.disabled]}><Text style={themeStyles.stepText}>−</Text></Pressable>
+          <Text style={themeStyles.count}>{seats}</Text>
           <Pressable testID="route-seats-plus" accessibilityRole="button" accessibilityLabel="Увеличить количество мест"
             disabled={seats >= 8 || submitting} onPress={() => setSeats(Math.min(8, seats + 1))}
-            style={[v.step, (seats >= 8 || submitting) && v.disabled]}><Text style={v.stepText}>+</Text></Pressable>
+            style={[themeStyles.step, (seats >= 8 || submitting) && themeStyles.disabled]}><Text style={themeStyles.stepText}>+</Text></Pressable>
         </View>
       </View>
       {button(checking ? "Проверяем…" : "Проверить цену и водителей",
         () => { void check(); }, checking || submitting || busy, false, "route-check-availability")}
-      <View style={v.priceCard}>
-        <Text style={v.sectionHeading}>ПОДТВЕРЖДЁННАЯ СТОИМОСТЬ</Text>
-        <Text style={v.price}>{fresh && availability ? formatFareMoney({ total: availability.value.price, currency: availability.value.currency }) : "—"}</Text>
-        <Text style={[v.availability, fresh && availability?.value.available && v.availabilityPositive]}>
+      <View style={themeStyles.priceCard}>
+        <Text style={themeStyles.sectionHeading}>ПОДТВЕРЖДЁННАЯ СТОИМОСТЬ</Text>
+        <Text style={themeStyles.price}>{fresh && availability ? formatFareMoney({ total: availability.value.price, currency: availability.value.currency }) : "—"}</Text>
+        <Text style={[themeStyles.availability, fresh && availability?.value.available && themeStyles.availabilityPositive]}>
           {fresh && availability
             ? availability.value.available
               ? "Свободных водителей: " + availability.value.eligibleDriverCount
@@ -374,10 +375,10 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
     </> : null}
     {pendingSync ? button(submitting ? "Проверяем…" : "Проверить статус заказа",
       () => { void retrySync(); }, submitting || busy, false, "route-refresh-after-submit") : null}
-    {activeOrder ? <Text style={v.notice}>Сначала заверши или отмени текущую поездку.</Text> : null}
-    {recoveryError ? <Text style={v.error}>{recoveryError}</Text> : null}
-    {message ? <Text style={v.notice}>{message}</Text> : null}
-    {error ? <Text style={v.error}>{error}</Text> : null}
+    {activeOrder ? <Text style={themeStyles.notice}>Сначала заверши или отмени текущую поездку.</Text> : null}
+    {recoveryError ? <Text style={themeStyles.error}>{recoveryError}</Text> : null}
+    {message ? <Text style={themeStyles.notice}>{message}</Text> : null}
+    {error ? <Text style={themeStyles.error}>{error}</Text> : null}
   </View>;
 }
 
@@ -426,4 +427,50 @@ const v = StyleSheet.create({
   availabilityPositive:{color:"#42ECA9"},
   notice:{fontSize:12,color:"#C8FAE0",backgroundColor:"#19543A",padding:11,borderRadius:12,marginTop:12},
   error:{fontSize:12,color:"#FFD8D8",backgroundColor:"#562A2A",padding:11,borderRadius:12,marginTop:12},
+});
+
+/** Light palette changes presentation only; API and booking guards remain unchanged. */
+const vLight = StyleSheet.create({
+  card: { backgroundColor: "#ffffff", borderColor: "#dce8e1" },
+  eyebrow: { color: "#176347" },
+  title: { color: "#0e1a14" },
+  subtitle: { color: "#5a7366" },
+  hint: { color: "#5a7366" },
+  route: { backgroundColor: "#f4f7f5", borderColor: "#dce8e1" },
+  routeActive: { backgroundColor: "#e3f7df", borderColor: "#3d9c62" },
+  indicator: { borderColor: "#759c82" },
+  indicatorActive: { backgroundColor: "#1f8c5b", borderColor: "#1f8c5b" },
+  routeName: { color: "#0e1a14" },
+  routeInfo: { color: "#5a7366" },
+  chevron: { color: "#176347" },
+  sectionHeading: { color: "#5a7366" },
+  direction: { backgroundColor: "#f4f7f5", borderColor: "#dce8e1" },
+  directionActive: { backgroundColor: "#e3f7df", borderColor: "#3d9c62" },
+  directionText: { color: "#194b34" },
+  directionTextActive: { color: "#0e1a14" },
+  trip: { backgroundColor: "#f4f7f5" },
+  originDot: { backgroundColor: "#1f8c5b" },
+  tripLine: { backgroundColor: "#94bca3" },
+  destinationDot: { borderColor: "#1f8c5b" },
+  tripName: { color: "#0e1a14" },
+  stopPicker: { backgroundColor: "#f4f7f5" },
+  stopOption: { backgroundColor: "#ffffff", borderColor: "#dce8e1" },
+  stopOptionSelected: { backgroundColor: "#e3f7df", borderColor: "#3d9c62" },
+  stopOptionName: { color: "#0e1a14" },
+  tripCaption: { color: "#5a7366" },
+  seatsTitle: { color: "#0e1a14" },
+  seatsDescription: { color: "#5a7366" },
+  step: { backgroundColor: "#e5f0e9" },
+  stepText: { color: "#175444" },
+  count: { color: "#0e1a14" },
+  buttonPrimary: { backgroundColor: "#0d735c" },
+  buttonSecondary: { backgroundColor: "#edf8f2", borderColor: "#dce8e1" },
+  primaryText: { color: "#ffffff" },
+  secondaryText: { color: "#175444" },
+  priceCard: { backgroundColor: "#f4f7f5" },
+  price: { color: "#0d735c" },
+  availability: { color: "#5a7366" },
+  availabilityPositive: { color: "#176347" },
+  notice: { color: "#175444", backgroundColor: "#e9f8ef" },
+  error: { color: "#962b20", backgroundColor: "#fff0ec" },
 });
