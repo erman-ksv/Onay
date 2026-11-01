@@ -8,11 +8,13 @@ import { isClosed, ridePickupLabel, rideDestinationLabel, statusLabels, type Rid
 
 // The parent keys this component by endpoint/session/user and unmounts it when
 // changing role. Aborting and generation checks also discard stale reads.
-export default function PassengerHistory({ endpoint, token, passengerId, recentOrders, theme = "light" }: {
-  endpoint: string; token: string; passengerId: string; recentOrders: RideOrder[]; theme?: "light" | "dark";
+export default function PassengerHistory({ endpoint, token, passengerId, recentOrders, theme = "light", openRequest = 0 }: {
+  endpoint: string; token: string; passengerId: string; recentOrders: RideOrder[]; theme?: "light" | "dark"; openRequest?: number;
 }) {
   const light = theme === "light";
   const [open, setOpen] = useState(false);
+  // An explicit profile navigation reopens the archive after a user has collapsed it.
+  useEffect(() => { if (openRequest > 0) setOpen(true); }, [openRequest]);
   const [rows, setRows] = useState<PassengerHistoryRow[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");

@@ -13,7 +13,7 @@ test("Trips tab shows active orders and API-backed history together before booki
   assert.ok(trips >= 0 && active > trips && archived > active && booking > archived);
   assert.match(app, /testID="onay-passenger-trips-title" accessibilityRole="header"/);
   assert.match(app, /<PassengerHistory[^\n]+theme=\{passengerTheme\}/);
-  assert.match(app, /onHistory=\{\(\) => selectPassengerTab\("trips"\)\}/);
+  assert.match(app, /onHistory=\{openPassengerHistory\}/);
   assert.match(app, /onViewActiveOrder=\{\(\) => selectPassengerTab\("trips"\)\}/);
 });
 

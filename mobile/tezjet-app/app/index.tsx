@@ -53,6 +53,8 @@ export default function Home() {
   const [passengerTab, setPassengerTab] = useState<OnayPassengerTab>("home");
   const [passengerTheme, setPassengerTheme] = useState<"light" | "dark">("dark");
   const [tripsSectionY, setTripsSectionY] = useState(0);
+  const [historySectionY, setHistorySectionY] = useState(0);
+  const [historyOpenRequest, setHistoryOpenRequest] = useState(0);
   const [chatsSectionY, setChatsSectionY] = useState(0);
   const [profileSectionY, setProfileSectionY] = useState(0);
   useEffect(() => {
@@ -801,6 +803,13 @@ export default function Home() {
     });
   }
 
+  function openPassengerHistory() {
+    // Profile history opens the actual API-backed archive, not just the Trips heading.
+    setHistoryOpenRequest(revision => revision + 1);
+    setPassengerTab("trips");
+    homeScroll.current?.scrollTo({ y: Math.max(0, historySectionY - 12), animated: true });
+  }
+
   function openPassengerRoutePicker() {
     // A location-chip tap must not change direction, clear a server quote,
     // or assume the passenger's current GPS position.
@@ -921,7 +930,9 @@ export default function Home() {
       <Text testID="onay-passenger-trips-title" accessibilityRole="header" style={{ fontSize: 26, fontWeight: "800", color: passengerTheme === "light" ? "#0e1a14" : onayDark.text }}>Поездки</Text>
     </View>
     {passengerOrders.filter(order => !isClosed(order)).map(passengerOrder => <View key={passengerOrder.id} style={s.card} testID={`passenger-trip-${passengerOrder.id}`}><Text style={s.heading}>Твоя поездка</Text><Text style={s.descDark}>{statusLabels[passengerOrder.status]}</Text><Text style={s.descDark}>Точка подачи: {ridePickupLabel(passengerOrder)}</Text><Text style={s.descDark}>Куда: {rideDestinationLabel(passengerOrder)}</Text><Text style={s.descDark}>Пассажиров: {passengerOrder.seats}</Text>{passengerOrder.status === "searching" && passengerOrder.offered_driver_id ? <Text style={s.note}>Ждём ответа водителя.</Text> : null}<PassengerDriverCard key={`${driverRouteSession}:${passengerOrder.id}:${passengerOrder.driver_id ?? ""}:${passengerOrder.status}`} endpoint={apiBase} token={token} order={passengerOrder} /><Button title={busy ? "Отменяем…" : "Отменить заказ"} onPress={() => cancelOrder(passengerOrder)} disabled={busy} secondary /></View>)}
-    <PassengerHistory key={`${driverRouteSession}:${profile.id}`} endpoint={apiBase} token={token} passengerId={profile.id} recentOrders={passengerOrders} theme={passengerTheme} />
+    <View testID="onay-passenger-history-anchor" onLayout={event => setHistorySectionY(event.nativeEvent.layout.y)}>
+      <PassengerHistory key={`${driverRouteSession}:${profile.id}`} endpoint={apiBase} token={token} passengerId={profile.id} recentOrders={passengerOrders} theme={passengerTheme} openRequest={historyOpenRequest} />
+    </View>
     <View onLayout={event => setRouteSectionY(event.nativeEvent.layout.y)}><PassengerRouteOrder key={driverRouteSession} directionIntent={bookingDirectionIntent} endpoint={apiBase} userId={profile.id} token={token} busy={busy} activeOrder={passengerHasActiveOrder} bookingGate={bookingGate} onCreated={refreshOrders} /></View>
     <View onLayout={event => setLegacySectionY(event.nativeEvent.layout.y)} style={s.card}>
       <Text style={s.heading}>Прежний маршрут C/D</Text>
@@ -948,7 +959,7 @@ export default function Home() {
         busy={busy}
         theme={passengerTheme}
         onThemeChange={changePassengerTheme}
-        onHistory={() => selectPassengerTab("trips")}
+        onHistory={openPassengerHistory}
         onDriver={() => { void switchMode("driver"); }}
         onLogout={logout}
       />
