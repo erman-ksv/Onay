@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { onayDark } from "../lib/onay-auth-ui";
 import {
   canMutateDriverRoute, createDriverRouteClient, createDriverRouteRequestScope, driverDirectionLabel,
   driverRouteSessionKey, orderedDriverStops, refreshDriverRouteDraft, DriverRouteError,
@@ -138,7 +139,7 @@ export default function DriverRoutePicker(props: Props) {
   return <View style={s.card} testID="driver-route-picker">
     <Text style={s.heading}>Маршрут водителя</Text>
     <Text style={s.description}>Выбери маршрут и направление, затем сохрани выбор.</Text>
-    {loading ? <View style={s.loading}><ActivityIndicator color="#0D735C" /><Text style={s.description}>Загружаем маршруты и сохранённый выбор…</Text></View> : null}
+    {loading ? <View style={s.loading}><ActivityIndicator color={onayDark.accent} /><Text style={s.description}>Загружаем маршруты и сохранённый выбор…</Text></View> : null}
     <View testID="driver-route-status" accessibilityLiveRegion="polite">
       {snapshot?.choice ? <>
         <Text style={s.status}>Сохранено: {snapshot.route?.name ?? snapshot.choice.routeId}{snapshot.route ? ` · ${driverDirectionLabel(snapshot.route, snapshot.choice.direction)}` : ""}</Text>
@@ -176,20 +177,21 @@ export default function DriverRoutePicker(props: Props) {
   </View>;
 }
 
+/** Driver V2 visual palette. Preserve real route, FIFO, loading and mutation behaviour. */
 const s = StyleSheet.create({
-  card: { padding: 20, backgroundColor: "#fff", borderRadius: 24, borderWidth: 1, borderColor: "#E5EBE7", marginBottom: 16 },
-  heading: { fontSize: 21, fontWeight: "800", color: "#102D26", marginBottom: 12 },
-  description: { fontSize: 14, lineHeight: 22, color: "#53675E" },
+  card: { padding: 20, backgroundColor: onayDark.card, borderRadius: 24, borderWidth: 1, borderColor: onayDark.border, marginBottom: 16 },
+  heading: { fontSize: 21, fontWeight: "800", color: onayDark.text, marginBottom: 12 },
+  description: { fontSize: 14, lineHeight: 22, color: onayDark.muted },
   loading: { gap: 8, marginVertical: 12 },
-  label: { fontSize: 10, fontWeight: "800", letterSpacing: 1, color: "#74857D", marginTop: 12, marginBottom: 8 },
-  option: { borderWidth: 1, borderColor: "#E0E8E3", borderRadius: 12, padding: 12, marginTop: 8 },
-  selected: { borderColor: "#0D735C", backgroundColor: "#EDF8F2" },
-  optionTitle: { color: "#344B41", fontWeight: "700", fontSize: 14 },
-  status: { color: "#175444", backgroundColor: "#E9F8EF", padding: 12, borderRadius: 10, marginTop: 12, lineHeight: 21 },
-  warning: { color: "#68491D", backgroundColor: "#FFF4DD", padding: 12, borderRadius: 10, marginTop: 12, lineHeight: 21 },
-  button: { minHeight: 48, borderRadius: 14, backgroundColor: "#0D735C", alignItems: "center", justifyContent: "center", paddingHorizontal: 12, marginTop: 8 },
-  secondary: { backgroundColor: "#F0F5F2", borderWidth: 1, borderColor: "#DCE8E1" },
-  buttonText: { color: "#fff", fontSize: 14, fontWeight: "800" },
-  secondaryText: { color: "#175444" },
+  label: { fontSize: 10, fontWeight: "800", letterSpacing: 1, color: onayDark.muted, marginTop: 12, marginBottom: 8 },
+  option: { borderWidth: 1, borderColor: onayDark.border, backgroundColor: onayDark.cardRaised, borderRadius: 12, padding: 12, marginTop: 8 },
+  selected: { borderColor: onayDark.accent, backgroundColor: "#20442d" },
+  optionTitle: { color: onayDark.text, fontWeight: "700", fontSize: 14 },
+  status: { color: "#c8fae0", backgroundColor: "#194b35", padding: 12, borderRadius: 10, marginTop: 12, lineHeight: 21 },
+  warning: { color: "#ffd19a", backgroundColor: "#4a3621", padding: 12, borderRadius: 10, marginTop: 12, lineHeight: 21 },
+  button: { minHeight: 48, borderRadius: 14, backgroundColor: onayDark.accent, alignItems: "center", justifyContent: "center", paddingHorizontal: 12, marginTop: 8 },
+  secondary: { backgroundColor: onayDark.cardRaised, borderWidth: 1, borderColor: onayDark.border },
+  buttonText: { color: onayDark.accentInk, fontSize: 14, fontWeight: "800" },
+  secondaryText: { color: onayDark.text },
   disabled: { opacity: 0.45 },
 });
