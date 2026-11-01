@@ -3,12 +3,18 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const source = readFileSync(new URL("../components/OnayPassengerHome.tsx", import.meta.url), "utf8");
+const about = readFileSync(new URL("../components/OnayPassengerAbout.tsx", import.meta.url), "utf8");
 
-test("light menu keeps payment, about details and chevrons legible on white", () => {
+test("light menu keeps payment and chevrons legible and opens readable About page", () => {
   assert.match(source, /testID="onay-home-settings-menu"/);
   assert.match(source, /settingsMutedLight: \{ color: "#546b5e" \}/);
   assert.match(source, /style=\{\[h\.settingsMuted, light && h\.settingsMutedLight\]\}>Наличными/);
-  assert.match(source, /testID="onay-home-about-details" style=\{\[h\.settingsMuted, light && h\.settingsMutedLight\]\}/);
+  assert.match(source, /testID="onay-home-about" onPress=\{\(\) => setAboutOpen\(true\)\}/);
+  assert.match(source, /<OnayPassengerAbout theme=\{theme\}/);
+  assert.match(about, /testID="onay-passenger-about-screen"/);
+  assert.match(about, /light && styles\.rootLight/);
+  assert.match(about, /light \? "#5a7366" : onayDark\.muted/);
+  assert.match(about, /testID="onay-about-real-version"/);
   assert.match(source, /style=\{\[h\.settingsMuted, light && h\.settingsMutedLight\]\}>›/);
 });
 
