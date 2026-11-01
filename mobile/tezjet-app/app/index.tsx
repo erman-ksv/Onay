@@ -3,7 +3,7 @@ import { parseServerFareMoney, formatFareMoney, type FareMoney } from "../lib/fa
 import * as Location from "expo-location";
 import { io } from "socket.io-client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, AppState, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { API, ApiError, errorMessage, request, setApiEndpoint, validateApiEndpoint, type Availability } from "../lib/api";
 import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextDriverTripStatus, nextTripLabel, ridePickupLabel, rideDestinationLabel, statusLabels, type RideOrder } from "../lib/orders";
 import { registrationFullName } from "../lib/registration";
@@ -867,9 +867,10 @@ export default function Home() {
 
   // Presentation only; API state and retry handlers remain unchanged.
   const passengerDarkSystem = Boolean(token && mode === "passenger" && passengerTheme === "dark");
+  const driverChrome = Boolean(token && mode === "driver");
 
-  return <View style={{ flex: 1, backgroundColor: token && mode === "passenger" ? (passengerTheme === "light" ? "#f4f6f4" : onayDark.background) : "#F3F6F4" }}>
-    <ScrollView ref={homeScroll} style={[s.screen, token && mode === "passenger" && { backgroundColor: passengerTheme === "light" ? "#f4f6f4" : onayDark.background }]} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+  return <View style={{ flex: 1, backgroundColor: token && mode === "passenger" ? (passengerTheme === "light" ? "#f4f6f4" : onayDark.background) : driverChrome ? onayDark.background : "#F3F6F4" }}>
+    <ScrollView ref={homeScroll} style={[s.screen, token && mode === "passenger" && { backgroundColor: passengerTheme === "light" ? "#f4f6f4" : onayDark.background }, driverChrome && s.driverScreen]} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
     {token && profile && activeRole === "passenger" && mode === "passenger" ? <OnayPassengerHome
       activeOrder={passengerHasActiveOrder}
       onViewActiveOrder={() => selectPassengerTab("trips")}
@@ -879,9 +880,9 @@ export default function Home() {
       onChooseLocation={openPassengerRoutePicker}
     /> : null}
     {!(token && profile && activeRole === "passenger" && mode === "passenger") ? <>
-    <View style={s.header}><Text style={s.logo}>O</Text><View style={s.brandWrap}><Text style={s.brand}>Onay</Text><Text style={s.tag}>ТВОЙ ГОРОД. ТВОЙ МАРШРУТ.</Text></View>{token ? <Pressable onPress={logout} disabled={busy}><Text style={s.logout}>Выйти</Text></Pressable> : null}</View>
-    <View style={s.hero}><Text style={s.kicker}>ОДНО ПРИЛОЖЕНИЕ · ANDROID + IOS</Text><Text style={s.title}>{mode === "passenger" ? "Куда едем?" : "Onay Driver"}</Text><Text style={s.desc}>{mode === "passenger" ? "Выбери маршрут — остальное сделает Onay." : "Подтверждённый водитель может встать в очередь и получать подходящие заказы."}</Text></View>
-    <View style={s.switch}><Button title="Пассажир" onPress={() => switchMode("passenger")} disabled={busy || profileLoading} secondary={mode !== "passenger"} /><Button title="Водитель" onPress={() => switchMode("driver")} disabled={busy || profileLoading} secondary={mode !== "driver"} /></View>
+    <View style={[s.header, driverChrome && s.driverHeader]}>{driverChrome ? <Image testID="onay-driver-confirmed-logo" source={require("../assets/onay-confirmed-logo.jpg")} style={s.driverLogo} resizeMode="contain" accessibilityLabel="Логотип Onay" /> : <Text style={s.logo}>O</Text>}<View style={s.brandWrap}><Text style={[s.brand, driverChrome && s.driverBrand]}>Onay</Text><Text style={[s.tag, driverChrome && s.driverTag]}>ТВОЙ ГОРОД. ТВОЙ МАРШРУТ.</Text></View>{token ? <Pressable onPress={logout} disabled={busy} accessibilityRole="button" accessibilityLabel="Выйти из аккаунта" style={driverChrome && s.driverLogoutButton}><Text style={[s.logout, driverChrome && s.driverLogout]}>Выйти</Text></Pressable> : null}</View>
+    <View style={[s.hero, driverChrome && s.driverHero]}><Text style={[s.kicker, driverChrome && s.driverKicker]}>ОДНО ПРИЛОЖЕНИЕ · ANDROID + IOS</Text><Text style={[s.title, driverChrome && s.driverHeroTitle]}>{mode === "passenger" ? "Куда едем?" : "Onay Driver"}</Text><Text style={[s.desc, driverChrome && s.driverHeroText]}>{mode === "passenger" ? "Выбери маршрут — остальное сделает Onay." : "Подтверждённый водитель может встать в очередь и получать подходящие заказы."}</Text></View>
+    <View testID="onay-role-switch" style={s.switch}><Button title="Пассажир" testID="onay-switch-to-passenger" onPress={() => switchMode("passenger")} disabled={busy || profileLoading} secondary={mode !== "passenger"} dark={driverChrome} /><Button title="Водитель" testID="onay-switch-to-driver" onPress={() => switchMode("driver")} disabled={busy || profileLoading} secondary={mode !== "driver"} dark={driverChrome} /></View>
     </> : null}
     {showEndpointSettings ? <View testID="onay-server-settings-panel" style={[s.card, passengerDarkSystem && s.darkPassengerTripCard]}><Text style={[s.heading, passengerDarkSystem && s.darkPassengerTripTitle]}>Сервер Onay</Text><Text style={[s.descDark, passengerDarkSystem && s.darkPassengerTripMuted]}>Укажи адрес сервера для подключения. При смене сервера потребуется вход по телефону.</Text><TextInput style={[s.input, passengerDarkSystem && s.legacyInputDark]} placeholderTextColor={passengerDarkSystem ? onayDark.muted : "#71837a"} value={endpointInput} onChangeText={setEndpointInput} placeholder="https://api.onay…" autoCapitalize="none" autoCorrect={false} keyboardType="url" editable={!busy && !sessionLoading} />{endpointError ? <Text style={[s.note, passengerDarkSystem && s.darkPassengerTripNote]} accessibilityRole="alert">{endpointError}</Text> : null}<Button title="Сохранить сервер" onPress={saveEndpoint} disabled={busy || sessionLoading || !endpointInput.trim()} dark={passengerDarkSystem} />{apiBase ? <Button title="Закрыть настройки" onPress={() => setShowEndpointSettings(false)} secondary disabled={busy} dark={passengerDarkSystem} /> : null}</View> : <Button title="Настройки сервера" onPress={() => setShowEndpointSettings(true)} secondary disabled={busy || sessionLoading} dark={passengerDarkSystem} />}
     {visibleError ? <View testID="onay-data-error" accessibilityRole="alert" style={[s.card, passengerDarkSystem && s.darkPassengerTripCard]}><Text style={[s.heading, passengerDarkSystem && s.darkPassengerTripTitle]}>Нет актуальных данных</Text><Text style={[s.descDark, passengerDarkSystem && s.darkPassengerTripMuted]}>{visibleError}</Text><Button title="Повторить обновление" testID="onay-data-error-retry" onPress={() => { void refreshOrders(); void refreshAvailability(); setProfileRefresh(value => value + 1); }} secondary disabled={busy} dark={passengerDarkSystem} /></View> : null}
@@ -974,13 +975,25 @@ export default function Home() {
       />
     </View>
     </>}
-    <Text style={s.footer}>© 2026 ONAY OST E.K.K Technologies · One Founder. Intelligent Systems.</Text>
+    <Text style={[s.footer, driverChrome && s.driverFooter]}>© 2026 ONAY OST E.K.K Technologies · One Founder. Intelligent Systems.</Text>
     </ScrollView>
     {token && profile && activeRole === "passenger" && mode === "passenger" ? <OnayPassengerTabBar active={passengerTab} theme={passengerTheme} onSelect={selectPassengerTab} /> : null}
   </View>;
 }
 
 const s = StyleSheet.create({
+ driverScreen:{backgroundColor:onayDark.background},
+ driverHeader:{paddingBottom:6},
+ driverLogo:{width:48,height:48,borderRadius:13},
+ driverBrand:{color:onayDark.text,fontWeight:"800"},
+ driverTag:{color:onayDark.muted},
+ driverLogoutButton:{padding:8,borderWidth:1,borderColor:onayDark.border,borderRadius:12,backgroundColor:onayDark.card},
+ driverLogout:{color:onayDark.text},
+ driverHero:{backgroundColor:onayDark.card,borderWidth:1,borderColor:onayDark.border},
+ driverKicker:{color:onayDark.accent},
+ driverHeroTitle:{color:onayDark.text},
+ driverHeroText:{color:onayDark.muted},
+ driverFooter:{color:onayDark.muted},
  driverNoRouteCard:{backgroundColor:onayDark.card,borderColor:onayDark.border},
  driverNoRouteHeading:{color:onayDark.text},
  driverNoRouteText:{color:onayDark.muted},
