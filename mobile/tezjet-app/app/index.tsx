@@ -925,7 +925,12 @@ export default function Home() {
         </View>
         {incomingOrder ? <View style={[s.card, s.driverOfferCard]} testID="driver-incoming-order"><Text style={[s.heading, s.driverOfferHeading]}>Новый заказ</Text><Text style={[s.descDark, s.driverOfferText]}>Точка подачи: {ridePickupLabel(incomingOrder)}</Text><Text style={[s.descDark, s.driverOfferText]}>Куда: {rideDestinationLabel(incomingOrder)}</Text><Text style={[s.descDark, s.driverOfferText]}>Пассажиров: {incomingOrder.seats}</Text><Text style={[s.note, s.driverOfferTimer]} testID="driver-offer-countdown">Ответить за {Math.max(0, Math.ceil(((incomingOrder.offer_expires_at ?? now) - now) / 1_000))} сек.</Text><Button title={busy ? "Принимаем…" : "Принять заказ"} testID="driver-order-accept" onPress={acceptOrder} disabled={busy || !isLiveOffer(incomingOrder, profile.id, now)} /><Button title="Отклонить" testID="driver-order-reject" onPress={rejectOrder} disabled={busy || !isLiveOffer(incomingOrder, profile.id, now)} secondary /></View> : null}
         {activeDriverOrders.map(activeOrder => <View key={activeOrder.id} style={[s.card, s.driverCurrentCard]} testID={`driver-trip-${activeOrder.id}`}><Text style={[s.heading, s.driverCurrentHeading]}>Текущая поездка</Text><Text style={[s.descDark, s.driverCurrentText]}>Статус: {statusLabels[activeOrder.status]}</Text><Text style={[s.descDark, s.driverCurrentText]}>Точка подачи: {ridePickupLabel(activeOrder)}</Text><Text style={[s.descDark, s.driverCurrentText]}>Назначение: {rideDestinationLabel(activeOrder)}</Text>{canBoardLinePassenger(lineState, activeOrder) ? <Button title="Пассажир сел в машину" testID="driver-line-board" onPress={() => { void boardLinePassenger(activeOrder); }} disabled={busy} /> : null}{nextDriverTripStatus(lineState?.phase ?? null, activeOrder) ? <Button title={busy ? "Обновляем…" : nextTripLabel(activeOrder)} testID={`driver-trip-progress-${activeOrder.id}`} onPress={() => progressOrder(activeOrder)} disabled={busy} /> : null}</View>)}
-        {!driverRouteGate.hasChoice && !driverQueueContext && !incomingOrder && !activeDriverOrders.length ? <View style={s.card}><Text style={s.descDark}>Ожидаем подходящий заказ. Сервер выбирает водителя по очереди и доступным местам.</Text></View> : null}
+        {!driverRouteGate.hasChoice && !driverQueueContext && !incomingOrder && !activeDriverOrders.length
+          ? <View testID="onay-driver-no-route" style={[s.card, s.driverNoRouteCard]}>
+              <Text accessibilityRole="header" style={[s.heading, s.driverNoRouteHeading]}>Маршрут не выбран</Text>
+              <Text style={[s.descDark, s.driverNoRouteText]}>Выбери маршрут и направление выше, затем встань в очередь. До этого заказы не будут приходить.</Text>
+            </View>
+          : null}
         <DriverHistory key={`${driverRouteSession}:${profile.id}`} endpoint={apiBase} token={token} driverId={profile.id} />
       </>
     ) : <>
@@ -976,6 +981,9 @@ export default function Home() {
 }
 
 const s = StyleSheet.create({
+ driverNoRouteCard:{backgroundColor:onayDark.card,borderColor:onayDark.border},
+ driverNoRouteHeading:{color:onayDark.text},
+ driverNoRouteText:{color:onayDark.muted},
  driverReviewCard:{backgroundColor:onayDark.card,borderColor:onayDark.border},
  driverReviewTitle:{color:onayDark.text},
  driverReviewDescription:{color:onayDark.muted},
