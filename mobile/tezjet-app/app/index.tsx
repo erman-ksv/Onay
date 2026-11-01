@@ -904,7 +904,7 @@ export default function Home() {
       {mode === "driver" ? <Text style={s.small}>Новый водительский профиль будет ожидать подтверждения администратора. До подтверждения заказы недоступны.</Text> : null}
     </View> : !profile ? <View testID="onay-profile-unavailable" style={[s.card, passengerDarkSystem && s.darkPassengerTripCard]}><Text style={[s.heading, passengerDarkSystem && s.darkPassengerTripTitle]}>{profileLoading ? "Загружаем профиль…" : "Нет связи с профилем"}</Text>{profileLoading ? <ActivityIndicator color={passengerDarkSystem ? onayDark.accent : "#0D735C"} /> : null}<Text style={[s.descDark, passengerDarkSystem && s.darkPassengerTripMuted]}>{profileError || "Вход сохранён. Подключись к Onay, чтобы продолжить."}</Text><Button title="Повторить" testID="onay-profile-retry" onPress={() => setProfileRefresh(value => value + 1)} disabled={profileLoading} secondary dark={passengerDarkSystem} /></View> : mode === "driver" ? (
       activeRole !== "driver" ? <View style={s.card}><Text style={s.heading}>Переключение режима</Text><Text style={s.descDark}>Подключи водительский профиль к своему аккаунту.</Text><Button title="Войти в режим водителя" onPress={() => switchMode("driver")} disabled={busy} /></View>
-      : profile.driver_approval_status !== "approved" ? <View style={s.card}><Text style={s.heading}>{profile.driver_approval_status === "blocked" ? "Профиль заблокирован" : profile.driver_approval_status === "rejected" ? "Профиль отклонён" : "Профиль на проверке"}</Text><Text style={s.descDark}>{profile.driver_approval_status === "blocked" ? "Работа водителем заблокирована администратором. Изменение автомобиля не снимает блокировку." : profile.driver_approval_status === "rejected" ? "Свяжись с поддержкой Onay, чтобы узнать причину." : "Администратор должен подтвердить водительский профиль. До этого нельзя вставать в очередь или принимать заказы."}</Text><Button title="Проверить статус" onPress={refreshProfile} secondary disabled={busy} /></View>
+      : profile.driver_approval_status !== "approved" ? <View style={[s.card, s.driverReviewCard]} testID="onay-driver-review-gate"><Text style={[s.heading, s.driverReviewTitle]} accessibilityRole="header">{profile.driver_approval_status === "blocked" ? "Профиль заблокирован" : profile.driver_approval_status === "rejected" ? "Профиль отклонён" : "Профиль на проверке"}</Text><Text style={[s.descDark, s.driverReviewDescription]}>{profile.driver_approval_status === "blocked" ? "Работа водителем заблокирована администратором. Изменение автомобиля не снимает блокировку." : profile.driver_approval_status === "rejected" ? "Свяжись с поддержкой Onay, чтобы узнать причину." : "Администратор должен подтвердить водительский профиль. До этого нельзя вставать в очередь или принимать заказы."}</Text><Button title="Проверить статус" testID="onay-driver-review-refresh" onPress={refreshProfile} secondary disabled={busy} dark /></View>
       : <>
         <DriverRoutePicker key={driverRouteSession} endpoint={apiBase} token={token} busy={busy} queued={queueMembership !== "absent"}
           activeTrip={activeDriverOrders.length > 0} pendingOffer={!!incomingOrder} onStatusChange={updateDriverRouteGate} />
@@ -976,6 +976,9 @@ export default function Home() {
 }
 
 const s = StyleSheet.create({
+ driverReviewCard:{backgroundColor:onayDark.card,borderColor:onayDark.border},
+ driverReviewTitle:{color:onayDark.text},
+ driverReviewDescription:{color:onayDark.muted},
  legacyStopDark:{backgroundColor:onayDark.cardRaised,borderColor:onayDark.border},
  legacyStopActiveDark:{backgroundColor:"#20442d",borderColor:onayDark.accent},
  legacyStopTextDark:{color:onayDark.text},
