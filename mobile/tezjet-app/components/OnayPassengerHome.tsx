@@ -62,23 +62,23 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
     </View>
     {menuOpen ? <View testID="onay-home-settings-menu" style={[h.settingsPanel, light && { backgroundColor: "#ffffff", borderColor: "#e3e8e4" }]}>
       <Text style={[h.settingsTitle, light && { color: "#0e1a14" }]}>Настройки</Text>
-      <View style={h.settingsRow}><Text style={[h.settingsLabel, light && { color: "#0e1a14" }]}>Способ оплаты</Text><Text style={h.settingsMuted}>Наличными</Text></View>
+      <View style={h.settingsRow}><Text style={[h.settingsLabel, light && { color: "#0e1a14" }]}>Способ оплаты</Text><Text style={[h.settingsMuted, light && h.settingsMutedLight]}>Наличными</Text></View>
       <View style={h.settingsRow}>
         <Text style={[h.settingsLabel, light && { color: "#0e1a14" }]}>Режим света</Text>
         <View style={h.themeControls}>
           {(["light", "dark"] as const).map(value => <Pressable key={value} testID={"onay-home-theme-" + value}
-            accessibilityRole="button" accessibilityState={{ selected: theme === value }}
+            accessibilityRole="button" accessibilityLabel={value === "light" ? "Светлая тема" : "Тёмная тема"} accessibilityState={{ selected: theme === value }}
             onPress={() => onThemeChange?.(value)}
-            style={[h.themeToggle, theme === value && h.themeActive]}>
-            <Text style={{ color: theme === value ? onayDark.accentInk : onayDark.text }}>{value === "light" ? "☀" : "☾"}</Text>
+            style={[h.themeToggle, light && h.themeToggleLight, theme === value && h.themeActive]}>
+            <Text style={{ color: theme === value ? onayDark.accentInk : (light ? "#0e1a14" : onayDark.text) }}>{value === "light" ? "☀" : "☾"}</Text>
           </Pressable>)}
         </View>
       </View>
       <Pressable accessibilityRole="button" testID="onay-home-about" onPress={() => setAboutOpen(value => !value)} style={h.settingsRow}>
         <Text style={[h.settingsLabel, light && { color: "#0e1a14" }]}>О приложении</Text>
-        <Text style={h.settingsMuted}>›</Text>
+        <Text style={[h.settingsMuted, light && h.settingsMutedLight]}>›</Text>
       </Pressable>
-      {aboutOpen ? <Text testID="onay-home-about-details" style={h.settingsMuted}>
+      {aboutOpen ? <Text testID="onay-home-about-details" style={[h.settingsMuted, light && h.settingsMutedLight]}>
         Onay — сервис междугородних поездок. ONAY OST E.K.K Technologies.
       </Text> : null}
       <Text style={[h.settingsVersion, light && { color: "#6a7b72" }]}>Onay · Версия {Constants.expoConfig?.version ?? "0.1.0"}</Text>
@@ -143,8 +143,10 @@ const h = StyleSheet.create({
   settingsRow: { minHeight: 45, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   settingsLabel: { color: onayDark.text, fontSize: 14, fontWeight: "600" },
   settingsMuted: { color: onayDark.muted, fontSize: 12, flexShrink: 1 },
+  settingsMutedLight: { color: "#546b5e" },
   themeControls: { flexDirection: "row", gap: 4 },
   themeToggle: { height: 35, width: 40, backgroundColor: onayDark.cardRaised, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  themeToggleLight: { backgroundColor: "#e6f0ea" },
   themeActive: { backgroundColor: onayDark.accent },
   settingsVersion: { textAlign: "center", marginTop: 25, color: onayDark.muted, fontSize: 12 },
   root: { backgroundColor: onayDark.background, paddingTop: 8, marginBottom: 16 },
