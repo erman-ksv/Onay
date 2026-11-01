@@ -20,7 +20,10 @@ test("driver shift shows dark Onay V2 colors for queue, free seats and seat sele
   }
   assert.ok(shift.includes('onChange={setDriverSeats}'));
   assert.ok(shift.includes('dark />'));
-  assert.ok(app.includes('<Stepper value={seats} onChange={setSeats} />'), "Passenger legacy stepper remains unchanged");
+  assert.ok(app.includes('<Stepper value={seats} onChange={setSeats} dark={passengerTheme === "dark"} />'),
+    "Passenger C/D stepper must preserve seat state and update handler while following the selected theme");
+  assert.ok(app.includes('onPress={() => onChange(Math.max(min, value - 1))}'), "Stepper decrement retains minimum bound");
+  assert.ok(app.includes('onPress={() => onChange(Math.min(max, value + 1))}'), "Stepper increment retains maximum bound");
 });
 
 test("driver shift remains server-backed with safe queue and departure controls", () => {

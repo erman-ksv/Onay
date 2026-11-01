@@ -28,9 +28,16 @@ test("legacy C/D route follows light/dark theme without losing accessibly named 
   assert.ok(legacy.includes('testID="onay-legacy-check-availability"'));
   assert.ok(legacy.includes('testID="onay-legacy-book-trip"'));
   assert.ok(legacy.includes('dark={passengerTheme === "dark"}'));
-  for (const style of ["legacyButtonDark", "legacyButtonDarkText", "legacyButtonSecondaryDark", "legacyButtonSecondaryDarkText"]) {
-    assert.ok(app.includes("dark && s." + style), "Shared button theme missing " + style);
+  for (const style of ["legacyButtonDark", "legacyButtonDarkText"]) {
+    assert.ok(app.includes("dark && s." + style), "Shared primary button theme missing " + style);
   }
+  for (const style of ["legacyButtonSecondaryDark", "legacyButtonSecondaryDarkText"]) {
+    assert.ok(app.includes("dark && secondary && s." + style), "Shared secondary button must keep both dark and secondary guards: " + style);
+  }
+  assert.ok(legacy.includes('disabled={busy || checkingAvailability} secondary dark={passengerTheme === "dark"}'),
+    "Availability remains disabled during checks while using the secondary theme");
+  assert.ok(legacy.includes('disabled={busy || !fareFresh || !canOrder || passengerHasActiveOrder || !bookingGate.canSubmit()} dark={passengerTheme === "dark"}'),
+    "Booking action keeps all safety conditions when themed");
   assert.ok(app.includes('disabled={disabled} style={[s.button, dark && s.legacyButtonDark'));
   assert.ok(app.includes('accessibilityRole="button" accessibilityState={{ disabled }}'));
 });
