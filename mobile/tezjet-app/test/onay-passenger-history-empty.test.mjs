@@ -12,7 +12,7 @@ test("Onay V2 empty history appears only after a confirmed zero-result server re
   const emptyBranch = source.indexOf('{!rows.length ? <View testID="passenger-history-empty"');
   const closed = source.indexOf('{rows.slice(0, limit).map(', emptyBranch);
   assert.ok(dataBranch >= 0 && emptyBranch > dataBranch && closed > emptyBranch);
-  assert.match(source, /setRows\(null\); setLoading\(true\); setError\("…"\)/);
+  assert.ok(source.includes('setRows(null); setLoading(true); setError("");'));
   assert.match(source, /if \(generation\.current === ticket && !controller\.signal\.aborted\) setRows\(value\)/);
   assert.match(source, /if \(generation\.current === ticket\) setError\(/);
 });
