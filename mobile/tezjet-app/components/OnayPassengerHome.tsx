@@ -119,7 +119,7 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
             symbol="⌂" light={light} onPress={() => onChoose("village")} />
         </View>
         <View style={h.half}>
-          <TripCard testID="onay-home-to-address" title="По своему адресу" description="Машина приедет за вами"
+          <TripCard testID="onay-home-to-address" title="По своему адресу" description="Уточнение подачи на маршруте C/D"
             symbol="⌖" light={light} onPress={() => onChoose("address")} />
         </View>
       </View>
