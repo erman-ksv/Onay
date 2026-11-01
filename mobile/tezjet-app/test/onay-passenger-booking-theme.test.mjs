@@ -21,6 +21,13 @@ test("light palette covers booking surfaces, buttons, disabled and fare states",
   assert.ok(booking.includes("bookingGate.canSubmit()"));
   assert.ok(booking.includes("saveRouteBookingRecovery(AsyncStorage, recoveryKey"));
   assert.ok(booking.includes("isFreshPassengerRouteQuote(availability, key, now)"));
-  assert.ok(booking.includes('testID="route-book-trip"'));
-  assert.ok(booking.includes('testID="route-check-availability"'));
+  assert.ok(booking.includes('style={[themeStyles.button, primary ? themeStyles.buttonPrimary : themeStyles.buttonSecondary, disabled && themeStyles.disabled]}'));
+});
+
+test("route actions forward stable test IDs through the real Pressable, without weakening booking admission", () => {
+  assert.match(booking, /const button = \(title: string, onPress: \(\) => void, disabled = false, primary = false, testID\?: string\) =>\s*<Pressable testID=\{testID\} accessibilityRole="button" accessibilityState=\{\{ disabled \}\}\s*onPress=\{onPress\} disabled=\{disabled\}/);
+  assert.match(booking, /button\(checking \? "Проверяем…" : "Проверить цену и водителей",\s*\(\) => \{ void check\(\); \}, checking \|\| submitting \|\| busy, false, "route-check-availability"\)/);
+  assert.match(booking, /button\(submitting \? "Оформляем…" : "Заказать поездку",\s*\(\) => \{ void submit\(\); \}, !canOrder, true, "route-book-trip"\)/);
+  assert.match(booking, /if \(!selection \|\| !canOrder \|\| !bookingGate\.tryStart\("configured"\)\) return;/);
+  assert.match(booking, /isFreshPassengerRouteQuote\(availability, key, now\)/);
 });
