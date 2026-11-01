@@ -9,7 +9,7 @@ test("the main home menu opens the same branded About page as passenger profile"
   assert.match(home, /import OnayPassengerAbout from "\.\/OnayPassengerAbout"/);
   assert.match(home, /testID="onay-home-about" onPress=\{\(\) => setAboutOpen\(true\)\}/);
   assert.match(home, /if \(aboutOpen\) \{/);
-  assert.match(home, /<OnayPassengerAbout theme=\{theme\} onBack=\{\(\) => \{ setAboutOpen\(false\); setMenuOpen\(false\); \}\} \/>/);
+  assert.ok(home.includes('<OnayPassengerAbout theme={theme} onBack={() => { setAboutOpen(false); setMenuOpen(false); }} backLabel="Назад на главную" />'));
   assert.doesNotMatch(home, /testID="onay-home-about-details"/);
   assert.match(about, /testID="onay-about-real-version"/);
 });
@@ -20,4 +20,14 @@ test("back returns to a closed menu without affecting the existing booking actio
   assert.match(home, /onPress=\{\(\) => onChoose\("village"\)\}/);
   assert.match(home, /onPress=\{\(\) => onChoose\("address"\)\}/);
   assert.match(home, /onPress=\{onChooseLocation\}/);
+});
+
+test("About back button uses the correct accessible destination for each entry point", () => {
+  const profile = readFileSync(new URL("../components/OnayPassengerProfile.tsx", import.meta.url), "utf8");
+  assert.ok(about.includes('backLabel?: string'));
+  assert.ok(about.includes('backLabel = "Назад в профиль"'));
+  assert.ok(about.includes("accessibilityLabel={backLabel}"));
+  assert.ok(home.includes('backLabel="Назад на главную"'));
+  assert.ok(profile.includes('<OnayPassengerAbout theme={theme} onBack={() => setAboutOpen(false)} />'));
+  assert.ok(home.includes('setAboutOpen(false); setMenuOpen(false);'));
 });

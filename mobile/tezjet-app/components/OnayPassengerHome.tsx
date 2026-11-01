@@ -42,7 +42,7 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
   const [aboutOpen, setAboutOpen] = useState(false);
   const light = theme === "light";
   if (aboutOpen) {
-    return <OnayPassengerAbout theme={theme} onBack={() => { setAboutOpen(false); setMenuOpen(false); }} />;
+    return <OnayPassengerAbout theme={theme} onBack={() => { setAboutOpen(false); setMenuOpen(false); }} backLabel="Назад на главную" />;
   }
   return <View testID="onay-passenger-home" style={[h.root, light && { backgroundColor: "#f4f6f4" }]}>
     <View style={h.header}>

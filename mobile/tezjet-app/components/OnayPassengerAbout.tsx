@@ -5,12 +5,13 @@ import { onayDark } from "../lib/onay-auth-ui";
 type Props = {
   theme: "light" | "dark";
   onBack: () => void;
+  backLabel?: string;
 };
 
 const APP_VERSION = Constants.expoConfig?.version ?? "0.1.0";
 
 /** Passenger About page matching the Onay V2 HTML layout; no unverified legal links. */
-export default function OnayPassengerAbout({ theme, onBack }: Props) {
+export default function OnayPassengerAbout({ theme, onBack, backLabel = "Назад в профиль" }: Props) {
   const light = theme === "light";
   const primaryText = light ? "#0a1d15" : onayDark.text;
   const secondaryText = light ? "#5a7366" : onayDark.muted;
@@ -20,7 +21,7 @@ export default function OnayPassengerAbout({ theme, onBack }: Props) {
       <Pressable
         testID="onay-about-back"
         accessibilityRole="button"
-        accessibilityLabel="Назад в профиль"
+        accessibilityLabel={backLabel}
         onPress={onBack}
         style={[styles.back, light && styles.backLight]}
       >
