@@ -1,8 +1,9 @@
 import { useState } from "react";
 import Constants from "expo-constants";
-import { Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { onayDark } from "../lib/onay-auth-ui";
 import { onayProfileInitial } from "../lib/onay-profile-avatar";
+import OnayPassengerSupport from "./OnayPassengerSupport";
 
 type Theme = "light" | "dark";
 type Props = {
@@ -16,12 +17,12 @@ type Props = {
   onLogout: () => void;
 };
 
-const HELP_EMAIL = "onayost.taxi@gmail.com";
 const APP_VERSION = Constants.expoConfig?.version ?? "0.1.0";
 
 export default function OnayPassengerProfile({ fullName, phoneNumber, busy, theme, onThemeChange, onHistory, onDriver, onLogout }: Props) {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [personalOpen, setPersonalOpen] = useState(false);
+  const [supportOpen, setSupportOpen] = useState(false);
   const light = theme === "light";
   const surface = light ? "#ffffff" : onayDark.card;
   const foreground = light ? "#0e1a14" : onayDark.text;
@@ -33,12 +34,8 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
       <Text style={{ color: muted }}>{trailing ? trailing + "  ›" : "›"}</Text>
     </Pressable>
   );
-  async function support() {
-    try {
-      await Linking.openURL("mailto:" + HELP_EMAIL);
-    } catch {
-      Alert.alert("Поддержка Onay", "Напишите нам: " + HELP_EMAIL);
-    }
+  if (supportOpen) {
+    return <OnayPassengerSupport theme={theme} onBack={() => setSupportOpen(false)} />;
   }
   return <View testID="onay-passenger-profile-panel" style={[s.root, { backgroundColor: light ? "#f4f6f4" : onayDark.background }]}>
     <View style={[s.identity, { backgroundColor: surface }]}>
@@ -91,7 +88,7 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
 
     <View style={[s.group, { backgroundColor: surface }]}>
       {row("driver", "Режим водителя", onDriver)}
-      {row("support", "Поддержка", () => { void support(); })}
+      {row("support", "Поддержка", () => setSupportOpen(true))}
       {row("about", "О приложении", () => setAboutOpen(value => !value))}
       {aboutOpen ? <View testID="onay-profile-about" style={s.about}>
         <Text style={[s.aboutTitle, { color: foreground }]}>Onay · версия {APP_VERSION}</Text>
