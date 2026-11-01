@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { onayDark } from "../lib/onay-auth-ui";
 import { onayProfileInitial } from "../lib/onay-profile-avatar";
 import OnayPassengerSupport from "./OnayPassengerSupport";
+import OnayPassengerAbout from "./OnayPassengerAbout";
 
 type Theme = "light" | "dark";
 type Props = {
@@ -36,6 +37,9 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
   );
   if (supportOpen) {
     return <OnayPassengerSupport theme={theme} onBack={() => setSupportOpen(false)} />;
+  }
+  if (aboutOpen) {
+    return <OnayPassengerAbout theme={theme} onBack={() => setAboutOpen(false)} />;
   }
   return <View testID="onay-passenger-profile-panel" style={[s.root, { backgroundColor: light ? "#f4f6f4" : onayDark.background }]}>
     <View style={[s.identity, { backgroundColor: surface }]}>
@@ -90,13 +94,7 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
     <View style={[s.group, { backgroundColor: surface }]}>
       {row("driver", "Режим водителя", onDriver)}
       {row("support", "Поддержка", () => setSupportOpen(true))}
-      {row("about", "О приложении", () => setAboutOpen(value => !value))}
-      {aboutOpen ? <View testID="onay-profile-about" style={s.about}>
-        <Text style={[s.aboutTitle, { color: foreground }]}>Onay · версия {APP_VERSION}</Text>
-        <Text style={{ color: muted, lineHeight: 20 }}>Приложение для поездок между населёнными пунктами. Стоимость и наличие водителей подтверждает сервер.</Text>
-        <Text style={{ color: muted, marginTop: 10 }}>ONAY OST E.K.K Technologies</Text>
-        <Text style={{ color: muted }}>One Founder. Intelligent Systems.</Text>
-      </View> : null}
+      {row("about", "О приложении", () => setAboutOpen(true))}
     </View>
 
     <View style={[s.group, { backgroundColor: surface }]}>
@@ -128,8 +126,6 @@ const s = StyleSheet.create({
   themeButtonLight: { backgroundColor: "#f8fbf9" },
   themeSelected: { backgroundColor: onayDark.accent },
   exit: { minHeight: 56, justifyContent: "center" },
-  about: { gap: 5, paddingVertical: 16 },
-  aboutTitle: { fontWeight: "800", fontSize: 17, marginBottom: 5 },
   version: { textAlign: "center", fontSize: 12, marginTop: 14 },
   copyright: { textAlign: "center", fontSize: 11, marginBottom: 12 },
 });
