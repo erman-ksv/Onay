@@ -48,7 +48,11 @@ export default function PassengerHistory({ endpoint, token, passengerId, recentO
       {error ? <Text style={!light && s.darkHeading} testID="passenger-history-error" accessibilityRole="alert">{error}</Text> : null}
       {rows ? <View testID="passenger-history-results">
         <Text style={[s.note, !light && s.darkMuted]}>Закрытых поездок: {rows.length}. Сначала новые.</Text>
-        {!rows.length ? <Text style={!light && s.darkMuted} testID="passenger-history-empty">Закрытых поездок пока нет.</Text> : null}
+        {!rows.length ? <View testID="passenger-history-empty" style={[s.empty, !light && s.darkEmpty]}>
+          <Text accessible={false} style={s.emptyIcon}>▤</Text>
+          <Text testID="passenger-history-empty-title" style={[s.emptyTitle, !light && s.darkHeading]}>Поездок пока нет</Text>
+          <Text style={[s.emptyDescription, !light && s.darkMuted]}>Здесь появятся завершённые и отменённые поездки</Text>
+        </View> : null}
         {rows.slice(0, limit).map(({ order, money }) => <View key={order.id} style={[s.row, !light && s.darkRow]} testID={`passenger-history-row-${order.id}`}>
           <Text style={!light && s.darkHeading}>{ridePickupLabel(order)} → {rideDestinationLabel(order)}</Text>
           <Text style={!light && s.darkHeading}>{statusLabels[order.status]} · {order.seats} мест</Text>
@@ -68,6 +72,11 @@ const s = StyleSheet.create({
   darkMuted: { color: onayDark.muted },
   darkButton: { backgroundColor: onayDark.cardRaised },
   darkRow: { borderColor: onayDark.border },
+  darkEmpty: { backgroundColor: onayDark.cardRaised, borderColor: onayDark.border },
+  empty: { paddingHorizontal: 16, paddingVertical: 28, alignItems: "center", borderRadius: 18, backgroundColor: "#F3F7F4", borderColor: "#DCE5DF", borderWidth: 1, gap: 10 },
+  emptyIcon: { color: onayDark.accent, fontSize: 32, lineHeight: 40 },
+  emptyTitle: { fontWeight: "800", fontSize: 18, color: "#102D26", textAlign: "center" },
+  emptyDescription: { fontSize: 13, lineHeight: 20, color: "#53675E", maxWidth: 270, textAlign: "center" },
   card: { padding: 20, marginBottom: 16, backgroundColor: "#fff", borderRadius: 24, gap: 10 },
   heading: { fontSize: 20, fontWeight: "700", color: "#102D26" }, note: { color: "#53675E", lineHeight: 21 },
   button: { backgroundColor: "#EDF8F2", padding: 14, borderRadius: 12 }, row: { borderTopWidth: 1, borderColor: "#DCE5DF", paddingVertical: 12, gap: 5 } });
