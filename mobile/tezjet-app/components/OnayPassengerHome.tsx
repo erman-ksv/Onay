@@ -3,6 +3,7 @@ import Constants from "expo-constants";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { onayDark } from "../lib/onay-auth-ui";
 import type { OnayPassengerHomeMode } from "../lib/onay-home-modes";
+import OnayPassengerAbout from "./OnayPassengerAbout";
 
 type Props = {
   onChoose: (mode: OnayPassengerHomeMode) => void;
@@ -40,6 +41,9 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
   const [menuOpen, setMenuOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const light = theme === "light";
+  if (aboutOpen) {
+    return <OnayPassengerAbout theme={theme} onBack={() => { setAboutOpen(false); setMenuOpen(false); }} />;
+  }
   return <View testID="onay-passenger-home" style={[h.root, light && { backgroundColor: "#f4f6f4" }]}>
     <View style={h.header}>
       <Pressable testID="onay-home-menu-open" accessibilityRole="button" accessibilityLabel="Открыть настройки"
@@ -74,13 +78,10 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
           </Pressable>)}
         </View>
       </View>
-      <Pressable accessibilityRole="button" testID="onay-home-about" onPress={() => setAboutOpen(value => !value)} style={h.settingsRow}>
+      <Pressable accessibilityRole="button" testID="onay-home-about" onPress={() => setAboutOpen(true)} style={h.settingsRow}>
         <Text style={[h.settingsLabel, light && { color: "#0e1a14" }]}>О приложении</Text>
         <Text style={[h.settingsMuted, light && h.settingsMutedLight]}>›</Text>
       </Pressable>
-      {aboutOpen ? <Text testID="onay-home-about-details" style={[h.settingsMuted, light && h.settingsMutedLight]}>
-        Onay — сервис междугородних поездок. ONAY OST E.K.K Technologies.
-      </Text> : null}
       <Text style={[h.settingsVersion, light && { color: "#6a7b72" }]}>Onay · Версия {Constants.expoConfig?.version ?? "0.1.0"}</Text>
     </View> : null}
     {activeOrder ? <Pressable
