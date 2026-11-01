@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { validateApiEndpoint } from "../lib/api";
+import { onayDark } from "../lib/onay-auth-ui";
 import { driverVehicleBody, parseDriverVehicleSnapshot, type DriverVehicleSnapshot, type VehicleDraft } from "../lib/driver-vehicle";
 
 type Props = { endpoint: string; token: string; blocked: boolean; onBusyChange: (busy: boolean) => void; onSaved: (value: DriverVehicleSnapshot) => void };
@@ -54,19 +55,47 @@ export default function DriverVehicleForm({ endpoint, token, blocked, onBusyChan
   const disabled = loading || saving || blocked;
   const current = snapshot?.driver_vehicle;
   const dirty = !current || draft.make.trim() !== current.make || draft.model.trim() !== current.model || draft.plate_number.trim() !== current.plate_number || draft.seat_capacity !== current.seat_capacity;
-  return <View style={s.card} testID="driver-vehicle-form"><Text style={s.heading}>Мой автомобиль</Text>
+  return <View style={s.card} testID="driver-vehicle-form">
+    <Text style={s.heading}>Мой автомобиль</Text>
     <Text style={s.note}>После изменения нужна повторная проверка администратора.</Text>
-    {snapshot?.approval_status === "blocked" ? <Text testID="driver-blocked-status" style={s.note}>Работа водителем заблокирована администратором.</Text> : null}
-    {loading ? <Text>Загружаем автомобиль…</Text> : null}
-    <TextInput testID="driver-vehicle-make" accessibilityLabel="Марка автомобиля" placeholder="Марка автомобиля" style={s.input} editable={!disabled} value={draft.make} onChangeText={make => setDraft(value => ({ ...value, make }))} />
-    <TextInput testID="driver-vehicle-model" accessibilityLabel="Модель автомобиля" placeholder="Модель автомобиля" style={s.input} editable={!disabled} value={draft.model} onChangeText={model => setDraft(value => ({ ...value, model }))} />
-    <TextInput testID="driver-vehicle-plate" accessibilityLabel="Госномер" placeholder="Госномер" style={s.input} editable={!disabled} autoCapitalize="characters" value={draft.plate_number} onChangeText={plate_number => setDraft(value => ({ ...value, plate_number }))} />
-    <Text style={s.note}>Пассажирских мест, без водителя: 1–8</Text><TextInput testID="driver-vehicle-seats" accessibilityLabel="Пассажирских мест" style={s.input} keyboardType="number-pad" editable={!disabled} value={String(draft.seat_capacity)} onChangeText={value => setDraft(current => ({ ...current, seat_capacity: Number(value) }))} />
+    {snapshot ? <View testID="driver-vehicle-review-status" accessibilityLiveRegion="polite" style={s.status}>
+      <Text style={[s.statusText, snapshot.approval_status === "approved" && s.statusApproved, snapshot.approval_status === "blocked" && s.statusBlocked]}>
+        Статус водителя: {snapshot.approval_status === "approved" ? "Подтверждён" : snapshot.approval_status === "pending" ? "На проверке" : snapshot.approval_status === "rejected" ? "Отклонён" : "Заблокирован"}
+      </Text>
+    </View> : null}
+    {snapshot?.approval_status === "blocked" ? <Text testID="driver-blocked-status" style={s.error}>Работа водителем заблокирована администратором.</Text> : null}
+    {loading ? <Text style={s.note}>Загружаем автомобиль…</Text> : null}
+    <TextInput testID="driver-vehicle-make" accessibilityLabel="Марка автомобиля" placeholder="Марка автомобиля" placeholderTextColor={onayDark.muted} style={s.input} editable={!disabled} value={draft.make} onChangeText={make => setDraft(value => ({ ...value, make }))} />
+    <TextInput testID="driver-vehicle-model" accessibilityLabel="Модель автомобиля" placeholder="Модель автомобиля" placeholderTextColor={onayDark.muted} style={s.input} editable={!disabled} value={draft.model} onChangeText={model => setDraft(value => ({ ...value, model }))} />
+    <TextInput testID="driver-vehicle-plate" accessibilityLabel="Госномер" placeholder="Госномер" placeholderTextColor={onayDark.muted} style={s.input} editable={!disabled} autoCapitalize="characters" value={draft.plate_number} onChangeText={plate_number => setDraft(value => ({ ...value, plate_number }))} />
+    <Text style={s.note}>Пассажирских мест, без водителя: 1–8</Text>
+    <TextInput testID="driver-vehicle-seats" accessibilityLabel="Пассажирских мест" style={s.input} keyboardType="number-pad" editable={!disabled} value={String(draft.seat_capacity)} onChangeText={value => setDraft(current => ({ ...current, seat_capacity: Number(value) }))} />
     {blocked ? <Text style={s.note}>Изменение доступно после завершения поездок и выхода из очереди.</Text> : null}
-    {error ? <Text style={s.note} testID="driver-vehicle-error">{error}</Text> : null}{notice ? <Text style={s.note} testID="driver-vehicle-notice">{notice}</Text> : null}
-    <Pressable accessibilityRole="button" testID="driver-vehicle-save" disabled={disabled || !snapshot || !dirty} onPress={() => { void save(); }} style={s.button}><Text>Сохранить автомобиль</Text></Pressable>
-    <Pressable accessibilityRole="button" testID="driver-vehicle-refresh" disabled={saving || loading} onPress={() => { void load(); }} style={s.button}><Text>Обновить автомобиль</Text></Pressable>
+    {error ? <Text style={s.error} testID="driver-vehicle-error" accessibilityRole="alert">{error}</Text> : null}
+    {notice ? <Text style={s.notice} testID="driver-vehicle-notice">{notice}</Text> : null}
+    <Pressable accessibilityRole="button" accessibilityState={{ disabled: disabled || !snapshot || !dirty }} testID="driver-vehicle-save" disabled={disabled || !snapshot || !dirty} onPress={() => { void save(); }} style={[s.button, (disabled || !snapshot || !dirty) && s.disabled]}>
+      <Text style={s.buttonText}>Сохранить автомобиль</Text>
+    </Pressable>
+    <Pressable accessibilityRole="button" accessibilityState={{ disabled: saving || loading }} testID="driver-vehicle-refresh" disabled={saving || loading} onPress={() => { void load(); }} style={[s.button, s.buttonSecondary, (saving || loading) && s.disabled]}>
+      <Text style={s.buttonSecondaryText}>Обновить автомобиль</Text>
+    </Pressable>
   </View>;
 }
-const s = StyleSheet.create({ card: { padding: 20, marginBottom: 16, backgroundColor: "#fff", borderRadius: 24, gap: 10 }, heading: { fontSize: 20, fontWeight: "700", color: "#102D26" },
-  note: { color: "#53675E", lineHeight: 21 }, input: { borderWidth: 1, borderColor: "#DCE5DF", borderRadius: 12, padding: 12 }, button: { backgroundColor: "#EDF8F2", padding: 14, borderRadius: 12 } });
+
+const s = StyleSheet.create({
+  card: { padding: 20, marginBottom: 16, backgroundColor: onayDark.card, borderRadius: 24, borderWidth: 1, borderColor: onayDark.border, gap: 10 },
+  heading: { fontSize: 20, fontWeight: "800", color: onayDark.text },
+  note: { color: onayDark.muted, lineHeight: 21, fontSize: 13 },
+  input: { borderWidth: 1, borderColor: onayDark.border, backgroundColor: onayDark.cardRaised, color: onayDark.text, fontSize: 15, borderRadius: 12, padding: 13, minHeight: 48 },
+  status: { backgroundColor: onayDark.cardRaised, borderColor: onayDark.border, borderWidth: 1, borderRadius: 12, padding: 12 },
+  statusText: { color: onayDark.warning, fontSize: 13, fontWeight: "700" },
+  statusApproved: { color: onayDark.accent },
+  statusBlocked: { color: onayDark.danger },
+  button: { backgroundColor: onayDark.accent, padding: 14, borderRadius: 12, minHeight: 48, justifyContent: "center", alignItems: "center" },
+  buttonText: { color: onayDark.accentInk, fontWeight: "800", fontSize: 14 },
+  buttonSecondary: { backgroundColor: onayDark.cardRaised, borderColor: onayDark.border, borderWidth: 1 },
+  buttonSecondaryText: { color: onayDark.text, fontWeight: "700", fontSize: 14 },
+  disabled: { opacity: 0.45 },
+  error: { color: onayDark.danger, backgroundColor: onayDark.cardRaised, padding: 12, borderRadius: 12, lineHeight: 21 },
+  notice: { color: onayDark.text, backgroundColor: onayDark.cardRaised, padding: 12, borderRadius: 12, lineHeight: 21 },
+});
