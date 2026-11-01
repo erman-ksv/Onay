@@ -29,5 +29,6 @@ test("driver route picker preserves live server values and queue mutation safegu
   assert.match(source, /testID="driver-route-save"/);
   assert.match(source, /testID="driver-route-clear"/);
   assert.match(source, /testID="driver-route-refresh"/);
-  assert.match(source, /onPress=\{onPress\} disabled=\{disabled\}/);
+  assert.match(source, /testID=\{testID\} disabled=\{disabled\} onPress=\{onPress\}/);
+  assert.match(source, /accessibilityState=\{\{ disabled \}\}/);
 });
