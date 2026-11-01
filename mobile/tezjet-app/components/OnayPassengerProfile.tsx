@@ -72,13 +72,14 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
       {row("history", "История поездок", onHistory)}
       <View style={s.themeRow}>
         <Text style={{ color: foreground, fontWeight: "600" }}>Режим света</Text>
-        <View style={s.themeButtons}>
+        <View style={[s.themeButtons, light && s.themeButtonsLight]}>
           {(["light", "dark"] as const).map(value => <Pressable key={value} accessibilityRole="button"
             testID={"onay-profile-theme-" + value}
+            accessibilityLabel={value === "light" ? "Светлая тема" : "Тёмная тема"}
             accessibilityState={{ selected: theme === value }}
             onPress={() => onThemeChange(value)}
-            style={[s.themeButton, theme === value && s.themeSelected]}>
-            <Text style={{ color: theme === value ? onayDark.accentInk : muted, fontWeight: "700" }}>
+            style={[s.themeButton, light && s.themeButtonLight, theme === value && s.themeSelected]}>
+            <Text style={{ color: theme === value ? onayDark.accentInk : (light ? "#194b34" : muted), fontWeight: "700" }}>
               {value === "light" ? "☀" : "☾"}
             </Text>
           </Pressable>)}
@@ -122,7 +123,9 @@ const s = StyleSheet.create({
   linkRow: { minHeight: 54, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1 },
   themeRow: { minHeight: 57, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   themeButtons: { flexDirection: "row", padding: 4, borderRadius: 12, backgroundColor: onayDark.cardRaised, gap: 3 },
+  themeButtonsLight: { backgroundColor: "#e6f0ea" },
   themeButton: { height: 34, width: 42, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  themeButtonLight: { backgroundColor: "#f8fbf9" },
   themeSelected: { backgroundColor: onayDark.accent },
   exit: { minHeight: 56, justifyContent: "center" },
   about: { gap: 5, paddingVertical: 16 },
