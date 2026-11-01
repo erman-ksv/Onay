@@ -37,8 +37,8 @@ type Stop = { id: string; code: string; name: string; sequence: number; position
 type Fare = FareMoney;
 type Profile = { id: string; phone_number?: string; role: string; active_role?: string; roles?: string[]; driver_approval_status?: "pending" | "approved" | "rejected" | "blocked"; full_name?: string; driver_vehicle?: { seat_capacity: number } };
 
-function Button({ title, onPress, disabled = false, secondary = false, testID }: { title: string; onPress: () => void; disabled?: boolean; secondary?: boolean; testID?: string }) {
-  return <Pressable accessibilityRole="button" accessibilityState={{ disabled }} testID={testID} onPress={onPress} disabled={disabled} style={[s.button, secondary && s.buttonSecondary, disabled && s.disabled]}><Text style={[s.buttonText, secondary && s.buttonSecondaryText]}>{title}</Text></Pressable>;
+function Button({ title, onPress, disabled = false, secondary = false, testID, dark = false }: { title: string; onPress: () => void; disabled?: boolean; secondary?: boolean; testID?: string; dark?: boolean }) {
+  return <Pressable accessibilityRole="button" accessibilityState={{ disabled }} testID={testID} onPress={onPress} disabled={disabled} style={[s.button, dark && s.legacyButtonDark, secondary && s.buttonSecondary, dark && secondary && s.legacyButtonSecondaryDark, disabled && s.disabled]}><Text style={[s.buttonText, dark && s.legacyButtonDarkText, secondary && s.buttonSecondaryText, dark && secondary && s.legacyButtonSecondaryDarkText]}>{title}</Text></Pressable>;
 }
 
 function Stepper({ value, onChange, min = 1, max = 8, disabled = false, dark = false }: { value: number; onChange: (v: number) => void; min?: number; max?: number; disabled?: boolean; dark?: boolean }) {
@@ -934,21 +934,22 @@ export default function Home() {
       <PassengerHistory key={`${driverRouteSession}:${profile.id}`} endpoint={apiBase} token={token} passengerId={profile.id} recentOrders={passengerOrders} theme={passengerTheme} openRequest={historyOpenRequest} />
     </View>
     <View onLayout={event => setRouteSectionY(event.nativeEvent.layout.y)}><PassengerRouteOrder key={driverRouteSession} directionIntent={bookingDirectionIntent} endpoint={apiBase} userId={profile.id} token={token} busy={busy} activeOrder={passengerHasActiveOrder} bookingGate={bookingGate} onCreated={refreshOrders} theme={passengerTheme} /></View>
-    <View onLayout={event => setLegacySectionY(event.nativeEvent.layout.y)} style={s.card}>
-      <Text style={s.heading}>Прежний маршрут C/D</Text>
-      <Text style={s.label}>ТОЧКА А · ОТПРАВЛЕНИЕ</Text>{stops.filter(v => v.code === "C" || v.code === "D").map(v => <Pressable key={"a"+v.id} onPress={() => setA(v.code)} style={[s.stop, a===v.code && s.selected]}><Text style={s.stopText}>{v.name}</Text><Text>{v.code}</Text></Pressable>)}
-      <Text style={s.label}>ТОЧКА Б · НАЗНАЧЕНИЕ</Text>{stops.map(v => <Pressable key={"b"+v.id} onPress={() => setB(v.code)} style={[s.stop, b===v.code && s.selected]}><Text style={s.stopText}>{v.name}</Text><Text>{v.code}</Text></Pressable>)}
-      <TextInput style={s.input} value={address} onChangeText={setAddress} placeholder="Уточнение адреса подачи (необязательно)" />
-      <View style={s.fare}><Text style={s.label}>ПРЕДВАРИТЕЛЬНАЯ СТОИМОСТЬ</Text><Text style={s.price}>{fareFresh && fare ? formatFareMoney(fare) : "—"}</Text></View>
-      <View style={s.seatsRow}><Text style={s.descDark}>Пассажиры (до 8)</Text><Stepper value={seats} onChange={setSeats} /></View>
-      <Text style={s.descDark}>Наличие водителей: {availabilityDisplay.label}</Text>
-      {availabilityError ? <Text style={s.note}>{availabilityError}</Text> : null}
-      <Button title="Проверить наличие водителей" onPress={() => { void refreshAvailability(); }} disabled={busy || checkingAvailability} secondary />
-      <Button title={busy ? "Оформляем…" : "Заказать поездку"} onPress={order} disabled={busy || !fareFresh || !canOrder || passengerHasActiveOrder || !bookingGate.canSubmit()} />
-      {passengerHasActiveOrder ? <Text style={s.small}>Сначала заверши или отмени текущий заказ.</Text> : null}
-      {message ? <Text style={s.note}>{message}</Text> : null}<Text style={s.small}>Геолокация запрашивается только при оформлении заказа.</Text>
+    <View testID="onay-passenger-legacy-route" onLayout={event => setLegacySectionY(event.nativeEvent.layout.y)} style={[s.card, passengerTheme === "dark" && s.darkPassengerTripCard]}>
+      <Text style={[s.heading, passengerTheme === "dark" && s.darkPassengerTripTitle]}>По своему адресу · маршрут C/D</Text>
+       <Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Доступен маршрут C/D. Уточнение адреса подачи не меняет точки маршрута.</Text>
+      <Text style={[s.label, passengerTheme === "dark" && s.legacyLabelDark]}>ТОЧКА А · ОТПРАВЛЕНИЕ</Text>{stops.filter(v => v.code === "C" || v.code === "D").map(v => <Pressable key={"a"+v.id} onPress={() => setA(v.code)} style={[s.stop, passengerTheme === "dark" && s.legacyStopDark, a===v.code && s.selected, passengerTheme === "dark" && a===v.code && s.legacyStopActiveDark]}><Text style={[s.stopText, passengerTheme === "dark" && s.legacyStopTextDark]}>{v.name}</Text><Text style={passengerTheme === "dark" && s.legacyStopCodeDark}>{v.code}</Text></Pressable>)}
+      <Text style={[s.label, passengerTheme === "dark" && s.legacyLabelDark]}>ТОЧКА Б · НАЗНАЧЕНИЕ</Text>{stops.map(v => <Pressable key={"b"+v.id} onPress={() => setB(v.code)} style={[s.stop, passengerTheme === "dark" && s.legacyStopDark, b===v.code && s.selected, passengerTheme === "dark" && b===v.code && s.legacyStopActiveDark]}><Text style={[s.stopText, passengerTheme === "dark" && s.legacyStopTextDark]}>{v.name}</Text><Text style={passengerTheme === "dark" && s.legacyStopCodeDark}>{v.code}</Text></Pressable>)}
+      <TextInput style={[s.input, passengerTheme === "dark" && s.legacyInputDark]} placeholderTextColor={passengerTheme === "dark" ? onayDark.muted : "#71837a"} value={address} onChangeText={setAddress} placeholder="Уточнение адреса подачи (необязательно)" />
+      <View style={[s.fare, passengerTheme === "dark" && s.legacyFareDark]}><Text style={[s.label, passengerTheme === "dark" && s.legacyLabelDark]}>ПРЕДВАРИТЕЛЬНАЯ СТОИМОСТЬ</Text><Text style={[s.price, passengerTheme === "dark" && s.legacyPriceDark]}>{fareFresh && fare ? formatFareMoney(fare) : "—"}</Text></View>
+      <View style={s.seatsRow}><Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Пассажиры (до 8)</Text><Stepper value={seats} onChange={setSeats} dark={passengerTheme === "dark"} /></View>
+      <Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Наличие водителей: {availabilityDisplay.label}</Text>
+      {availabilityError ? <Text style={[s.note, passengerTheme === "dark" && s.darkPassengerTripNote]}>{availabilityError}</Text> : null}
+      <Button title="Проверить наличие водителей" testID="onay-legacy-check-availability" onPress={() => { void refreshAvailability(); }} disabled={busy || checkingAvailability} secondary dark={passengerTheme === "dark"} />
+      <Button title={busy ? "Оформляем…" : "Заказать поездку"} testID="onay-legacy-book-trip" onPress={order} disabled={busy || !fareFresh || !canOrder || passengerHasActiveOrder || !bookingGate.canSubmit()} dark={passengerTheme === "dark"} />
+      {passengerHasActiveOrder ? <Text style={[s.small, passengerTheme === "dark" && s.legacySmallDark]}>Сначала заверши или отмени текущий заказ.</Text> : null}
+      {message ? <Text style={[s.note, passengerTheme === "dark" && s.darkPassengerTripNote]}>{message}</Text> : null}<Text style={[s.small, passengerTheme === "dark" && s.legacySmallDark]}>Геолокация запрашивается только при оформлении заказа.</Text>
     </View>
-    {availabilityDisplay.state === "unavailable" ? <View style={s.card}><Text style={s.heading}>Водителей пока нет</Text><Text style={s.descDark}>Для этой точки и количества пассажиров сейчас нет свободного водителя. Попробуй проверить наличие позже.</Text></View> : null}
+    {availabilityDisplay.state === "unavailable" ? <View style={[s.card, passengerTheme === "dark" && s.darkPassengerTripCard]}><Text style={[s.heading, passengerTheme === "dark" && s.darkPassengerTripTitle]}>Водителей пока нет</Text><Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Для этой точки и количества пассажиров сейчас нет свободного водителя. Попробуй проверить наличие позже.</Text></View> : null}
     <View testID="onay-passenger-chats" onLayout={event => setChatsSectionY(event.nativeEvent.layout.y)}>
       <OnayPassengerChatsEmpty theme={passengerTheme} />
     </View>
@@ -972,6 +973,19 @@ export default function Home() {
 }
 
 const s = StyleSheet.create({
+ legacyStopDark:{backgroundColor:onayDark.cardRaised,borderColor:onayDark.border},
+ legacyStopActiveDark:{backgroundColor:"#20442d",borderColor:onayDark.accent},
+ legacyStopTextDark:{color:onayDark.text},
+ legacyStopCodeDark:{color:onayDark.muted},
+ legacyLabelDark:{color:onayDark.muted},
+ legacyInputDark:{backgroundColor:onayDark.cardRaised,borderColor:onayDark.border,color:onayDark.text},
+ legacyFareDark:{backgroundColor:onayDark.cardRaised},
+ legacyPriceDark:{color:onayDark.accent},
+ legacySmallDark:{color:onayDark.muted},
+ legacyButtonDark:{backgroundColor:onayDark.accent},
+ legacyButtonDarkText:{color:onayDark.accentInk},
+ legacyButtonSecondaryDark:{backgroundColor:onayDark.cardRaised,borderColor:onayDark.border},
+ legacyButtonSecondaryDarkText:{color:onayDark.text},
  driverOfferCard:{backgroundColor:onayDark.card,borderColor:onayDark.accent},
  driverOfferHeading:{color:onayDark.text},
  driverOfferText:{color:onayDark.muted},
