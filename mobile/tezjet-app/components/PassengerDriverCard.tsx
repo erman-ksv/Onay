@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { AppState, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { canReadDriverContact, createPassengerDriverClient, createPassengerDriverScope, type PassengerDriver } from "../lib/passenger-driver";
+import { onayDark } from "../lib/onay-auth-ui";
 
-type Props = { endpoint: string; token: string; order: { id: string; status: string; driver_id?: string } };
+type Props = { endpoint: string; token: string; order: { id: string; status: string; driver_id?: string }; theme?: "light" | "dark" };
 
-export default function PassengerDriverCard({ endpoint, token, order }: Props) {
+export default function PassengerDriverCard({ endpoint, token, order, theme = "light" }: Props) {
+  const dark = theme === "dark";
   const [driver, setDriver] = useState<PassengerDriver | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -41,16 +43,16 @@ export default function PassengerDriverCard({ endpoint, token, order }: Props) {
 
   if (!eligible) return null;
   return <View style={s.card} testID="passenger-driver-card">
-    <Text style={s.heading}>Твой водитель</Text>
-    {loading ? <Text style={s.text}>Получаем данные водителя…</Text> : null}
-    {driver && !loading ? <><Text style={s.text} testID="passenger-driver-name">{driver.fullName || "Имя водителя не указано"}</Text>
+    <Text style={[s.heading, dark && s.darkHeading]}>Твой водитель</Text>
+    {loading ? <Text style={[s.text, dark && s.darkText]}>Получаем данные водителя…</Text> : null}
+    {driver && !loading ? <><Text style={[s.text, dark && s.darkText]} testID="passenger-driver-name">{driver.fullName || "Имя водителя не указано"}</Text>
       <Pressable accessibilityRole="link" testID="passenger-driver-phone" onPress={() => {
         void Linking.openURL(`tel:${driver.phoneNumber}`).catch(() => setError("Не удалось открыть звонок. Набери номер вручную."));
-      }}><Text style={s.phone}>Позвонить: {driver.phoneNumber}</Text></Pressable>
-      {driver.vehicle ? <View testID="passenger-driver-vehicle"><Text style={s.text}>{driver.vehicle.make} {driver.vehicle.model}</Text><Text style={s.text}>Госномер: {driver.vehicle.plateNumber}</Text><Text style={s.text}>Пассажирских мест: {driver.vehicle.seatCapacity}</Text></View> : <Text style={s.text}>Данные автомобиля пока не указаны.</Text>}</> : null}
-    {error ? <><Text style={s.text} testID="passenger-driver-error">{error}</Text><Pressable accessibilityRole="button" testID="passenger-driver-retry" onPress={() => setRetry(value => value + 1)}><Text style={s.phone}>Повторить получение данных</Text></Pressable></> : null}
+      }}><Text style={[s.phone, dark && s.darkPhone]}>Позвонить: {driver.phoneNumber}</Text></Pressable>
+      {driver.vehicle ? <View testID="passenger-driver-vehicle"><Text style={[s.text, dark && s.darkText]}>{driver.vehicle.make} {driver.vehicle.model}</Text><Text style={[s.text, dark && s.darkText]}>Госномер: {driver.vehicle.plateNumber}</Text><Text style={[s.text, dark && s.darkText]}>Пассажирских мест: {driver.vehicle.seatCapacity}</Text></View> : <Text style={[s.text, dark && s.darkText]}>Данные автомобиля пока не указаны.</Text>}</> : null}
+    {error ? <><Text style={[s.text, dark && s.darkText]} testID="passenger-driver-error">{error}</Text><Pressable accessibilityRole="button" testID="passenger-driver-retry" onPress={() => setRetry(value => value + 1)}><Text style={[s.phone, dark && s.darkPhone]}>Повторить получение данных</Text></Pressable></> : null}
   </View>;
 }
 
-const s = StyleSheet.create({ card: { marginTop: 12, gap: 8 }, heading: { color: "#102D26", fontSize: 16, fontWeight: "700" },
+const s = StyleSheet.create({ darkHeading: { color: onayDark.text }, darkText: { color: onayDark.muted }, darkPhone: { color: onayDark.accent }, card: { marginTop: 12, gap: 8 }, heading: { color: "#102D26", fontSize: 16, fontWeight: "700" },
   text: { color: "#53675E", fontSize: 14, lineHeight: 21 }, phone: { color: "#0D735C", fontSize: 14, paddingVertical: 12, fontWeight: "700" } });

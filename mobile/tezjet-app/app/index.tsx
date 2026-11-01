@@ -929,7 +929,7 @@ export default function Home() {
     <View testID="onay-passenger-trips" onLayout={event => setTripsSectionY(event.nativeEvent.layout.y)} style={{ paddingHorizontal: 4, paddingTop: 12, paddingBottom: 10 }}>
       <Text testID="onay-passenger-trips-title" accessibilityRole="header" style={{ fontSize: 26, fontWeight: "800", color: passengerTheme === "light" ? "#0e1a14" : onayDark.text }}>Поездки</Text>
     </View>
-    {passengerOrders.filter(order => !isClosed(order)).map(passengerOrder => <View key={passengerOrder.id} style={s.card} testID={`passenger-trip-${passengerOrder.id}`}><Text style={s.heading}>Твоя поездка</Text><Text style={s.descDark}>{statusLabels[passengerOrder.status]}</Text><Text style={s.descDark}>Точка подачи: {ridePickupLabel(passengerOrder)}</Text><Text style={s.descDark}>Куда: {rideDestinationLabel(passengerOrder)}</Text><Text style={s.descDark}>Пассажиров: {passengerOrder.seats}</Text>{passengerOrder.status === "searching" && passengerOrder.offered_driver_id ? <Text style={s.note}>Ждём ответа водителя.</Text> : null}<PassengerDriverCard key={`${driverRouteSession}:${passengerOrder.id}:${passengerOrder.driver_id ?? ""}:${passengerOrder.status}`} endpoint={apiBase} token={token} order={passengerOrder} /><Button title={busy ? "Отменяем…" : "Отменить заказ"} onPress={() => cancelOrder(passengerOrder)} disabled={busy} secondary /></View>)}
+    {passengerOrders.filter(order => !isClosed(order)).map(passengerOrder => <View key={passengerOrder.id} style={[s.card, passengerTheme === "dark" && s.darkPassengerTripCard]} testID={`passenger-trip-${passengerOrder.id}`}><Text style={[s.heading, passengerTheme === "dark" && s.darkPassengerTripTitle]}>Твоя поездка</Text><Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>{statusLabels[passengerOrder.status]}</Text><Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Точка подачи: {ridePickupLabel(passengerOrder)}</Text><Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Куда: {rideDestinationLabel(passengerOrder)}</Text><Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Пассажиров: {passengerOrder.seats}</Text>{passengerOrder.status === "searching" && passengerOrder.offered_driver_id ? <Text style={[s.note, passengerTheme === "dark" && s.darkPassengerTripNote]}>Ждём ответа водителя.</Text> : null}<PassengerDriverCard key={`${driverRouteSession}:${passengerOrder.id}:${passengerOrder.driver_id ?? ""}:${passengerOrder.status}`} endpoint={apiBase} token={token} order={passengerOrder} theme={passengerTheme} /><Button title={busy ? "Отменяем…" : "Отменить заказ"} onPress={() => cancelOrder(passengerOrder)} disabled={busy} secondary /></View>)}
     <View testID="onay-passenger-history-anchor" onLayout={event => setHistorySectionY(event.nativeEvent.layout.y)}>
       <PassengerHistory key={`${driverRouteSession}:${profile.id}`} endpoint={apiBase} token={token} passengerId={profile.id} recentOrders={passengerOrders} theme={passengerTheme} openRequest={historyOpenRequest} />
     </View>
@@ -972,6 +972,10 @@ export default function Home() {
 }
 
 const s = StyleSheet.create({
+ darkPassengerTripCard:{backgroundColor:onayDark.card,borderColor:onayDark.border},
+ darkPassengerTripTitle:{color:onayDark.text},
+ darkPassengerTripMuted:{color:onayDark.muted},
+ darkPassengerTripNote:{color:onayDark.text,backgroundColor:onayDark.cardRaised},
  passengerPanel:{padding:19,backgroundColor:onayDark.card,borderRadius:22,borderWidth:1,borderColor:onayDark.border,marginBottom:16,gap:9},
  passengerPanelTitle:{fontSize:22,fontWeight:"800",color:onayDark.text},
  passengerPanelText:{fontSize:14,lineHeight:20,color:onayDark.muted},
