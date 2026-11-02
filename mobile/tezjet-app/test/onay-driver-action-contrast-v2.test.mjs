@@ -36,6 +36,6 @@ test("driver action visual changes preserve all backend and safety guards", () =
   assert.ok(controls.includes('testID="driver-order-reject" onPress={rejectOrder} disabled={busy || !isLiveOffer(incomingOrder, profile.id, now)} secondary dark />'));
   assert.ok(controls.includes('onPress={() => { void departLine(departureConfirmation.enrollmentId); }} disabled={busy || !!incomingOrder} dark />'));
   assert.ok(controls.includes('onPress={() => progressOrder(activeOrder)} disabled={busy} dark />'));
-  assert.ok(app.includes('<Button title={busy ? "Отменяем…" : "Отменить заказ"} onPress={() => cancelOrder(passengerOrder)} disabled={busy} secondary />'),
-    "Passenger cancellation must remain unaffected");
+  assert.ok(app.includes('<Button title={busy ? "Отменяем…" : "Отменить заказ"} onPress={() => cancelOrder(passengerOrder)} disabled={busy} secondary dark={passengerTheme === "dark"} />'),
+    "Passenger cancellation must retain the existing handler and busy gate while following the passenger theme");
 });
