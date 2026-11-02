@@ -42,7 +42,7 @@ function Button({ title, onPress, disabled = false, secondary = false, testID, d
 }
 
 function Stepper({ value, onChange, min = 1, max = 8, disabled = false, dark = false }: { value: number; onChange: (v: number) => void; min?: number; max?: number; disabled?: boolean; dark?: boolean }) {
-  return <View style={s.stepper}><Pressable style={[s.stepButton, dark && s.driverStepButton]} disabled={disabled || value <= min} onPress={() => onChange(Math.max(min, value - 1))}><Text style={[s.stepText, dark && s.driverStepText]}>−</Text></Pressable><Text style={[s.stepValue, dark && s.driverStepValue]}>{value}</Text><Pressable style={[s.stepButton, dark && s.driverStepButton]} disabled={disabled || value >= max} onPress={() => onChange(Math.min(max, value + 1))}><Text style={[s.stepText, dark && s.driverStepText]}>+</Text></Pressable></View>;
+  return <View style={s.stepper}><Pressable accessibilityRole="button" accessibilityLabel="Уменьшить количество мест" accessibilityState={{ disabled: disabled || value <= min }} style={[s.stepButton, dark && s.driverStepButton]} disabled={disabled || value <= min} onPress={() => onChange(Math.max(min, value - 1))}><Text style={[s.stepText, dark && s.driverStepText]}>−</Text></Pressable><Text accessibilityLabel={`Выбрано мест: ${value}`} style={[s.stepValue, dark && s.driverStepValue]}>{value}</Text><Pressable accessibilityRole="button" accessibilityLabel="Увеличить количество мест" accessibilityState={{ disabled: disabled || value >= max }} style={[s.stepButton, dark && s.driverStepButton]} disabled={disabled || value >= max} onPress={() => onChange(Math.min(max, value + 1))}><Text style={[s.stepText, dark && s.driverStepText]}>+</Text></Pressable></View>;
 }
 
 export default function Home() {
