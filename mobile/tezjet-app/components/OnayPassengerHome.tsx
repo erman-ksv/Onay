@@ -46,7 +46,7 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
   }
   return <View testID="onay-passenger-home" style={[h.root, light && { backgroundColor: "#f4f6f4" }]}>
     <View style={h.header}>
-      <Pressable testID="onay-home-menu-open" accessibilityRole="button" accessibilityLabel="Открыть настройки"
+      <Pressable testID="onay-home-menu-open" accessibilityRole="button" accessibilityLabel={menuOpen ? "Закрыть настройки" : "Открыть настройки"}
         accessibilityState={{ expanded: menuOpen }} onPress={() => setMenuOpen(value => !value)}
         style={[h.menuToggle, light && { backgroundColor: "#e3e8e4" }]}>
         <Text style={{ fontSize: 24, color: light ? "#0e1a14" : onayDark.text }}>{menuOpen ? "×" : "☰"}</Text>
