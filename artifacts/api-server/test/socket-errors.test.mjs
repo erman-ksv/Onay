@@ -23,6 +23,7 @@ let switchRole;
 let logout;
 let verifyOtp;
 let authenticate;
+let updateDriverApproval;
 let httpServer;
 let realtime;
 let serverUrl;
@@ -41,6 +42,7 @@ before(async () => {
         'export { createRealtimeServer } from "./src/socket";',
         'export { store } from "./src/store";',
         'export { MemoryStore } from "./src/store/memoryStore";',
+        'export { updateDriverApproval } from "./src/controllers/adminController";',
         'export { authenticate } from "./src/middleware/auth";',
         'export { createAccessToken } from "./src/utils/token";',
         'export { switchRole, logout, verifyOtp } from "./src/controllers/authController";',
@@ -58,6 +60,7 @@ before(async () => {
   logout = production.logout;
   verifyOtp = production.verifyOtp;
   authenticate = production.authenticate;
+  updateDriverApproval = production.updateDriverApproval;
   assert.ok(store instanceof production.MemoryStore, "Socket rejection regressions must be independent of PostgreSQL.");
   await store.initialize();
   httpServer = createServer((_request, response) => response.end("healthy"));
@@ -417,3 +420,76 @@ for (const action of ["login", "switch-role"]) {
     }
   });
 }
+
+for (const status of ["pending", "rejected"]) {
+  test(`Administrator ${status} review disconnects an existing driver socket and refuses reconnect`, { timeout: 15_000 }, async t => {
+    const { socket: driver, user } = await client(t, "driver");
+    const { socket: observer } = await client(t);
+    await Promise.all([connect(driver), connect(observer)]);
+    const admin = await store.createUser({ role: "admin", fullName: "Review regression", phoneNumber: randomUUID(), locale: "ru" });
+    const disconnected = waitForEvent(driver, "disconnect");
+    const response = { json(body) { this.body = body; } };
+    await updateDriverApproval({
+      params: { driverId: user.id }, body: { status },
+      auth: { userId: admin.id, role: "admin", user: admin }, app: { locals: { io: realtime } },
+    }, response);
+    assert.equal(await disconnected, "io server disconnect");
+    assert.equal(response.body.driver.driver_approval_status, status);
+    assert.equal(observer.connected, true);
+    assert.equal((await store.getUser(user.id)).sessionVersion, user.sessionVersion);
+    const rejected = waitForEvent(driver, "connect_error");
+    driver.connect();
+    assert.equal((await rejected).message, "Driver approval required");
+    await store.setDriverApproval(user.id, "approved");
+    await connect(driver);
+    assert.equal(driver.connected, true, "Reapproval restores access without changing the phone account");
+  });
+}
+
+test("Failed administrator review preserves the current driver connection and approval", async t => {
+  const { socket: driver, user } = await client(t, "driver");
+  const { socket: observer } = await client(t);
+  await Promise.all([connect(driver), connect(observer)]);
+  const admin = await store.createUser({ role: "admin", fullName: "Stale reviewer", phoneNumber: randomUUID(), locale: "ru" });
+  await store.invalidateSessions(admin.id);
+  await assert.rejects(() => updateDriverApproval({
+    params: { driverId: user.id }, body: { status: "rejected" },
+    auth: { userId: admin.id, role: "admin", user: admin }, app: { locals: { io: realtime } },
+  }, { json() {} }), error => error.statusCode === 401);
+  assert.equal((await store.getUser(user.id)).driverApprovalStatus, "approved");
+  const delivered = waitForEvent(observer, "driver:location");
+  driver.emit("driver:location", { lat: 41.3111, lng: 69.2797, timestamp: 99 });
+  assert.equal((await delivered).driver_id, user.id);
+  assert.equal(driver.connected, true);
+});
+
+test("Socket initialization rechecks driver approval changed after handshake without sending its snapshot", async t => {
+  const { socket: driver, user } = await client(t, "driver");
+  const lookup = store.getUser.bind(store);
+  let reads = 0;
+  const snapshots = [];
+  driver.on("queue:snapshot", value => snapshots.push(value));
+  t.mock.method(store, "getUser", async id => {
+    if (id === user.id && ++reads === 2) await store.setDriverApproval(id, "rejected");
+    return lookup(id);
+  });
+  const disconnected = waitForEvent(driver, "disconnect");
+  driver.connect();
+  assert.equal(await disconnected, "io server disconnect");
+  assert.equal(reads, 2);
+  assert.deepEqual(snapshots, []);
+});
+
+test("Driver location detects approval revoked outside the HTTP reviewer and closes the transport", async t => {
+  const { socket: driver, user } = await client(t, "driver");
+  const { socket: observer } = await client(t);
+  await Promise.all([connect(driver), connect(observer)]);
+  const locations = [];
+  observer.on("driver:location", value => locations.push(value));
+  await store.setDriverApproval(user.id, "rejected");
+  const disconnected = waitForEvent(driver, "disconnect");
+  driver.emit("driver:location", { lat: 41.3111, lng: 69.2797, timestamp: 100 });
+  assert.equal(await disconnected, "io server disconnect");
+  assert.deepEqual(locations, []);
+  assert.equal(observer.connected, true);
+});

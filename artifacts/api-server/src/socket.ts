@@ -97,7 +97,8 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
     });
     try {
       const user = await store.getUser(userId);
-      if (!user || user.sessionVersion !== socket.data.sessionVersion || user.role !== socket.data.role) {
+      if (!user || user.sessionVersion !== socket.data.sessionVersion || user.role !== socket.data.role ||
+          (user.role === "driver" && !hasRequiredDriverApproval(user, REQUIRE_DRIVER_APPROVAL))) {
         socket.disconnect(true);
         return;
       }
@@ -138,6 +139,7 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
         if (
           !hasRequiredDriverApproval(driver, REQUIRE_DRIVER_APPROVAL)
         ) {
+          socket.disconnect(true);
           return;
         }
         socket.broadcast.emit("driver:location", {
