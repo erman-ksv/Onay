@@ -494,10 +494,14 @@ export default function Home() {
   }
 
   async function logout() {
+    // Unmount token-bound views and abort their in-flight reads before revoking
+    // the server session. Otherwise the vehicle GET can race the revoke and
+    // produce an unauthorized response even during a normal user sign-out.
+    const logoutToken = token;
     setBusy(true);
     try {
-      try { if (token) await request<void>("/api/auth/logout", token, { method: "POST" }); } catch { /* clear local session even when offline */ }
       await clearSession();
+      try { if (logoutToken) await request<void>("/api/auth/logout", logoutToken, { method: "POST" }); } catch { /* local session is already cleared, even when offline */ }
       setMessage(""); setDataError("");
     } finally { setBusy(false); }
   }
