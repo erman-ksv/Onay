@@ -42,13 +42,27 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
     return <OnayPassengerAbout theme={theme} onBack={() => setAboutOpen(false)} />;
   }
   return <View testID="onay-passenger-profile-panel" style={[s.root, { backgroundColor: light ? "#f4f6f4" : onayDark.background }]}>
-    <View style={[s.identity, { backgroundColor: surface }]}>
+    <View style={s.identity}>
       <View style={[s.avatar, { backgroundColor: light ? "#e3f7df" : onayDark.cardRaised }]}>
         <Text testID="onay-profile-avatar-initial" style={{ color: light ? "#5a7366" : onayDark.muted, fontSize: 30, fontWeight: "700" }}>{onayProfileInitial(fullName)}</Text>
       </View>
       <View style={{ flex: 1 }}>
         <Text style={[s.personName, { color: foreground }]}>{fullName || "Пассажир Onay"}</Text>
         <Text testID="onay-profile-header-phone" style={{ color: muted, marginTop: 5 }}>{phoneNumber || "Аккаунт пассажира"}</Text>
+      </View>
+      <View testID="onay-profile-header-theme" accessibilityLabel="Режим света" style={s.headerTheme}>
+        <View style={[s.themeButtons, light && s.themeButtonsLight]}>
+          {(["light", "dark"] as const).map(value => <Pressable key={value} accessibilityRole="button"
+            testID={"onay-profile-theme-" + value}
+            accessibilityLabel={value === "light" ? "Светлая тема" : "Тёмная тема"}
+            accessibilityState={{ selected: theme === value }}
+            onPress={() => onThemeChange(value)}
+            style={[s.themeButton, light && s.themeButtonLight, theme === value && s.themeSelected]}>
+            <Text style={{ color: theme === value ? onayDark.accentInk : (light ? "#194b34" : muted), fontWeight: "700" }}>
+              {value === "light" ? "☀" : "☾"}
+            </Text>
+          </Pressable>)}
+        </View>
       </View>
     </View>
 
@@ -74,21 +88,6 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
         <Text style={[s.detailValue, { color: foreground }]}>Пассажир</Text>
       </View> : null}
       {row("history", "История поездок", onHistory)}
-      <View style={s.themeRow}>
-        <Text style={{ color: foreground, fontWeight: "600" }}>Режим света</Text>
-        <View style={[s.themeButtons, light && s.themeButtonsLight]}>
-          {(["light", "dark"] as const).map(value => <Pressable key={value} accessibilityRole="button"
-            testID={"onay-profile-theme-" + value}
-            accessibilityLabel={value === "light" ? "Светлая тема" : "Тёмная тема"}
-            accessibilityState={{ selected: theme === value }}
-            onPress={() => onThemeChange(value)}
-            style={[s.themeButton, light && s.themeButtonLight, theme === value && s.themeSelected]}>
-            <Text style={{ color: theme === value ? onayDark.accentInk : (light ? "#194b34" : muted), fontWeight: "700" }}>
-              {value === "light" ? "☀" : "☾"}
-            </Text>
-          </Pressable>)}
-        </View>
-      </View>
     </View>
 
     <View style={[s.group, { backgroundColor: surface }]}>
@@ -110,19 +109,19 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
 }
 
 const s = StyleSheet.create({
-  root: { marginBottom: 18, gap: 14, paddingTop: 14, paddingHorizontal: 2, borderRadius: 20 },
-  identity: { flexDirection: "row", alignItems: "center", padding: 14, borderRadius: 20, gap: 12 },
+  root: { marginBottom: 18, gap: 16, paddingTop: 2, paddingHorizontal: 2, borderRadius: 20 },
+  identity: { flexDirection: "row", alignItems: "center", paddingHorizontal: 0, paddingVertical: 4, gap: 12, minHeight: 88 },
+  headerTheme: { flexShrink: 0 },
   personalDetails: { paddingVertical: 15, gap: 5 },
   detailCaption: { fontSize: 12, fontWeight: "600", marginTop: 6 },
   detailValue: { fontSize: 15, fontWeight: "600" },
   avatar: { width: 78, height: 78, borderRadius: 39, alignItems: "center", justifyContent: "center" },
-  personName: { fontSize: 21, fontWeight: "800" },
-  group: { borderRadius: 19, paddingHorizontal: 14, overflow: "hidden" },
-  linkRow: { minHeight: 54, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1 },
-  themeRow: { minHeight: 57, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
-  themeButtons: { flexDirection: "row", padding: 4, borderRadius: 12, backgroundColor: onayDark.cardRaised, gap: 3 },
+  personName: { fontSize: 22, fontWeight: "700" },
+  group: { borderRadius: 20, paddingHorizontal: 16, overflow: "hidden" },
+  linkRow: { minHeight: 58, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1 },
+  themeButtons: { flexDirection: "row", padding: 4, borderRadius: 16, backgroundColor: onayDark.card, gap: 4 },
   themeButtonsLight: { backgroundColor: "#e6f0ea" },
-  themeButton: { height: 34, width: 42, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  themeButton: { height: 34, width: 36, borderRadius: 10, alignItems: "center", justifyContent: "center" },
   themeButtonLight: { backgroundColor: "#f8fbf9" },
   themeSelected: { backgroundColor: onayDark.accent },
   exit: { minHeight: 56, justifyContent: "center" },
