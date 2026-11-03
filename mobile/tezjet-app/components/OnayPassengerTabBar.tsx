@@ -17,7 +17,7 @@ export default function OnayPassengerTabBar({ active, onSelect, theme = "dark" }
 }) {
   const light = theme === "light";
   return <View testID="onay-passenger-bottom-nav" style={[styles.container, light && { backgroundColor: "#f4f6f4" }]}>
-    <View accessibilityRole="tablist" style={[styles.pill, light && styles.pillLight]}>
+    <View accessibilityRole="tablist" style={[styles.pill, styles.referencePill, light && styles.pillLight]}>
       {ONAY_PASSENGER_TABS.map(tab => {
         const selected = active === tab.id;
         return <Pressable
@@ -41,9 +41,11 @@ const styles = StyleSheet.create({
   pillLight: { backgroundColor: "rgba(255,255,255,0.95)", borderColor: "#e3e8e4" },
   inactiveTabLight: { backgroundColor: "#eef3ef" },
   iconLight: { tintColor: "#35594a" },
-  container: { backgroundColor: onayDark.background, paddingHorizontal: 20, paddingTop: 6, paddingBottom: 16 },
-  pill: { flexDirection: "row", alignSelf: "center", width: 304, maxWidth: "100%", borderRadius: 40, backgroundColor: "rgba(18,41,31,0.94)", borderColor: onayDark.border,
+  container: { backgroundColor: onayDark.background, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 20 },
+  pill: { flexDirection: "row", alignSelf: "center", width: "100%", maxWidth: 336, borderRadius: 40, backgroundColor: "rgba(18,41,31,0.94)", borderColor: onayDark.border,
     borderWidth: 1, padding: 8, gap: 8 },
+  // Keep the safe responsive base; this override retains the 304dp reference artwork on normal screens.
+  referencePill: { width: 304, maxWidth: "100%" },
   tab: { width: 48, height: 48, borderRadius: 24, alignItems: "center",
     justifyContent: "center", flexDirection: "row", gap: 8 },
   inactiveTab: { backgroundColor: onayDark.cardRaised },
