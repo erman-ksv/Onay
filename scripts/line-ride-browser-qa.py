@@ -585,7 +585,11 @@ class LineRideQA(shared.DriverRouteQA):
         while not held and time.monotonic() < deadline:
             page.wait_for_timeout(20)
         require(bool(held), "The real history read must be held in flight")
-        page.get_by_text("Выйти", exact=True).click()
+        # Logout lives in a separate Profile screen; the hidden Trips tree
+        # remains mounted until the session is revoked, and must abort this read.
+        page.get_by_test_id("onay-tab-profile").click()
+        self.expect(page.get_by_test_id("onay-profile-logout")).to_be_visible()
+        page.get_by_test_id("onay-profile-logout").click()
         self.expect(page.get_by_test_id("passenger-history")).to_have_count(0)
         for route, response in held:
             try:
