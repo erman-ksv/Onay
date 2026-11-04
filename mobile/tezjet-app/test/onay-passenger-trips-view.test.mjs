@@ -8,11 +8,12 @@ const history = readFileSync(new URL("../components/PassengerHistory.tsx", impor
 const tripsScreen = readFileSync(new URL("../components/OnayPassengerTrips.tsx", import.meta.url), "utf8");
 
 test("Trips tab shows active orders by default, with explicitly opened API-backed history", () => {
-  const trips = app.indexOf('testID="onay-passenger-trips"');
+  const home = app.indexOf('home={<>'), trips = app.indexOf('trips={<>');
+  const booking = app.indexOf("<PassengerRouteOrder key=", home);
   const active = app.indexOf("passengerOrders.filter(order => !isClosed(order)).map(", trips);
   const archived = app.indexOf("<PassengerHistory key=", active);
-  const booking = app.indexOf("<PassengerRouteOrder key=", active);
-  assert.ok(trips >= 0 && active > trips && archived > active && booking > archived);
+  assert.ok(home >= 0 && booking > home && booking < trips);
+  assert.ok(trips > 0 && active > trips && archived > active);
   assert.match(app, /<OnayPassengerTrips/);
   assert.match(tripsScreen, /testID="onay-passenger-trips-title" accessibilityRole="header"/);
   assert.match(app, /<PassengerHistory[^\n]+theme=\{passengerTheme\}/);

@@ -18,5 +18,6 @@ test("active trip button navigates to existing API-backed trips without creating
   assert.match(app, /activeOrder=\{passengerHasActiveOrder\}/);
   assert.match(app, /onViewActiveOrder=\{\(\) => selectPassengerTab\("trips"\)\}/);
   assert.match(app, /<PassengerHistory /);
-  assert.match(app, /onayPassengerTabScrollY\(tab,/);
+  assert.match(app, /<OnayPassengerScreens/);
+  assert.match(app, /if \(tab === "trips"\) setTripsHistoryOpen\(false\)/);
 });

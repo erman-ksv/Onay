@@ -20,7 +20,8 @@ test("unimplemented chat messaging does not invent conversations or impersonate 
 });
 
 test("existing passenger tab navigation targets the themed empty chat section", () => {
-  assert.match(app, /testID="onay-passenger-chats" onLayout=\{event => setChatsSectionY\(event\.nativeEvent\.layout\.y\)\}/);
+  assert.match(app, /chats=\{<>/);
+  assert.match(app, /testID="onay-passenger-chats"/);
   assert.match(app, /<OnayPassengerChatsEmpty theme=\{passengerTheme\} \/>/);
   assert.match(app, /<PassengerHistory /);
   assert.match(app, /<OnayPassengerProfile/);

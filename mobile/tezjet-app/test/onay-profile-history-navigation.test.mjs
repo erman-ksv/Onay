@@ -6,14 +6,14 @@ const app = readFileSync(new URL("../app/index.tsx", import.meta.url), "utf8");
 const history = readFileSync(new URL("../components/PassengerHistory.tsx", import.meta.url), "utf8");
 const profile = readFileSync(new URL("../components/OnayPassengerProfile.tsx", import.meta.url), "utf8");
 
-test("Profile History opens the history anchor, not just the active Trips tab", () => {
+test("Profile History opens the separate Trips screen with the real archive", () => {
   assert.match(profile, /row\("history", "История поездок", onHistory\)/);
   assert.match(app, /onHistory=\{openPassengerHistory\}/);
   assert.match(app, /function openPassengerHistory\(\) \{/);
   assert.match(app, /setHistoryOpenRequest\(revision => revision \+ 1\)/);
   assert.match(app, /setPassengerTab\("trips"\)/);
-  assert.match(app, /homeScroll\.current\?\.scrollTo\(\{ y: Math\.max\(0, tripsSectionY - 12\), animated: true \}\)/);
-  assert.match(app, /testID="onay-passenger-history-anchor" onLayout=\{event => setHistorySectionY\(event\.nativeEvent\.layout\.y\)\}/);
+  assert.match(app, /setTripsHistoryOpen\(true\)/);
+  assert.match(app, /testID="onay-passenger-history-anchor"/);
   assert.match(app, /openRequest=\{historyOpenRequest\}/);
 });
 

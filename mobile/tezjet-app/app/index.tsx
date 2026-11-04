@@ -3,7 +3,7 @@ import { parseServerFareMoney, formatFareMoney, type FareMoney } from "../lib/fa
 import * as Location from "expo-location";
 import { io } from "socket.io-client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, AppState, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, AppState, BackHandler, Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { API, ApiError, errorMessage, request, setApiEndpoint, validateApiEndpoint, type Availability } from "../lib/api";
 import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextDriverTripStatus, nextTripLabel, ridePickupLabel, rideDestinationLabel, statusLabels, type RideOrder } from "../lib/orders";
 import { registrationFullName } from "../lib/registration";
@@ -13,7 +13,8 @@ import OnayPassengerTabBar from "../components/OnayPassengerTabBar";
 import OnayPassengerProfile from "../components/OnayPassengerProfile";
 import OnayPassengerChatsEmpty from "../components/OnayPassengerChatsEmpty";
 import OnayPassengerTrips from "../components/OnayPassengerTrips";
-import { onayPassengerTabScrollY, type OnayPassengerTab } from "../lib/onay-passenger-tabs";
+import OnayPassengerScreens from "../components/OnayPassengerScreens";
+import type { OnayPassengerTab } from "../lib/onay-passenger-tabs";
 import { onayPassengerHomeTarget, type OnayPassengerHomeMode } from "../lib/onay-home-modes";
 import { onayDark, onayEntryScreen } from "../lib/onay-auth-ui";
 import DriverRoutePicker from "../components/DriverRoutePicker";
@@ -54,11 +55,16 @@ export default function Home() {
   const [passengerTab, setPassengerTab] = useState<OnayPassengerTab>("home");
   const [tripsHistoryOpen, setTripsHistoryOpen] = useState(false);
   const [passengerTheme, setPassengerTheme] = useState<"light" | "dark">("dark");
-  const [tripsSectionY, setTripsSectionY] = useState(0);
-  const [historySectionY, setHistorySectionY] = useState(0);
   const [historyOpenRequest, setHistoryOpenRequest] = useState(0);
-  const [chatsSectionY, setChatsSectionY] = useState(0);
-  const [profileSectionY, setProfileSectionY] = useState(0);
+  const [homeScrollTarget, setHomeScrollTarget] = useState<{ section: "route" | "legacy"; revision: number } | null>(null);
+  useEffect(() => {
+    if (passengerTab !== "home" || !homeScrollTarget) return;
+    const frame = requestAnimationFrame(() => {
+      const y = homeScrollTarget.section === "route" ? routeSectionY : legacySectionY;
+      homeScroll.current?.scrollTo({ y: Math.max(0, y - 24), animated: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [passengerTab, homeScrollTarget, routeSectionY, legacySectionY]);
   useEffect(() => {
     let active = true;
     AsyncStorage.getItem("onay_passenger_theme_v1")
@@ -800,46 +806,47 @@ export default function Home() {
   }
 
   function selectPassengerTab(tab: OnayPassengerTab) {
-    // Switching to Trips opens real active orders; the archive is requested explicitly.
     if (tab === "trips") setTripsHistoryOpen(false);
     setPassengerTab(tab);
-    homeScroll.current?.scrollTo({
-      y: onayPassengerTabScrollY(tab, {
-        trips: tripsSectionY, chats: chatsSectionY, profile: profileSectionY,
-      }),
-      animated: true,
-    });
   }
 
   function openPassengerHistory() {
-    // Profile history opens the actual API-backed archive, not just the Trips heading.
     setHistoryOpenRequest(revision => revision + 1);
     setTripsHistoryOpen(true);
     setPassengerTab("trips");
-    homeScroll.current?.scrollTo({ y: Math.max(0, tripsSectionY - 12), animated: true });
   }
 
   function openPassengerRoutePicker() {
-    // A location-chip tap must not change direction, clear a server quote,
-    // or assume the passenger's current GPS position.
     setPassengerTab("home");
-    homeScroll.current?.scrollTo({ y: Math.max(0, routeSectionY - 24), animated: true });
+    setHomeScrollTarget(previous => ({ section: "route", revision: (previous?.revision ?? 0) + 1 }));
+    if (passengerTab === "home") homeScroll.current?.scrollTo({ y: Math.max(0, routeSectionY - 24), animated: true });
   }
 
   function openPassengerBooking(choice: OnayPassengerHomeMode) {
     setPassengerTab("home");
     const target = onayPassengerHomeTarget(choice);
-    // The original configured-route booking retains server-side availability and
-    // booking admission; the home screen only navigates to it.
     if (target.direction) {
       setBookingDirectionIntent(previous => ({
         direction: target.direction!,
         revision: (previous?.revision ?? 0) + 1,
       }));
     }
+    setHomeScrollTarget(previous => ({ section: target.section, revision: (previous?.revision ?? 0) + 1 }));
     const offset = target.section === "route" ? routeSectionY : legacySectionY;
-    homeScroll.current?.scrollTo({ y: Math.max(0, offset - 24), animated: true });
+    if (passengerTab === "home") homeScroll.current?.scrollTo({ y: Math.max(0, offset - 24), animated: true });
   }
+
+  // Android Back navigates between real tabs; Profile owns its nested subpages.
+  useEffect(() => {
+    if (!token || !profile || activeRole !== "passenger" || mode !== "passenger" || Platform.OS === "web") return;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (passengerTab === "profile") return false;
+      if (passengerTab === "trips" && tripsHistoryOpen) { setTripsHistoryOpen(false); return true; }
+      if (passengerTab !== "home") { setPassengerTab("home"); return true; }
+      return false;
+    });
+    return () => sub.remove();
+  }, [token, profile, activeRole, mode, passengerTab, tripsHistoryOpen]);
 
   // Auth UI is native React Native; the original backend OTP flow remains in login().
   // Do not hide the existing API setup and session-recovery screens.
@@ -878,16 +885,97 @@ export default function Home() {
   const passengerDarkSystem = Boolean(token && mode === "passenger" && passengerTheme === "dark");
   const driverChrome = Boolean(token && mode === "driver");
 
-  return <View style={{ flex: 1, backgroundColor: token && mode === "passenger" ? (passengerTheme === "light" ? "#f4f6f4" : onayDark.background) : driverChrome ? onayDark.background : "#F3F6F4" }}>
-    <ScrollView ref={homeScroll} style={[s.screen, token && mode === "passenger" && { backgroundColor: passengerTheme === "light" ? "#f4f6f4" : onayDark.background }, driverChrome && s.driverScreen]} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-    {token && profile && activeRole === "passenger" && mode === "passenger" ? <OnayPassengerHome
+  if (token && profile && activeRole === "passenger" && mode === "passenger") {
+    return <View style={{ flex: 1, backgroundColor: passengerTheme === "light" ? "#f4f6f4" : onayDark.background }}>
+      <OnayPassengerScreens
+        active={passengerTab} theme={passengerTheme} homeScroll={homeScroll}
+        home={<>
+    <OnayPassengerHome
       activeOrder={passengerHasActiveOrder}
       onViewActiveOrder={() => selectPassengerTab("trips")}
       theme={passengerTheme}
       onThemeChange={changePassengerTheme}
       onChoose={openPassengerBooking}
       onChooseLocation={openPassengerRoutePicker}
-    /> : null}
+    />
+
+    {showEndpointSettings ? <View testID="onay-server-settings-panel" style={[s.card, passengerDarkSystem && s.darkPassengerTripCard]}><Text style={[s.heading, passengerDarkSystem && s.darkPassengerTripTitle]}>Сервер Onay</Text><Text style={[s.descDark, passengerDarkSystem && s.darkPassengerTripMuted]}>Укажи адрес сервера для подключения. При смене сервера потребуется вход по телефону.</Text><TextInput style={[s.input, passengerDarkSystem && s.legacyInputDark]} placeholderTextColor={passengerDarkSystem ? onayDark.muted : "#71837a"} value={endpointInput} onChangeText={setEndpointInput} placeholder="https://api.onay…" autoCapitalize="none" autoCorrect={false} keyboardType="url" editable={!busy && !sessionLoading} />{endpointError ? <Text style={[s.note, passengerDarkSystem && s.darkPassengerTripNote]} accessibilityRole="alert">{endpointError}</Text> : null}<Button title="Сохранить сервер" onPress={saveEndpoint} disabled={busy || sessionLoading || !endpointInput.trim()} dark={passengerDarkSystem} />{apiBase ? <Button title="Закрыть настройки" onPress={() => setShowEndpointSettings(false)} secondary disabled={busy} dark={passengerDarkSystem} /> : null}</View> : <Button title="Настройки сервера" onPress={() => setShowEndpointSettings(true)} secondary disabled={busy || sessionLoading} dark={passengerDarkSystem} />}
+    {visibleError ? <View testID="onay-data-error" accessibilityRole="alert" style={[s.card, passengerDarkSystem && s.darkPassengerTripCard]}><Text style={[s.heading, passengerDarkSystem && s.darkPassengerTripTitle]}>Нет актуальных данных</Text><Text style={[s.descDark, passengerDarkSystem && s.darkPassengerTripMuted]}>{visibleError}</Text><Button title="Повторить обновление" testID="onay-data-error-retry" onPress={() => { void refreshOrders(); void refreshAvailability(); setProfileRefresh(value => value + 1); }} secondary disabled={busy} dark={passengerDarkSystem} /></View> : null}
+
+
+    <View onLayout={event => setRouteSectionY(event.nativeEvent.layout.y)}><PassengerRouteOrder key={driverRouteSession} directionIntent={bookingDirectionIntent} endpoint={apiBase} userId={profile.id} token={token} busy={busy} activeOrder={passengerHasActiveOrder} bookingGate={bookingGate} onCreated={refreshOrders} theme={passengerTheme} /></View>
+    <View testID="onay-passenger-legacy-route" onLayout={event => setLegacySectionY(event.nativeEvent.layout.y)} style={[s.card, passengerTheme === "dark" && s.darkPassengerTripCard]}>
+      <Text style={[s.heading, passengerTheme === "dark" && s.darkPassengerTripTitle]}>По своему адресу · маршрут C/D</Text>
+       <Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Доступен маршрут C/D. Уточнение адреса подачи не меняет точки маршрута.</Text>
+      <Text style={[s.label, passengerTheme === "dark" && s.legacyLabelDark]}>ТОЧКА А · ОТПРАВЛЕНИЕ</Text>{stops.filter(v => v.code === "C" || v.code === "D").map(v => <Pressable key={"a"+v.id} testID={"onay-legacy-pickup-" + v.code} accessibilityRole="button" accessibilityLabel={"Отправление: " + v.name + " (" + v.code + ")"} accessibilityState={{ selected: a === v.code }} onPress={() => setA(v.code)} style={[s.stop, passengerTheme === "dark" && s.legacyStopDark, a===v.code && s.selected, passengerTheme === "dark" && a===v.code && s.legacyStopActiveDark]}><Text style={[s.stopText, passengerTheme === "dark" && s.legacyStopTextDark]}>{v.name}</Text><Text style={passengerTheme === "dark" && s.legacyStopCodeDark}>{v.code}</Text></Pressable>)}
+      <Text style={[s.label, passengerTheme === "dark" && s.legacyLabelDark]}>ТОЧКА Б · НАЗНАЧЕНИЕ</Text>{stops.map(v => <Pressable key={"b"+v.id} testID={"onay-legacy-destination-" + v.code} accessibilityRole="button" accessibilityLabel={"Назначение: " + v.name + " (" + v.code + ")"} accessibilityState={{ selected: b === v.code }} onPress={() => setB(v.code)} style={[s.stop, passengerTheme === "dark" && s.legacyStopDark, b===v.code && s.selected, passengerTheme === "dark" && b===v.code && s.legacyStopActiveDark]}><Text style={[s.stopText, passengerTheme === "dark" && s.legacyStopTextDark]}>{v.name}</Text><Text style={passengerTheme === "dark" && s.legacyStopCodeDark}>{v.code}</Text></Pressable>)}
+      <TextInput testID="onay-legacy-pickup-address" accessibilityLabel="Уточнение адреса подачи (необязательно)" accessibilityHint="Адрес служит уточнением подачи и не меняет выбранный маршрут C/D" style={[s.input, passengerTheme === "dark" && s.legacyInputDark]} placeholderTextColor={passengerTheme === "dark" ? onayDark.muted : "#71837a"} value={address} onChangeText={setAddress} placeholder="Уточнение адреса подачи (необязательно)" />
+      <View style={[s.fare, passengerTheme === "dark" && s.legacyFareDark]}><Text style={[s.label, passengerTheme === "dark" && s.legacyLabelDark]}>ПРЕДВАРИТЕЛЬНАЯ СТОИМОСТЬ</Text><Text style={[s.price, passengerTheme === "dark" && s.legacyPriceDark]}>{fareFresh && fare ? formatFareMoney(fare) : "—"}</Text></View>
+      <View style={s.seatsRow}><Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Пассажиры (до 8)</Text><Stepper value={seats} onChange={setSeats} dark={passengerTheme === "dark"} /></View>
+      <Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Наличие водителей: {availabilityDisplay.label}</Text>
+      {availabilityError ? <Text style={[s.note, passengerTheme === "dark" && s.darkPassengerTripNote]}>{availabilityError}</Text> : null}
+      <Button title="Проверить наличие водителей" testID="onay-legacy-check-availability" onPress={() => { void refreshAvailability(); }} disabled={busy || checkingAvailability} secondary dark={passengerTheme === "dark"} />
+      <Button title={busy ? "Оформляем…" : "Заказать поездку"} testID="onay-legacy-book-trip" onPress={order} disabled={busy || !fareFresh || !canOrder || passengerHasActiveOrder || !bookingGate.canSubmit()} dark={passengerTheme === "dark"} />
+      {passengerHasActiveOrder ? <Text style={[s.small, passengerTheme === "dark" && s.legacySmallDark]}>Сначала заверши или отмени текущий заказ.</Text> : null}
+      {message ? <Text style={[s.note, passengerTheme === "dark" && s.darkPassengerTripNote]}>{message}</Text> : null}<Text style={[s.small, passengerTheme === "dark" && s.legacySmallDark]}>Геолокация запрашивается только при оформлении заказа.</Text>
+    </View>
+    {availabilityDisplay.state === "unavailable" ? <View style={[s.card, passengerTheme === "dark" && s.darkPassengerTripCard]}><Text style={[s.heading, passengerTheme === "dark" && s.darkPassengerTripTitle]}>Водителей пока нет</Text><Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Для этой точки и количества пассажиров сейчас нет свободного водителя. Попробуй проверить наличие позже.</Text></View> : null}
+
+        </>}
+        trips={<>
+    <View testID="onay-passenger-trips">
+      <OnayPassengerTrips
+        theme={passengerTheme}
+        activeCount={passengerOrders.filter(order => !isClosed(order)).length}
+        historyOpen={tripsHistoryOpen}
+        onShowHistory={() => { setTripsHistoryOpen(true); setHistoryOpenRequest(revision => revision + 1); }}
+        onShowActive={() => setTripsHistoryOpen(false)}
+        onBook={openPassengerRoutePicker}
+        activeContent={
+          <>
+          {passengerOrders.filter(order => !isClosed(order)).map(passengerOrder => <View key={passengerOrder.id} style={[s.card, passengerTheme === "dark" && s.darkPassengerTripCard]} testID={`passenger-trip-${passengerOrder.id}`}><Text style={[s.heading, passengerTheme === "dark" && s.darkPassengerTripTitle]}>Твоя поездка</Text><Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>{statusLabels[passengerOrder.status]}</Text><Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Точка подачи: {ridePickupLabel(passengerOrder)}</Text><Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Куда: {rideDestinationLabel(passengerOrder)}</Text><Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Пассажиров: {passengerOrder.seats}</Text>{passengerOrder.status === "searching" && passengerOrder.offered_driver_id ? <Text style={[s.note, passengerTheme === "dark" && s.darkPassengerTripNote]}>Ждём ответа водителя.</Text> : null}<PassengerDriverCard key={`${driverRouteSession}:${passengerOrder.id}:${passengerOrder.driver_id ?? ""}:${passengerOrder.status}`} endpoint={apiBase} token={token} order={passengerOrder} theme={passengerTheme} /><Button title={busy ? "Отменяем…" : "Отменить заказ"} onPress={() => cancelOrder(passengerOrder)} disabled={busy} secondary dark={passengerTheme === "dark"} /></View>)}
+          </>
+        }
+        historyContent={
+          <View testID="onay-passenger-history-anchor">
+      <PassengerHistory key={`${driverRouteSession}:${profile.id}`} endpoint={apiBase} token={token} passengerId={profile.id} recentOrders={passengerOrders} theme={passengerTheme} openRequest={historyOpenRequest} />
+    </View>
+        }
+      />
+    </View>
+
+        </>}
+        chats={<>
+    <View testID="onay-passenger-chats">
+      <OnayPassengerChatsEmpty theme={passengerTheme} />
+    </View>
+
+        </>}
+        profile={<>
+    <View testID="onay-passenger-profile">
+      <OnayPassengerProfile
+        fullName={profile.full_name || ""}
+        phoneNumber={profile.phone_number}
+        busy={busy}
+        theme={passengerTheme}
+        active={passengerTab === "profile"}
+        onBackToHome={() => setPassengerTab("home")}
+        onThemeChange={changePassengerTheme}
+        onHistory={openPassengerHistory}
+        onDriver={() => { void switchMode("driver"); }}
+        onLogout={logout}
+      />
+    </View>
+
+          <Text style={s.footer}>© 2026 ONAY OST E.K.K Technologies · One Founder. Intelligent Systems.</Text>
+        </>}
+      />
+      <OnayPassengerTabBar active={passengerTab} theme={passengerTheme} onSelect={selectPassengerTab} />
+    </View>;
+  }
+
+  return <View style={{ flex: 1, backgroundColor: token && mode === "passenger" ? (passengerTheme === "light" ? "#f4f6f4" : onayDark.background) : driverChrome ? onayDark.background : "#F3F6F4" }}>
+    <ScrollView ref={homeScroll} style={[s.screen, token && mode === "passenger" && { backgroundColor: passengerTheme === "light" ? "#f4f6f4" : onayDark.background }, driverChrome && s.driverScreen]} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
     {!(token && profile && activeRole === "passenger" && mode === "passenger") ? <>
     <View style={[s.header, driverChrome && s.driverHeader]}>{driverChrome ? <Image testID="onay-driver-confirmed-logo" source={require("../assets/onay-confirmed-logo.jpg")} style={s.driverLogo} resizeMode="contain" accessibilityLabel="Логотип Onay" /> : <Text style={s.logo}>O</Text>}<View style={s.brandWrap}><Text style={[s.brand, driverChrome && s.driverBrand]}>Onay</Text><Text style={[s.tag, driverChrome && s.driverTag]}>ТВОЙ ГОРОД. ТВОЙ МАРШРУТ.</Text></View>{token ? <Pressable onPress={logout} disabled={busy} accessibilityRole="button" accessibilityLabel="Выйти из аккаунта" style={driverChrome && s.driverLogoutButton}><Text style={[s.logout, driverChrome && s.driverLogout]}>Выйти</Text></Pressable> : null}</View>
     <View style={[s.hero, driverChrome && s.driverHero]}><Text style={[s.kicker, driverChrome && s.driverKicker]}>ОДНО ПРИЛОЖЕНИЕ · ANDROID + IOS</Text><Text style={[s.title, driverChrome && s.driverHeroTitle]}>{mode === "passenger" ? "Куда едем?" : "Onay Driver"}</Text><Text style={[s.desc, driverChrome && s.driverHeroText]}>{mode === "passenger" ? "Выбери маршрут — остальное сделает Onay." : "Подтверждённый водитель может встать в очередь и получать подходящие заказы."}</Text></View>
@@ -943,63 +1031,10 @@ export default function Home() {
           : null}
         <DriverHistory key={`${driverRouteSession}:${profile.id}`} endpoint={apiBase} token={token} driverId={profile.id} />
       </>
-    ) : <>
-    <View testID="onay-passenger-trips" onLayout={event => setTripsSectionY(event.nativeEvent.layout.y)}>
-      <OnayPassengerTrips
-        theme={passengerTheme}
-        activeCount={passengerOrders.filter(order => !isClosed(order)).length}
-        historyOpen={tripsHistoryOpen}
-        onShowHistory={() => { setTripsHistoryOpen(true); setHistoryOpenRequest(revision => revision + 1); }}
-        onShowActive={() => setTripsHistoryOpen(false)}
-        onBook={openPassengerRoutePicker}
-        activeContent={
-          <>
-          {passengerOrders.filter(order => !isClosed(order)).map(passengerOrder => <View key={passengerOrder.id} style={[s.card, passengerTheme === "dark" && s.darkPassengerTripCard]} testID={`passenger-trip-${passengerOrder.id}`}><Text style={[s.heading, passengerTheme === "dark" && s.darkPassengerTripTitle]}>Твоя поездка</Text><Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>{statusLabels[passengerOrder.status]}</Text><Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Точка подачи: {ridePickupLabel(passengerOrder)}</Text><Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Куда: {rideDestinationLabel(passengerOrder)}</Text><Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Пассажиров: {passengerOrder.seats}</Text>{passengerOrder.status === "searching" && passengerOrder.offered_driver_id ? <Text style={[s.note, passengerTheme === "dark" && s.darkPassengerTripNote]}>Ждём ответа водителя.</Text> : null}<PassengerDriverCard key={`${driverRouteSession}:${passengerOrder.id}:${passengerOrder.driver_id ?? ""}:${passengerOrder.status}`} endpoint={apiBase} token={token} order={passengerOrder} theme={passengerTheme} /><Button title={busy ? "Отменяем…" : "Отменить заказ"} onPress={() => cancelOrder(passengerOrder)} disabled={busy} secondary dark={passengerTheme === "dark"} /></View>)}
-          </>
-        }
-        historyContent={
-          <View testID="onay-passenger-history-anchor" onLayout={event => setHistorySectionY(event.nativeEvent.layout.y)}>
-      <PassengerHistory key={`${driverRouteSession}:${profile.id}`} endpoint={apiBase} token={token} passengerId={profile.id} recentOrders={passengerOrders} theme={passengerTheme} openRequest={historyOpenRequest} />
-    </View>
-        }
-      />
-    </View>
-    <View onLayout={event => setRouteSectionY(event.nativeEvent.layout.y)}><PassengerRouteOrder key={driverRouteSession} directionIntent={bookingDirectionIntent} endpoint={apiBase} userId={profile.id} token={token} busy={busy} activeOrder={passengerHasActiveOrder} bookingGate={bookingGate} onCreated={refreshOrders} theme={passengerTheme} /></View>
-    <View testID="onay-passenger-legacy-route" onLayout={event => setLegacySectionY(event.nativeEvent.layout.y)} style={[s.card, passengerTheme === "dark" && s.darkPassengerTripCard]}>
-      <Text style={[s.heading, passengerTheme === "dark" && s.darkPassengerTripTitle]}>По своему адресу · маршрут C/D</Text>
-       <Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Доступен маршрут C/D. Уточнение адреса подачи не меняет точки маршрута.</Text>
-      <Text style={[s.label, passengerTheme === "dark" && s.legacyLabelDark]}>ТОЧКА А · ОТПРАВЛЕНИЕ</Text>{stops.filter(v => v.code === "C" || v.code === "D").map(v => <Pressable key={"a"+v.id} testID={"onay-legacy-pickup-" + v.code} accessibilityRole="button" accessibilityLabel={"Отправление: " + v.name + " (" + v.code + ")"} accessibilityState={{ selected: a === v.code }} onPress={() => setA(v.code)} style={[s.stop, passengerTheme === "dark" && s.legacyStopDark, a===v.code && s.selected, passengerTheme === "dark" && a===v.code && s.legacyStopActiveDark]}><Text style={[s.stopText, passengerTheme === "dark" && s.legacyStopTextDark]}>{v.name}</Text><Text style={passengerTheme === "dark" && s.legacyStopCodeDark}>{v.code}</Text></Pressable>)}
-      <Text style={[s.label, passengerTheme === "dark" && s.legacyLabelDark]}>ТОЧКА Б · НАЗНАЧЕНИЕ</Text>{stops.map(v => <Pressable key={"b"+v.id} testID={"onay-legacy-destination-" + v.code} accessibilityRole="button" accessibilityLabel={"Назначение: " + v.name + " (" + v.code + ")"} accessibilityState={{ selected: b === v.code }} onPress={() => setB(v.code)} style={[s.stop, passengerTheme === "dark" && s.legacyStopDark, b===v.code && s.selected, passengerTheme === "dark" && b===v.code && s.legacyStopActiveDark]}><Text style={[s.stopText, passengerTheme === "dark" && s.legacyStopTextDark]}>{v.name}</Text><Text style={passengerTheme === "dark" && s.legacyStopCodeDark}>{v.code}</Text></Pressable>)}
-      <TextInput testID="onay-legacy-pickup-address" accessibilityLabel="Уточнение адреса подачи (необязательно)" accessibilityHint="Адрес служит уточнением подачи и не меняет выбранный маршрут C/D" style={[s.input, passengerTheme === "dark" && s.legacyInputDark]} placeholderTextColor={passengerTheme === "dark" ? onayDark.muted : "#71837a"} value={address} onChangeText={setAddress} placeholder="Уточнение адреса подачи (необязательно)" />
-      <View style={[s.fare, passengerTheme === "dark" && s.legacyFareDark]}><Text style={[s.label, passengerTheme === "dark" && s.legacyLabelDark]}>ПРЕДВАРИТЕЛЬНАЯ СТОИМОСТЬ</Text><Text style={[s.price, passengerTheme === "dark" && s.legacyPriceDark]}>{fareFresh && fare ? formatFareMoney(fare) : "—"}</Text></View>
-      <View style={s.seatsRow}><Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Пассажиры (до 8)</Text><Stepper value={seats} onChange={setSeats} dark={passengerTheme === "dark"} /></View>
-      <Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Наличие водителей: {availabilityDisplay.label}</Text>
-      {availabilityError ? <Text style={[s.note, passengerTheme === "dark" && s.darkPassengerTripNote]}>{availabilityError}</Text> : null}
-      <Button title="Проверить наличие водителей" testID="onay-legacy-check-availability" onPress={() => { void refreshAvailability(); }} disabled={busy || checkingAvailability} secondary dark={passengerTheme === "dark"} />
-      <Button title={busy ? "Оформляем…" : "Заказать поездку"} testID="onay-legacy-book-trip" onPress={order} disabled={busy || !fareFresh || !canOrder || passengerHasActiveOrder || !bookingGate.canSubmit()} dark={passengerTheme === "dark"} />
-      {passengerHasActiveOrder ? <Text style={[s.small, passengerTheme === "dark" && s.legacySmallDark]}>Сначала заверши или отмени текущий заказ.</Text> : null}
-      {message ? <Text style={[s.note, passengerTheme === "dark" && s.darkPassengerTripNote]}>{message}</Text> : null}<Text style={[s.small, passengerTheme === "dark" && s.legacySmallDark]}>Геолокация запрашивается только при оформлении заказа.</Text>
-    </View>
-    {availabilityDisplay.state === "unavailable" ? <View style={[s.card, passengerTheme === "dark" && s.darkPassengerTripCard]}><Text style={[s.heading, passengerTheme === "dark" && s.darkPassengerTripTitle]}>Водителей пока нет</Text><Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Для этой точки и количества пассажиров сейчас нет свободного водителя. Попробуй проверить наличие позже.</Text></View> : null}
-    <View testID="onay-passenger-chats" onLayout={event => setChatsSectionY(event.nativeEvent.layout.y)}>
-      <OnayPassengerChatsEmpty theme={passengerTheme} />
-    </View>
-    <View testID="onay-passenger-profile" onLayout={event => setProfileSectionY(event.nativeEvent.layout.y)}>
-      <OnayPassengerProfile
-        fullName={profile.full_name || ""}
-        phoneNumber={profile.phone_number}
-        busy={busy}
-        theme={passengerTheme}
-        onThemeChange={changePassengerTheme}
-        onHistory={openPassengerHistory}
-        onDriver={() => { void switchMode("driver"); }}
-        onLogout={logout}
-      />
-    </View>
-    </>}
+    ) : null}
     <Text style={[s.footer, driverChrome && s.driverFooter]}>© 2026 ONAY OST E.K.K Technologies · One Founder. Intelligent Systems.</Text>
     </ScrollView>
-    {token && profile && activeRole === "passenger" && mode === "passenger" ? <OnayPassengerTabBar active={passengerTab} theme={passengerTheme} onSelect={selectPassengerTab} /> : null}
+
   </View>;
 }
 

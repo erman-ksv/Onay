@@ -194,6 +194,12 @@ class LineRideQA(shared.DriverRouteQA):
         self.identity()
         self.passenger_token, _ = self.ui_login(self.passenger_page, "passenger")
         self.expect(self.passenger_page.get_by_test_id("configured-route-passenger")).to_be_visible()
+        for tab in ("trips", "chats", "profile", "home"):
+            self.passenger_page.get_by_test_id("onay-tab-" + tab).click()
+            self.expect(self.passenger_page.get_by_test_id("onay-screen-" + tab)).to_be_visible()
+            if tab != "home":
+                self.expect(self.passenger_page.get_by_test_id("onay-screen-home")).to_be_hidden()
+        self.expect(self.passenger_page.get_by_test_id("configured-route-passenger")).to_be_visible()
         require(self.context != self.passenger_context, "Driver and passenger must have isolated browser sessions")
         self.passed("Two isolated Expo sessions perform actual OTP login and driver administrator approval")
         with self.response_for("/orders", "GET") as pending:

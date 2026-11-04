@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Constants from "expo-constants";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { BackHandler, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { onayDark } from "../lib/onay-auth-ui";
 import { onayProfileInitial } from "../lib/onay-profile-avatar";
 import OnayPassengerSupport from "./OnayPassengerSupport";
@@ -12,6 +12,8 @@ type Props = {
   phoneNumber?: string | null;
   busy: boolean;
   theme: Theme;
+  active: boolean;
+  onBackToHome: () => void;
   onThemeChange: (value: Theme) => void;
   onHistory: () => void;
   onDriver: () => void;
@@ -20,10 +22,21 @@ type Props = {
 
 const APP_VERSION = Constants.expoConfig?.version ?? "0.1.0";
 
-export default function OnayPassengerProfile({ fullName, phoneNumber, busy, theme, onThemeChange, onHistory, onDriver, onLogout }: Props) {
+export default function OnayPassengerProfile({ fullName, phoneNumber, busy, theme, active, onBackToHome, onThemeChange, onHistory, onDriver, onLogout }: Props) {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [personalOpen, setPersonalOpen] = useState(false);
   const [supportOpen, setSupportOpen] = useState(false);
+  useEffect(() => {
+    if (!active || Platform.OS === "web") return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (supportOpen) { setSupportOpen(false); return true; }
+      if (aboutOpen) { setAboutOpen(false); return true; }
+      if (personalOpen) { setPersonalOpen(false); return true; }
+      onBackToHome();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [active, supportOpen, aboutOpen, personalOpen, onBackToHome]);
   const light = theme === "light";
   const surface = light ? "#ffffff" : onayDark.card;
   const foreground = light ? "#0e1a14" : onayDark.text;

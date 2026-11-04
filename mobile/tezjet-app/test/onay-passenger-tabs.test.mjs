@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { ONAY_PASSENGER_TABS, onayPassengerTabScrollY } from "../lib/onay-passenger-tabs.ts";
+import { ONAY_PASSENGER_TABS } from "../lib/onay-passenger-tabs.ts";
 
 test("native Onay bottom navigation matches the four tabs in the user's HTML artifact", () => {
   assert.deepEqual(ONAY_PASSENGER_TABS.map(tab => [tab.id, tab.label]), [
@@ -9,13 +9,15 @@ test("native Onay bottom navigation matches the four tabs in the user's HTML art
   ]);
 });
 
-test("tabs only scroll to measured sections and never invent a booking", () => {
-  const anchors = { trips: 450, chats: 980, profile: 1340 };
-  assert.equal(onayPassengerTabScrollY("home", anchors), 0);
-  assert.equal(onayPassengerTabScrollY("trips", anchors), 438);
-  assert.equal(onayPassengerTabScrollY("chats", anchors), 968);
-  assert.equal(onayPassengerTabScrollY("profile", anchors), 1328);
-  assert.equal(onayPassengerTabScrollY("trips", { ...anchors, trips: 0 }), 0);
+test("four independent screens replace scroll-to-anchor navigation", () => {
+  const shell=readFileSync(new URL("../components/OnayPassengerScreens.tsx", import.meta.url), "utf8");
+  const app=readFileSync(new URL("../app/index.tsx", import.meta.url), "utf8");
+  assert.ok(shell.includes("pages.map(page =>"));
+  assert.ok(shell.includes('scrollEnabled={selected}'));
+  assert.ok(shell.includes('accessibilityElementsHidden={!selected}'));
+  assert.ok(shell.includes("useSafeAreaInsets()"));
+  assert.ok(app.includes("<OnayPassengerScreens"));
+  assert.ok(!app.includes("onayPassengerTabScrollY(tab,"));
 });
 
 test("tab controls are accessible and are only shown to signed-in passengers", () => {
@@ -24,7 +26,8 @@ test("tab controls are accessible and are only shown to signed-in passengers", (
   assert.match(source, /accessibilityRole="tab"/);
   assert.match(source, /accessibilityState=\{\{ selected \}\}/);
   assert.match(source, /onPress=\{\(\) => onSelect\(tab\.id\)\}/);
-  assert.match(app, /token && profile && activeRole === "passenger" && mode === "passenger" \? <OnayPassengerTabBar/);
+  assert.match(app, /if \(token && profile && activeRole === "passenger" && mode === "passenger"\)/);
+  assert.match(app, /<OnayPassengerTabBar active=\{passengerTab\}/);
   assert.match(app, /<PassengerHistory /);
   assert.match(app, /<PassengerRouteOrder /);
 });

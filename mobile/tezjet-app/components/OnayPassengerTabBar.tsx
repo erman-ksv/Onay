@@ -1,4 +1,5 @@
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { onayDark } from "../lib/onay-auth-ui";
 import { ONAY_PASSENGER_TABS, type OnayPassengerTab } from "../lib/onay-passenger-tabs";
 
@@ -16,7 +17,8 @@ export default function OnayPassengerTabBar({ active, onSelect, theme = "dark" }
   onSelect: (tab: OnayPassengerTab) => void;
 }) {
   const light = theme === "light";
-  return <View testID="onay-passenger-bottom-nav" style={[styles.container, light && { backgroundColor: "#f4f6f4" }]}>
+  const insets = useSafeAreaInsets();
+  return <View testID="onay-passenger-bottom-nav" style={[styles.container, { paddingBottom: Math.max(20, insets.bottom) }, light && { backgroundColor: "#f4f6f4" }]}>
     <View accessibilityRole="tablist" style={[styles.pill, styles.referencePill, light && styles.pillLight]}>
       {ONAY_PASSENGER_TABS.map(tab => {
         const selected = active === tab.id;
