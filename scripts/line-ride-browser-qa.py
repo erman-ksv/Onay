@@ -203,8 +203,12 @@ class LineRideQA(shared.DriverRouteQA):
         self.expect(self.control("driver-history-totals")).to_contain_text("Завершено поездок: 0")
         self.expect(self.passenger_page.get_by_test_id("driver-history")).to_have_count(0)
         self.passed("Task4.14 real empty driver history stays separate from passenger UI")
+        # Enter Trips, then explicitly request its server-backed history.
+        # The V2 screen no longer exposes archive controls on the home page.
+        self.passenger_page.get_by_test_id("onay-tab-trips").click()
+        self.expect(self.passenger_page.get_by_test_id("onay-trips-open-history")).to_be_visible()
         with self.response(self.passenger_page, "/orders", "GET") as pending:
-            self.passenger_page.get_by_test_id("passenger-history-toggle").click()
+            self.passenger_page.get_by_test_id("onay-trips-open-history").click()
         require(pending.value.status == 200, "Passenger history must read the real authorized API")
         self.expect(self.passenger_page.get_by_test_id("passenger-history-empty")).to_be_visible()
         self.expect(self.control("passenger-history")).to_have_count(0)
@@ -526,8 +530,11 @@ class LineRideQA(shared.DriverRouteQA):
         self.expect(page.get_by_test_id("passenger-history-row-" + new_id)).to_be_visible()
         self.expect(page.get_by_test_id("passenger-history-results")).to_contain_text("Закрытых поездок: 6")
         page.reload(wait_until="domcontentloaded")
-        self.expect(page.get_by_test_id("passenger-history-toggle")).to_be_visible()
-        page.get_by_test_id("passenger-history-toggle").click()
+        self.expect(page.get_by_test_id("onay-tab-trips")).to_be_visible()
+        page.get_by_test_id("onay-tab-trips").click()
+        with self.response(page, "/orders", "GET") as pending:
+            page.get_by_test_id("onay-trips-open-history").click()
+        require(pending.value.status == 200, "Reloaded Trips history must use the authorized API")
         self.expect(page.get_by_test_id("passenger-history-results")).to_contain_text("Закрытых поездок: 6")
         self.passed("Task3.14 explicit refresh and actual app reload retain all six persisted passenger rides")
         def fail_transport(route):
