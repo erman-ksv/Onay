@@ -213,6 +213,9 @@ class LineRideQA(shared.DriverRouteQA):
         self.expect(self.passenger_page.get_by_test_id("passenger-history-empty")).to_be_visible()
         self.expect(self.control("passenger-history")).to_have_count(0)
         self.passenger_page.get_by_test_id("passenger-history-toggle").click()
+        self.passenger_page.get_by_test_id("onay-trips-back-to-active").click()
+        self.passenger_page.get_by_test_id("onay-tab-home").click()
+        self.expect(self.passenger_page.get_by_test_id("configured-route-passenger")).to_be_visible()
         self.passed("Task3.14 genuine empty passenger history is distinct and absent from driver mode")
 
     def queue(self, label=None, seats=None, phase=None):
@@ -295,6 +298,7 @@ class LineRideQA(shared.DriverRouteQA):
             "Actual passenger booking must bind the quoted A/B stops and one seat")
         require(order.get("offered_driver_id") == self.driver_id and order["status"] == "searching", "Real FIFO must offer the booking to the line driver")
         self.expect(self.control("driver-incoming-order")).to_be_visible()
+        page.get_by_test_id("onay-tab-trips").click()
         self.expect(page.get_by_test_id("passenger-trip-" + self.order_id)).to_contain_text("Ждём ответа водителя")
         self.expect(page.get_by_test_id("passenger-driver-card")).to_have_count(0)
         self.expected(api_request(self.args.api_url, "/orders/" + self.order_id + "/driver", token=self.passenger_token), 404, "Driver contact stays private before acceptance")
@@ -376,6 +380,7 @@ class LineRideQA(shared.DriverRouteQA):
         self.progress("completed")
         self.expect(self.control("driver-trip-" + self.order_id)).to_have_count(0)
         self.expect(self.passenger_page.get_by_test_id("passenger-trip-" + self.order_id)).to_have_count(0)
+        self.passenger_page.get_by_test_id("onay-trips-open-history").click()
         self.expect(self.passenger_page.get_by_text(re.compile(r"QA линия A.*QA линия B: Поездка завершена"))).to_be_visible()
         self.expect(self.passenger_page.get_by_test_id("passenger-driver-card")).to_have_count(0)
         self.expected(api_request(self.args.api_url, "/orders/" + self.order_id + "/driver", token=self.passenger_token), 404, "Completed ride no longer exposes driver contact")
