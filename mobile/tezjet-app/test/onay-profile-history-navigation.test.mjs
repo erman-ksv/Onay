@@ -12,7 +12,7 @@ test("Profile History opens the history anchor, not just the active Trips tab", 
   assert.match(app, /function openPassengerHistory\(\) \{/);
   assert.match(app, /setHistoryOpenRequest\(revision => revision \+ 1\)/);
   assert.match(app, /setPassengerTab\("trips"\)/);
-  assert.match(app, /homeScroll\.current\?\.scrollTo\(\{ y: Math\.max\(0, historySectionY - 12\), animated: true \}\)/);
+  assert.match(app, /homeScroll\.current\?\.scrollTo\(\{ y: Math\.max\(0, tripsSectionY - 12\), animated: true \}\)/);
   assert.match(app, /testID="onay-passenger-history-anchor" onLayout=\{event => setHistorySectionY\(event\.nativeEvent\.layout\.y\)\}/);
   assert.match(app, /openRequest=\{historyOpenRequest\}/);
 });
