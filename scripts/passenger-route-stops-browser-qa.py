@@ -292,8 +292,12 @@ class PassengerStopsQA:
         require(order["fare"]["totalKzt"] == self.reverse_fare["totalKzt"], "Persisted fare must match server quote")
         fetched = self.expected(api_request(self.args.api_url, "/orders/" + self.order_id, token=self.passenger_token), 200, "Fetch durable selected-segment order")["order"]
         require(fetched["id"] == self.order_id and fetched["fare"] == order["fare"], "Order must be stored by the actual PostgreSQL runtime")
-        self.expect(self.page.get_by_text("Точка подачи: " + self.stop("D")["name"], exact=True)).to_be_visible()
-        self.expect(self.page.get_by_text("Куда: " + self.stop("C")["name"], exact=True)).to_be_visible()
+        # The booking form is Home-only; real active rides belong to Trips V2.
+        self.page.get_by_test_id("onay-tab-trips").click()
+        ride = self.page.get_by_test_id("passenger-trip-" + self.order_id)
+        self.expect(ride).to_be_visible()
+        self.expect(ride.get_by_text("Точка подачи: " + self.stop("D")["name"], exact=True)).to_be_visible()
+        self.expect(ride.get_by_text("Куда: " + self.stop("C")["name"], exact=True)).to_be_visible()
         self.screenshot("mobile-390-booked-D-to-C")
         self.passed("Actual passenger POST persists D-to-C GPS, fare and FIFO assignment and displays the real stop names")
 
