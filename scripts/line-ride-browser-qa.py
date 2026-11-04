@@ -509,8 +509,12 @@ class LineRideQA(shared.DriverRouteQA):
         page = self.passenger_page
         for _ in range(4):
             self.cancelled_history_fixture()
+        # The preceding completed-ride view may leave the archive expanded.
+        # Refresh an open archive; explicitly open a collapsed one. Both actions
+        # must fetch the real user's orders from PostgreSQL.
+        history_action = "passenger-history-refresh" if page.get_by_test_id("passenger-history-refresh").count() else "passenger-history-toggle"
         with self.response(page, "/orders", "GET") as pending:
-            page.get_by_test_id("passenger-history-toggle").click()
+            page.get_by_test_id(history_action).click()
         require(pending.value.status == 200, "Full history must use real HTTP and PostgreSQL")
         expected_ids = [order["id"] for order in pending.value.json()["orders"]
                         if order.get("passenger_id") and order["status"] in {"completed", "cancelled"}]
