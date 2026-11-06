@@ -1,7 +1,8 @@
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { onayDark } from "../lib/onay-auth-ui";
 import { ONAY_PASSENGER_TABS, type OnayPassengerTab } from "../lib/onay-passenger-tabs";
+import { onayTabWidths } from "../lib/onay-tab-layout";
 
 // Source icons are traced from the four tabs in the user's Onay.html reference.
 const TAB_ICONS = {
@@ -18,6 +19,8 @@ export default function OnayPassengerTabBar({ active, onSelect, theme = "dark" }
 }) {
   const light = theme === "light";
   const insets = useSafeAreaInsets();
+  const { width: viewportWidth } = useWindowDimensions();
+  const tabWidths = onayTabWidths(viewportWidth);
   return <View testID="onay-passenger-bottom-nav" style={[styles.container, { paddingBottom: Math.max(20, insets.bottom) }, light && { backgroundColor: "#f4f6f4" }]}>
     <View accessibilityRole="tablist" style={[styles.pill, styles.referencePill, light && styles.pillLight]}>
       {ONAY_PASSENGER_TABS.map(tab => {
@@ -29,7 +32,7 @@ export default function OnayPassengerTabBar({ active, onSelect, theme = "dark" }
           accessibilityLabel={tab.label}
           accessibilityState={{ selected }}
           onPress={() => onSelect(tab.id)}
-          style={[styles.tab, selected ? styles.activeTab : styles.inactiveTab, light && !selected && styles.inactiveTabLight]}
+          style={[styles.tab, selected ? styles.activeTab : styles.inactiveTab, light && !selected && styles.inactiveTabLight, { width: selected ? tabWidths.active : tabWidths.inactive }]}
         >
           <Image accessible={false} source={TAB_ICONS[tab.id]} resizeMode="contain" style={[styles.icon, selected && styles.selectedText, light && !selected && styles.iconLight]} />
           {selected ? <Text style={styles.activeLabel} numberOfLines={1}>{tab.label}</Text> : null}
