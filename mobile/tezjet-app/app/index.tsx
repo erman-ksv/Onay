@@ -1,12 +1,26 @@
+import { useOnaySystemUi } from "../lib/use-onay-system-ui";
+import OnayDriverQueue from "../components/OnayDriverQueue";
+import OnayDriverProfile from "../components/OnayDriverProfile";
+import { OnayThemeContext } from "../lib/onay-theme-context";
+import { onayThemedStyles } from "../lib/onay-themed-styles";
+import OnayPassengerSupport from "../components/OnayPassengerSupport";
+import OnayPassengerAbout from "../components/OnayPassengerAbout";
+import { StatusBar } from "expo-status-bar";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { parseServerFareMoney, formatFareMoney, type FareMoney } from "../lib/fare-money";
 import * as Location from "expo-location";
 import { io } from "socket.io-client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, AppState, BackHandler, Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Alert, AppState, BackHandler, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { API, ApiError, errorMessage, request, setApiEndpoint, validateApiEndpoint, type Availability } from "../lib/api";
 import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextDriverTripStatus, nextTripLabel, ridePickupLabel, rideDestinationLabel, statusLabels, type RideOrder } from "../lib/orders";
 import { registrationFullName } from "../lib/registration";
+import OnayDriverShell, { type OnayDriverTab } from "../components/OnayDriverShell";
+import OnayRouteSchematic from "../components/OnayRouteSchematic";
+import OnayIcon from "../components/OnayIcon";
+import { onayPalette } from "../components/OnayScreenFrame";
+import OnayServerSettings from "../components/OnayServerSettings";
+import OnayScreenFrame from "../components/OnayScreenFrame";
 import OnayAuthScreen from "../components/OnayAuthScreen";
 import OnayPassengerHome from "../components/OnayPassengerHome";
 import OnayPassengerTabBar from "../components/OnayPassengerTabBar";
@@ -37,24 +51,33 @@ const API_ENDPOINT = "tezjet_api_endpoint";
 type Mode = "passenger" | "driver";
 type Stop = { id: string; code: string; name: string; sequence: number; position: number };
 type Fare = FareMoney;
-type Profile = { id: string; phone_number?: string; role: string; active_role?: string; roles?: string[]; driver_approval_status?: "pending" | "approved" | "rejected" | "blocked"; full_name?: string; driver_vehicle?: { seat_capacity: number } };
+type Profile = { id: string; phone_number?: string; role: string; active_role?: string; roles?: string[]; driver_approval_status?: "pending" | "approved" | "rejected" | "blocked"; full_name?: string; driver_vehicle?: { seat_capacity: number; make?: string; model?: string; plate_number?: string } };
 
 function Button({ title, onPress, disabled = false, secondary = false, testID, dark = false }: { title: string; onPress: () => void; disabled?: boolean; secondary?: boolean; testID?: string; dark?: boolean }) {
+  const theme = useContext(OnayThemeContext);
+  const s = useMemo(() => onayThemedStyles(baseStyles, theme), [theme]);
   return <Pressable accessibilityRole="button" accessibilityState={{ disabled }} testID={testID} onPress={onPress} disabled={disabled} style={[s.button, dark && s.legacyButtonDark, secondary && s.buttonSecondary, dark && secondary && s.legacyButtonSecondaryDark, disabled && s.disabled]}><Text style={[s.buttonText, dark && s.legacyButtonDarkText, secondary && s.buttonSecondaryText, dark && secondary && s.legacyButtonSecondaryDarkText]}>{title}</Text></Pressable>;
 }
 
 function Stepper({ value, onChange, min = 1, max = 8, disabled = false, dark = false }: { value: number; onChange: (v: number) => void; min?: number; max?: number; disabled?: boolean; dark?: boolean }) {
+  const theme = useContext(OnayThemeContext);
+  const s = useMemo(() => onayThemedStyles(baseStyles, theme), [theme]);
   return <View style={s.stepper}><Pressable accessibilityRole="button" accessibilityLabel="Уменьшить количество мест" accessibilityState={{ disabled: disabled || value <= min }} style={[s.stepButton, dark && s.driverStepButton]} disabled={disabled || value <= min} onPress={() => onChange(Math.max(min, value - 1))}><Text style={[s.stepText, dark && s.driverStepText]}>−</Text></Pressable><Text accessibilityLabel={`Выбрано мест: ${value}`} style={[s.stepValue, dark && s.driverStepValue]}>{value}</Text><Pressable accessibilityRole="button" accessibilityLabel="Увеличить количество мест" accessibilityState={{ disabled: disabled || value >= max }} style={[s.stepButton, dark && s.driverStepButton]} disabled={disabled || value >= max} onPress={() => onChange(Math.min(max, value + 1))}><Text style={[s.stepText, dark && s.driverStepText]}>+</Text></Pressable></View>;
 }
 
 export default function Home() {
+  const [routeEditorOpen, setRouteEditorOpen] = useState(false);
+  const [driverSubpage, setDriverSubpage] = useState<"support" | "about" | "vehicle" | null>(null);
+  const [driverTab, setDriverTab] = useState<OnayDriverTab>("line");
   const [mode, setMode] = useState<Mode>("passenger");
   const homeScroll = useRef<ScrollView>(null);
   const [routeSectionY, setRouteSectionY] = useState(0);
   const [legacySectionY, setLegacySectionY] = useState(0);
+  const [bookingPage, setBookingPage] = useState<"route" | "legacy" | null>(null);
   const [passengerTab, setPassengerTab] = useState<OnayPassengerTab>("home");
   const [tripsHistoryOpen, setTripsHistoryOpen] = useState(false);
   const [passengerTheme, setPassengerTheme] = useState<"light" | "dark">("dark");
+  const s = useMemo(() => onayThemedStyles(baseStyles, passengerTheme), [passengerTheme]);
   const [historyOpenRequest, setHistoryOpenRequest] = useState(0);
   const [homeScrollTarget, setHomeScrollTarget] = useState<{ section: "route" | "legacy"; revision: number } | null>(null);
   useEffect(() => {
@@ -180,6 +203,7 @@ export default function Home() {
   const maxDriverSeats = profile?.driver_vehicle?.seat_capacity ?? 8;
   const vehicleSaved = useCallback((value: DriverVehicleSnapshot) => {
     setProfile(current => current ? { ...current, driver_approval_status: value.approval_status, driver_vehicle: value.driver_vehicle ?? undefined } : current);
+    if (value.approval_status !== "blocked") { setDriverSubpage(null); setDriverTab("line"); }
   }, []);
   useEffect(() => { if (queueMembership === "absent") setDriverSeats(value => Math.min(value, maxDriverSeats)); }, [maxDriverSeats, queueMembership]);
   const activeDriverOrders = orders.filter(order => !isClosed(order) && order.driver_id === profile?.id);
@@ -226,7 +250,8 @@ export default function Home() {
     trackedOrders.current = [];
     orderChanges.current.clear(); orderRevision.current += 1; queueRevision.current += 1;
     updateQueueSnapshot(null, true); setDepartureConfirmation(null);
-    setToken(""); setProfile(null); setOrders([]); setIncomingOrder(null);
+    setToken(""); setProfile(null);
+    setDriverTab("line"); setDriverSubpage(null); setRouteEditorOpen(false); setBookingPage(null); setOrders([]); setIncomingOrder(null);
     setProfileLoading(false); setProfileError("");
     setStops([]); setFare(null); setAvailability(null); setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null); setLineState(null);
     setDataError(""); setRouteError(""); setAvailabilityError("");
@@ -480,7 +505,7 @@ export default function Home() {
 
   async function switchMode(next: Mode) {
     if (!token) {
-      setMode(next); setRequested(false); setOtp(""); setDemoCode(""); setMessage("");
+      setMode(next); setDriverTab("line"); setDriverSubpage(null); setBookingPage(null); setRequested(false); setOtp(""); setDemoCode(""); setMessage("");
       return;
     }
     if (activeRole === next) { setMode(next); return; }
@@ -555,6 +580,7 @@ export default function Home() {
       bookingGate.recoveryChanged();
       if (currentToken.current !== requestToken || API !== requestEndpoint) return;
       applyOrder(r.order);
+      setBookingPage(null); setPassengerTab("trips");
       setMessage(r.offer ? "Заказ отправлен водителю. Ждём подтверждения." : "Заказ создан. Ищем водителя.");
       await refreshOrders();
     } catch (e) {
@@ -817,6 +843,7 @@ export default function Home() {
   }
 
   function openPassengerRoutePicker() {
+    setBookingPage("route");
     setPassengerTab("home");
     setHomeScrollTarget(previous => ({ section: "route", revision: (previous?.revision ?? 0) + 1 }));
     if (passengerTab === "home") homeScroll.current?.scrollTo({ y: Math.max(0, routeSectionY - 24), animated: true });
@@ -825,6 +852,7 @@ export default function Home() {
   function openPassengerBooking(choice: OnayPassengerHomeMode) {
     setPassengerTab("home");
     const target = onayPassengerHomeTarget(choice);
+    setBookingPage(target.section);
     if (target.direction) {
       setBookingDirectionIntent(previous => ({
         direction: target.direction!,
@@ -840,22 +868,28 @@ export default function Home() {
   useEffect(() => {
     if (!token || !profile || activeRole !== "passenger" || mode !== "passenger" || Platform.OS === "web") return;
     const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (bookingPage) { setBookingPage(null); return true; }
       if (passengerTab === "profile") return false;
       if (passengerTab === "trips" && tripsHistoryOpen) { setTripsHistoryOpen(false); return true; }
       if (passengerTab !== "home") { setPassengerTab("home"); return true; }
       return false;
     });
     return () => sub.remove();
-  }, [token, profile, activeRole, mode, passengerTab, tripsHistoryOpen]);
+  }, [token, profile, activeRole, mode, passengerTab, tripsHistoryOpen, bookingPage]);
 
   // Auth UI is native React Native; the original backend OTP flow remains in login().
   // Do not hide the existing API setup and session-recovery screens.
+  useOnaySystemUi(!token && !showEndpointSettings ? "dark" : passengerTheme);
   const entryScreen = onayEntryScreen({ sessionLoading, token, apiBase, showEndpointSettings });
   if (entryScreen === "loading") {
     return <View style={{ flex: 1, backgroundColor: onayDark.background, alignItems: "center", justifyContent: "center" }}>
       <ActivityIndicator color={onayDark.accent} />
       <Text style={{ color: onayDark.muted, marginTop: 12 }}>Восстанавливаем вход…</Text>
     </View>;
+  }
+  if (entryScreen === "connection") {
+    return <OnayServerSettings value={endpointInput} onChange={setEndpointInput} onSave={() => { void saveEndpoint(); }}
+      onBack={() => setShowEndpointSettings(false)} busy={busy || sessionLoading} error={endpointError} theme={passengerTheme}/>;
   }
   if (entryScreen === "auth") {
     return <OnayAuthScreen
@@ -876,17 +910,26 @@ export default function Home() {
       onRegisterMode={(value) => { setRegistering(value); setRequested(false); setOtp(""); setDemoCode(""); }}
       onMode={(value) => { void switchMode(value); }}
       onBackToPhone={() => { setRequested(false); setOtp(""); setDemoCode(""); }}
-      onSubmit={(verify) => { void login(verify); }}
+      onSubmit={(verify) => { if (!apiBase) setShowEndpointSettings(true); else void login(verify); }}
       onServerSettings={() => setShowEndpointSettings(true)}
     />;
   }
+
+  if (token && !profile) return <OnayScreenFrame title={profileLoading ? "Загружаем профиль…" : "Нет связи с профилем"} theme={passengerTheme} testID="onay-profile-unavailable">
+    {profileLoading ? <ActivityIndicator color={onayDark.accent}/> : null}
+    <Text style={{ color: onayDark.muted, marginTop: 16 }}>{profileError || "Проверь интернет и повтори обновление."}</Text>
+    <Button title="Повторить загрузку профиля" testID="onay-profile-retry" onPress={() => setProfileRefresh(value => value + 1)} disabled={busy || profileLoading} dark/>
+    <Button title="Настройки сервера" onPress={() => setShowEndpointSettings(true)} secondary dark/>
+    <Button title="Выйти" onPress={logout} disabled={busy} secondary dark/>
+  </OnayScreenFrame>;
 
   // Presentation only; API state and retry handlers remain unchanged.
   const passengerDarkSystem = Boolean(token && mode === "passenger" && passengerTheme === "dark");
   const driverChrome = Boolean(token && mode === "driver");
 
   if (token && profile && activeRole === "passenger" && mode === "passenger") {
-    return <View style={{ flex: 1, backgroundColor: passengerTheme === "light" ? "#f4f6f4" : onayDark.background }}>
+    return <View style={{ flex: 1, backgroundColor: passengerTheme === "light" ? "#f1f7f3" : onayDark.background }}>
+      <StatusBar style={passengerTheme === "dark" ? "light" : "dark"}/>
       <OnayPassengerScreens
         active={passengerTab} theme={passengerTheme} homeScroll={homeScroll}
         home={<>
@@ -900,11 +943,15 @@ export default function Home() {
       onChooseLocation={openPassengerRoutePicker}
     />
 
-    {showEndpointSettings ? <View testID="onay-server-settings-panel" style={[s.card, passengerDarkSystem && s.darkPassengerTripCard]}><Text style={[s.heading, passengerDarkSystem && s.darkPassengerTripTitle]}>Сервер Onay</Text><Text style={[s.descDark, passengerDarkSystem && s.darkPassengerTripMuted]}>Укажи адрес сервера для подключения. При смене сервера потребуется вход по телефону.</Text><TextInput style={[s.input, passengerDarkSystem && s.legacyInputDark]} placeholderTextColor={passengerDarkSystem ? onayDark.muted : "#71837a"} value={endpointInput} onChangeText={setEndpointInput} placeholder="https://api.onay…" autoCapitalize="none" autoCorrect={false} keyboardType="url" editable={!busy && !sessionLoading} />{endpointError ? <Text style={[s.note, passengerDarkSystem && s.darkPassengerTripNote]} accessibilityRole="alert">{endpointError}</Text> : null}<Button title="Сохранить сервер" onPress={saveEndpoint} disabled={busy || sessionLoading || !endpointInput.trim()} dark={passengerDarkSystem} />{apiBase ? <Button title="Закрыть настройки" onPress={() => setShowEndpointSettings(false)} secondary disabled={busy} dark={passengerDarkSystem} /> : null}</View> : <Button title="Настройки сервера" onPress={() => setShowEndpointSettings(true)} secondary disabled={busy || sessionLoading} dark={passengerDarkSystem} />}
     {visibleError ? <View testID="onay-data-error" accessibilityRole="alert" style={[s.card, passengerDarkSystem && s.darkPassengerTripCard]}><Text style={[s.heading, passengerDarkSystem && s.darkPassengerTripTitle]}>Нет актуальных данных</Text><Text style={[s.descDark, passengerDarkSystem && s.darkPassengerTripMuted]}>{visibleError}</Text><Button title="Повторить обновление" testID="onay-data-error-retry" onPress={() => { void refreshOrders(); void refreshAvailability(); setProfileRefresh(value => value + 1); }} secondary disabled={busy} dark={passengerDarkSystem} /></View> : null}
 
 
-    <View onLayout={event => setRouteSectionY(event.nativeEvent.layout.y)}><PassengerRouteOrder key={driverRouteSession} directionIntent={bookingDirectionIntent} endpoint={apiBase} userId={profile.id} token={token} busy={busy} activeOrder={passengerHasActiveOrder} bookingGate={bookingGate} onCreated={refreshOrders} theme={passengerTheme} /></View>
+    <Modal visible={bookingPage !== null} animationType="slide" onRequestClose={() => setBookingPage(null)} presentationStyle="fullScreen">
+      <OnayScreenFrame theme={passengerTheme} title={bookingPage === "legacy" ? "По своему адресу" : bookingDirectionIntent?.direction === "b_to_a" ? "Еду в село" : "Еду в город"} onBack={() => setBookingPage(null)} testID="onay-passenger-booking-page">
+      <View style={{ display: bookingPage === "route" ? "flex" : "none" }}>
+    <View onLayout={event => setRouteSectionY(event.nativeEvent.layout.y)}><PassengerRouteOrder key={driverRouteSession} directionIntent={bookingDirectionIntent} endpoint={apiBase} userId={profile.id} token={token} busy={busy} activeOrder={passengerHasActiveOrder} bookingGate={bookingGate} onCreated={refreshOrders} onBooked={() => { setBookingPage(null); setPassengerTab("trips"); }} theme={passengerTheme} /></View>
+      </View>
+      <View style={{ display: bookingPage === "legacy" ? "flex" : "none" }}>
     <View testID="onay-passenger-legacy-route" onLayout={event => setLegacySectionY(event.nativeEvent.layout.y)} style={[s.card, passengerTheme === "dark" && s.darkPassengerTripCard]}>
       <Text style={[s.heading, passengerTheme === "dark" && s.darkPassengerTripTitle]}>По своему адресу · маршрут C/D</Text>
        <Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Доступен маршрут C/D. Уточнение адреса подачи не меняет точки маршрута.</Text>
@@ -921,6 +968,9 @@ export default function Home() {
       {message ? <Text style={[s.note, passengerTheme === "dark" && s.darkPassengerTripNote]}>{message}</Text> : null}<Text style={[s.small, passengerTheme === "dark" && s.legacySmallDark]}>Геолокация запрашивается только при оформлении заказа.</Text>
     </View>
     {availabilityDisplay.state === "unavailable" ? <View style={[s.card, passengerTheme === "dark" && s.darkPassengerTripCard]}><Text style={[s.heading, passengerTheme === "dark" && s.darkPassengerTripTitle]}>Водителей пока нет</Text><Text style={[s.descDark, passengerTheme === "dark" && s.darkPassengerTripMuted]}>Для этой точки и количества пассажиров сейчас нет свободного водителя. Попробуй проверить наличие позже.</Text></View> : null}
+      </View>
+      </OnayScreenFrame>
+    </Modal>
 
         </>}
         trips={<>
@@ -975,38 +1025,24 @@ export default function Home() {
     </View>;
   }
 
-  return <View style={{ flex: 1, backgroundColor: token && mode === "passenger" ? (passengerTheme === "light" ? "#f4f6f4" : onayDark.background) : driverChrome ? onayDark.background : "#F3F6F4" }}>
-    <ScrollView ref={homeScroll} style={[s.screen, token && mode === "passenger" && { backgroundColor: passengerTheme === "light" ? "#f4f6f4" : onayDark.background }, driverChrome && s.driverScreen]} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-    {!(token && profile && activeRole === "passenger" && mode === "passenger") ? <>
-    <View style={[s.header, driverChrome && s.driverHeader]}>{driverChrome ? <Image testID="onay-driver-confirmed-logo" source={require("../assets/onay-confirmed-logo.jpg")} style={s.driverLogo} resizeMode="contain" accessibilityLabel="Логотип Onay" /> : <Text style={s.logo}>O</Text>}<View style={s.brandWrap}><Text style={[s.brand, driverChrome && s.driverBrand]}>Onay</Text><Text style={[s.tag, driverChrome && s.driverTag]}>ТВОЙ ГОРОД. ТВОЙ МАРШРУТ.</Text></View>{token ? <Pressable onPress={logout} disabled={busy} accessibilityRole="button" accessibilityLabel="Выйти из аккаунта" style={driverChrome && s.driverLogoutButton}><Text style={[s.logout, driverChrome && s.driverLogout]}>Выйти</Text></Pressable> : null}</View>
-    <View style={[s.hero, driverChrome && s.driverHero]}><Text style={[s.kicker, driverChrome && s.driverKicker]}>ОДНО ПРИЛОЖЕНИЕ · ANDROID + IOS</Text><Text style={[s.title, driverChrome && s.driverHeroTitle]}>{mode === "passenger" ? "Куда едем?" : "Onay Driver"}</Text><Text style={[s.desc, driverChrome && s.driverHeroText]}>{mode === "passenger" ? "Выбери маршрут — остальное сделает Onay." : "Подтверждённый водитель может встать в очередь и получать подходящие заказы."}</Text></View>
-    <View testID="onay-role-switch" style={s.switch}><Button title="Пассажир" testID="onay-switch-to-passenger" onPress={() => switchMode("passenger")} disabled={busy || profileLoading} secondary={mode !== "passenger"} dark={driverChrome} /><Button title="Водитель" testID="onay-switch-to-driver" onPress={() => switchMode("driver")} disabled={busy || profileLoading} secondary={mode !== "driver"} dark={driverChrome} /></View>
-    </> : null}
-    {showEndpointSettings ? <View testID="onay-server-settings-panel" style={[s.card, passengerDarkSystem && s.darkPassengerTripCard]}><Text style={[s.heading, passengerDarkSystem && s.darkPassengerTripTitle]}>Сервер Onay</Text><Text style={[s.descDark, passengerDarkSystem && s.darkPassengerTripMuted]}>Укажи адрес сервера для подключения. При смене сервера потребуется вход по телефону.</Text><TextInput style={[s.input, passengerDarkSystem && s.legacyInputDark]} placeholderTextColor={passengerDarkSystem ? onayDark.muted : "#71837a"} value={endpointInput} onChangeText={setEndpointInput} placeholder="https://api.onay…" autoCapitalize="none" autoCorrect={false} keyboardType="url" editable={!busy && !sessionLoading} />{endpointError ? <Text style={[s.note, passengerDarkSystem && s.darkPassengerTripNote]} accessibilityRole="alert">{endpointError}</Text> : null}<Button title="Сохранить сервер" onPress={saveEndpoint} disabled={busy || sessionLoading || !endpointInput.trim()} dark={passengerDarkSystem} />{apiBase ? <Button title="Закрыть настройки" onPress={() => setShowEndpointSettings(false)} secondary disabled={busy} dark={passengerDarkSystem} /> : null}</View> : <Button title="Настройки сервера" onPress={() => setShowEndpointSettings(true)} secondary disabled={busy || sessionLoading} dark={passengerDarkSystem} />}
-    {visibleError ? <View testID="onay-data-error" accessibilityRole="alert" style={[s.card, passengerDarkSystem && s.darkPassengerTripCard]}><Text style={[s.heading, passengerDarkSystem && s.darkPassengerTripTitle]}>Нет актуальных данных</Text><Text style={[s.descDark, passengerDarkSystem && s.darkPassengerTripMuted]}>{visibleError}</Text><Button title="Повторить обновление" testID="onay-data-error-retry" onPress={() => { void refreshOrders(); void refreshAvailability(); setProfileRefresh(value => value + 1); }} secondary disabled={busy} dark={passengerDarkSystem} /></View> : null}
-
-    {token && profile && activeRole === "driver" && mode === "driver" ? <DriverVehicleForm key={driverRouteSession} endpoint={apiBase} token={token} blocked={busy || queueMembership === "enrolled" || !!incomingOrder || activeDriverOrders.length > 0} onBusyChange={vehicleBusyChange} onSaved={vehicleSaved} /> : null}
-    {sessionLoading ? <View style={s.card}><ActivityIndicator color="#0D735C" /><Text style={s.descDark}>Восстанавливаем вход…</Text></View> : !token ? <View style={s.card}>
-      <Text style={s.heading}>{registering ? (mode === "driver" ? "Регистрация водителя" : "Регистрация пассажира") : "Вход по телефону"}</Text>
-      <View style={s.switch}>
-        <Button title="Войти" onPress={() => { setRegistering(false); setRequested(false); setOtp(""); setDemoCode(""); }} secondary={registering} disabled={busy} testID="auth-signin-mode" />
-        <Button title="Регистрация" onPress={() => { setRegistering(true); setRequested(false); setOtp(""); setDemoCode(""); }} secondary={!registering} disabled={busy} testID="auth-signup-mode" />
-      </View>
-      {registering ? <>
-        <TextInput style={s.input} value={name} onChangeText={setName} placeholder="Имя" autoCapitalize="words" autoCorrect={false} editable={!busy && !requested} testID="registration-given-name" />
-        <TextInput style={s.input} value={surname} onChangeText={setSurname} placeholder="Фамилия" autoCapitalize="words" autoCorrect={false} editable={!busy && !requested} testID="registration-family-name" />
-      </> : <Text style={s.note}>Первый раз в Onay? Выбери «Регистрация».</Text>}
-      <TextInput style={s.input} value={phone} onChangeText={setPhone} placeholder="+998 90 123 45 67" keyboardType="phone-pad" editable={!busy && !requested} />
-      {requested ? <>{demoCode ? <Text style={s.note}>Тестовый код: {demoCode}</Text> : <Text style={s.note}>Введи код подтверждения, полученный через настроенный сервис авторизации.</Text>}<TextInput style={s.input} value={otp} onChangeText={setOtp} placeholder="Код подтверждения" keyboardType="number-pad" /><Button title={busy ? "Проверяем…" : mode === "driver" ? "Продолжить как водитель" : "Войти как пассажир"} onPress={() => login(true)} disabled={busy || !apiBase || !otp.trim()} /></> : <Button title={busy ? "Отправляем…" : "Получить код"} onPress={() => login(false)} disabled={busy || !apiBase || !phone.trim() || (registering && !registrationFullName(name, surname))} />}
-      {profileError ? <Text style={s.note}>{profileError}</Text> : null}
-      {busy ? <ActivityIndicator style={s.loader} color="#0D735C" /> : null}
-      {mode === "driver" ? <Text style={s.small}>Новый водительский профиль будет ожидать подтверждения администратора. До подтверждения заказы недоступны.</Text> : null}
-    </View> : !profile ? <View testID="onay-profile-unavailable" style={[s.card, passengerDarkSystem && s.darkPassengerTripCard]}><Text style={[s.heading, passengerDarkSystem && s.darkPassengerTripTitle]}>{profileLoading ? "Загружаем профиль…" : "Нет связи с профилем"}</Text>{profileLoading ? <ActivityIndicator color={passengerDarkSystem ? onayDark.accent : "#0D735C"} /> : null}<Text style={[s.descDark, passengerDarkSystem && s.darkPassengerTripMuted]}>{profileError || "Вход сохранён. Подключись к Onay, чтобы продолжить."}</Text><Button title="Повторить" testID="onay-profile-retry" onPress={() => setProfileRefresh(value => value + 1)} disabled={profileLoading} secondary dark={passengerDarkSystem} /></View> : mode === "driver" ? (
-      activeRole !== "driver" ? <View style={s.card}><Text style={s.heading}>Переключение режима</Text><Text style={s.descDark}>Подключи водительский профиль к своему аккаунту.</Text><Button title="Войти в режим водителя" onPress={() => switchMode("driver")} disabled={busy} /></View>
-      : profile.driver_approval_status !== "approved" ? <View style={[s.card, s.driverReviewCard]} testID="onay-driver-review-gate"><Text style={[s.heading, s.driverReviewTitle]} accessibilityRole="header">{profile.driver_approval_status === "blocked" ? "Профиль заблокирован" : profile.driver_approval_status === "rejected" ? "Профиль отклонён" : "Профиль на проверке"}</Text><Text style={[s.descDark, s.driverReviewDescription]}>{profile.driver_approval_status === "blocked" ? "Работа водителем заблокирована администратором. Изменение автомобиля не снимает блокировку." : profile.driver_approval_status === "rejected" ? "Свяжись с поддержкой Onay, чтобы узнать причину." : "Администратор должен подтвердить водительский профиль. До этого нельзя вставать в очередь или принимать заказы."}</Text><Button title="Проверить статус" testID="onay-driver-review-refresh" onPress={refreshProfile} secondary disabled={busy} dark /></View>
-      : <>
-        <DriverRoutePicker key={driverRouteSession} endpoint={apiBase} token={token} busy={busy} queued={queueMembership !== "absent"}
-          activeTrip={activeDriverOrders.length > 0} pendingOffer={!!incomingOrder} onStatusChange={updateDriverRouteGate} />
+  if (!profile || !token) return <OnayScreenFrame title="Вход в Onay"><Button title="Повторить" onPress={() => setProfileRefresh(value => value + 1)} dark/></OnayScreenFrame>;
+  if (activeRole !== "driver") return <OnayScreenFrame title="Переключение режима" theme={passengerTheme}><Button title="Подключить режим водителя" onPress={() => { void switchMode("driver"); }} disabled={busy} dark/><Button title="Вернуться к пассажиру" onPress={() => setMode("passenger")} secondary dark/></OnayScreenFrame>;
+  const c = onayPalette(passengerTheme);
+  return <OnayDriverShell active={driverTab} onSelect={setDriverTab} theme={passengerTheme}
+    fullName={profile.full_name || ""} online={queueMembership === "enrolled"}
+    disabled={busy || profile.driver_approval_status !== "approved" || queueMembership === "unknown" || !!incomingOrder || activeDriverOrders.length > 0}
+    onOnline={() => { if (queueMembership === "enrolled") void leaveQueue(); else if (canJoinQueue) void joinQueue(); else setDriverTab("queue"); }}
+    pages={{
+      line: <>
+        {visibleError ? <View testID="onay-data-error" accessibilityRole="alert" style={[s.card, { backgroundColor: c.card }]}><Text style={{ color: c.text }}>Нет актуальных данных</Text><Text style={{ color: c.muted }}>{visibleError}</Text><Button title="Повторить обновление" testID="onay-data-error-retry" onPress={() => { void refreshOrders(); setProfileRefresh(value => value + 1); }} dark/></View> : null}
+        <OnayRouteSchematic start={driverQueueContext?.stopName} end={driverQueueContext?.routeName}/>
+        <Pressable testID="onay-driver-car-summary" accessibilityRole="button" accessibilityLabel="Открыть автомобиль" onPress={() => setDriverTab("profile")} style={[s.card, { backgroundColor: c.card }]}>
+          <Text style={{ color: c.text, fontSize: 18, fontWeight: "700" }}>{profile.driver_vehicle ? [profile.driver_vehicle.make, profile.driver_vehicle.model, profile.driver_vehicle.plate_number].filter(Boolean).join(" · ") || "Автомобиль" : "Добавь автомобиль"}</Text>
+          <Text style={{ color: c.muted, marginTop: 8 }}>{driverQueueContext?.routeName || "Маршрут не выбран"}</Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 }}>{Array.from({ length: profile.driver_vehicle?.seat_capacity ?? 0 }, (_, index) => <View key={index} style={{ backgroundColor: freeSeats.status === "known" && index < (profile.driver_vehicle?.seat_capacity ?? 0) - freeSeats.availableSeats ? c.accent : c.cardRaised, padding: 7, borderRadius: 11 }}><OnayIcon name="seat" color={c.muted} size={20}/></View>)}</View>
+        </Pressable>
+        <Button title="Маршрут и направление" testID="onay-driver-choose-route" onPress={() => { setDriverTab("queue"); setRouteEditorOpen(true); }} secondary dark/>
+        {profile.driver_approval_status !== "approved" ? (<View style={[s.card, s.driverReviewCard]} testID="onay-driver-review-gate"><Text style={[s.heading, s.driverReviewTitle]} accessibilityRole="header">{profile.driver_approval_status === "blocked" ? "Профиль заблокирован" : profile.driver_approval_status === "rejected" ? "Профиль отклонён" : "Профиль на проверке"}</Text><Text style={[s.descDark, s.driverReviewDescription]}>{profile.driver_approval_status === "blocked" ? "Работа водителем заблокирована администратором. Изменение автомобиля не снимает блокировку." : profile.driver_approval_status === "rejected" ? "Свяжись с поддержкой Onay, чтобы узнать причину." : "Администратор должен подтвердить водительский профиль. До этого нельзя вставать в очередь или принимать заказы."}</Text><Button title="Проверить статус" testID="onay-driver-review-refresh" onPress={refreshProfile} secondary disabled={busy} dark /></View>) : <>
         <View style={[s.card, s.driverShiftCard]} testID="onay-driver-shift">
           <Text style={[s.heading, s.driverShiftHeading]}>Рабочая смена</Text>
           <Text style={[s.descDark, s.driverShiftText]}>Связь: {socketConnected ? "подключена" : "переподключение…"}</Text>
@@ -1030,16 +1066,37 @@ export default function Home() {
               <Text style={[s.descDark, s.driverNoRouteText]}>Выбери маршрут и направление выше, затем встань в очередь. До этого заказы не будут приходить.</Text>
             </View>
           : null}
-        <DriverHistory key={`${driverRouteSession}:${profile.id}`} endpoint={apiBase} token={token} driverId={profile.id} />
-      </>
-    ) : null}
-    <Text style={[s.footer, driverChrome && s.driverFooter]}>© 2026 ONAY OST E.K.K Technologies · One Founder. Intelligent Systems.</Text>
-    </ScrollView>
+        </>}
+      </>,
+      queue: <>{profile.driver_approval_status === "approved" ? <>
+        <OnayDriverQueue endpoint={apiBase} token={token} driverId={profile.id} theme={passengerTheme} active={driverTab === "queue"} onChoose={() => setRouteEditorOpen(value => !value)}/>
+        <View testID="onay-driver-route-editor" style={{ display: routeEditorOpen ? "flex" : "none" }}>
 
-  </View>;
+<DriverRoutePicker theme={passengerTheme} key={driverRouteSession} endpoint={apiBase} token={token} busy={busy} queued={queueMembership !== "absent"}
+          activeTrip={activeDriverOrders.length > 0} pendingOffer={!!incomingOrder} onStatusChange={updateDriverRouteGate} />
+        </View>
+        <Text style={{ color: c.muted }}>Позиция в очереди и свободные места подтверждаются сервером на странице «Линия».</Text>
+        <Button title="Вернуться на линию" onPress={() => setDriverTab("line")} dark/>
+      </> : <Text style={{ color: c.muted }}>Маршруты будут доступны после одобрения администратора.</Text>}</>,
+      history: <>
+<DriverHistory active={driverTab === "history"} theme={passengerTheme} key={`${driverRouteSession}:${profile.id}`} endpoint={apiBase} token={token} driverId={profile.id} />
+      </>,
+      chats: <OnayPassengerChatsEmpty theme={passengerTheme}/>,
+      profile: <>
+        <OnayDriverProfile fullName={profile.full_name || ""} vehicle={profile.driver_vehicle} approval={profile.driver_approval_status}
+          theme={passengerTheme} onTheme={changePassengerTheme} busy={busy || profileLoading}
+          onVehicle={() => setDriverSubpage("vehicle")} onSupport={() => setDriverSubpage("support")} onAbout={() => setDriverSubpage("about")}
+          onPassenger={() => { void switchMode("passenger"); }} onServer={() => setShowEndpointSettings(true)} onLogout={logout}/>
+        <Modal visible={driverSubpage !== null} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setDriverSubpage(null)}>
+          <OnayScreenFrame theme={passengerTheme} title={driverSubpage === "vehicle" ? "Автомобиль" : undefined} onBack={driverSubpage === "vehicle" ? () => setDriverSubpage(null) : undefined}>
+            {driverSubpage === "vehicle" ? (<DriverVehicleForm theme={passengerTheme} key={driverRouteSession} endpoint={apiBase} token={token} blocked={busy || queueMembership === "enrolled" || !!incomingOrder || activeDriverOrders.length > 0} onBusyChange={vehicleBusyChange} onSaved={vehicleSaved} />) : driverSubpage === "support" ? <OnayPassengerSupport theme={passengerTheme} onBack={() => setDriverSubpage(null)}/> : <OnayPassengerAbout theme={passengerTheme} onBack={() => setDriverSubpage(null)} backLabel="Назад к профилю водителя"/>}
+          </OnayScreenFrame>
+        </Modal>
+      </>,
+    }}/>
 }
 
-const s = StyleSheet.create({
+const baseStyles = StyleSheet.create({
  driverScreen:{backgroundColor:onayDark.background},
  driverHeader:{paddingBottom:6},
  driverLogo:{width:48,height:48,borderRadius:13},

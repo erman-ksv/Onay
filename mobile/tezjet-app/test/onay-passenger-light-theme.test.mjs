@@ -28,7 +28,7 @@ test("bottom tabs keep accessible selection while applying readable light colors
 });
 
 test("passenger scroll background follows chosen theme without altering API booking", () => {
-  assert.match(app, /passengerTheme === "light" \? "#f4f6f4" : onayDark\.background/);
+  assert.match(app, /passengerTheme === "light" \? "#f1f7f3" : onayDark\.background/);
   assert.match(app, /<PassengerRouteOrder /);
   assert.match(app, /bookingGate=\{bookingGate\}/);
   assert.match(app, /AsyncStorage\.setItem\("onay_passenger_theme_v1", value\)/);

@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const app = readFileSync(new URL("../app/index.tsx", import.meta.url), "utf8");
-const from = app.indexOf('profile.driver_approval_status !== "approved" ? <View');
-const to = app.indexOf('\n      : <>\n        <DriverRoutePicker', from);
+const from = app.indexOf('profile.driver_approval_status !== "approved" ? (<View');
+const to = app.indexOf(') : <>', from);
 const gate = app.slice(from, to);
 
 test("driver review and blocked gate uses Onay V2 readable tokens", () => {
@@ -29,6 +29,6 @@ test("driver may not accept orders or join queue without server approval", () =>
   assert.ok(gate.includes('testID="onay-driver-review-refresh" onPress={refreshProfile} secondary disabled={busy} dark'));
   assert.ok(!gate.includes('onPress={joinQueue}'));
   assert.ok(!gate.includes('onPress={acceptOrder}'));
-  assert.ok(app.includes('activeRole !== "driver" ?'));
+  assert.ok(app.includes('if (activeRole !== "driver") return'));
   assert.ok(app.includes('<DriverRoutePicker'));
 });

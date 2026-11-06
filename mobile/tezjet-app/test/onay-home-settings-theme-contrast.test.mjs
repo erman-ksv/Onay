@@ -24,5 +24,5 @@ test("light and dark theme buttons retain selection, labels and callbacks", () =
   assert.match(source, /onPress=\{\(\) => onThemeChange\?\.\(value\)\}/);
   assert.match(source, /style=\{\[h\.themeToggle, light && h\.themeToggleLight, theme === value && h\.themeActive\]\}/);
   assert.match(source, /themeToggleLight: \{ backgroundColor: "#e6f0ea" \}/);
-  assert.match(source, /theme === value \? onayDark\.accentInk : \(light \? "#0e1a14" : onayDark\.text\)/);
+  assert.match(source, /theme === value \? onayDark\.accentInk : \(light \? "#0a1d15" : onayDark\.text\)/);
 });

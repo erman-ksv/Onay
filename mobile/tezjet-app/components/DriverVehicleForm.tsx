@@ -1,12 +1,15 @@
+import { onayThemedStyles } from "../lib/onay-themed-styles";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { validateApiEndpoint } from "../lib/api";
 import { onayDark } from "../lib/onay-auth-ui";
 import { driverVehicleBody, parseDriverVehicleSnapshot, type DriverVehicleSnapshot, type VehicleDraft } from "../lib/driver-vehicle";
 
-type Props = { endpoint: string; token: string; blocked: boolean; onBusyChange: (busy: boolean) => void; onSaved: (value: DriverVehicleSnapshot) => void };
+type Props = {
+  theme?: "light" | "dark"; endpoint: string; token: string; blocked: boolean; onBusyChange: (busy: boolean) => void; onSaved: (value: DriverVehicleSnapshot) => void };
 const empty: VehicleDraft = { make: "", model: "", plate_number: "", seat_capacity: 3 };
-export default function DriverVehicleForm({ endpoint, token, blocked, onBusyChange, onSaved }: Props) {
+export default function DriverVehicleForm({ endpoint, token, blocked, onBusyChange, onSaved, theme = "dark" }: Props) {
+  const s = onayThemedStyles(baseStyles, theme);
   const [snapshot, setSnapshot] = useState<DriverVehicleSnapshot | null>(null);
   const [draft, setDraft] = useState(empty);
   const [loading, setLoading] = useState(true);
@@ -82,7 +85,7 @@ export default function DriverVehicleForm({ endpoint, token, blocked, onBusyChan
   </View>;
 }
 
-const s = StyleSheet.create({
+const baseStyles = StyleSheet.create({
   card: { padding: 20, marginBottom: 16, backgroundColor: onayDark.card, borderRadius: 24, borderWidth: 1, borderColor: onayDark.border, gap: 10 },
   heading: { fontSize: 20, fontWeight: "800", color: onayDark.text },
   note: { color: onayDark.muted, lineHeight: 21, fontSize: 13 },

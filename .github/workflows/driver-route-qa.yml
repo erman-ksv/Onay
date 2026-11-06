@@ -9,6 +9,8 @@ on:
       - "scripts/driver-route-browser-qa.py"
       - "scripts/passenger-route-stops-browser-qa.py"
       - "scripts/line-ride-browser-qa.py"
+      - "scripts/onay-v2-browser-qa.py"
+      - "design/onay/**"
       - ".github/workflows/driver-route-qa.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -25,6 +27,8 @@ on:
       - "scripts/driver-route-browser-qa.py"
       - "scripts/passenger-route-stops-browser-qa.py"
       - "scripts/line-ride-browser-qa.py"
+      - "scripts/onay-v2-browser-qa.py"
+      - "design/onay/**"
       - ".github/workflows/driver-route-qa.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -126,6 +130,12 @@ jobs:
           python -m pip install playwright==1.56.0
           python -m playwright install --with-deps chromium
 
+      - name: Export APK default without a configured API
+        working-directory: mobile/tezjet-app
+        env:
+          EXPO_PUBLIC_API_URL: ""
+        run: pnpm exec expo export --platform web --output-dir dist-unconfigured
+
       - name: Start API
         working-directory: artifacts/api-server
         env:
@@ -141,6 +151,8 @@ jobs:
           test -f mobile/tezjet-app/dist/index.html
           setsid python -m http.server 4174 --bind 127.0.0.1 --directory mobile/tezjet-app/dist > artifacts/driver-route-qa/frontend.log 2>&1 &
           echo "$!" > artifacts/driver-route-qa/frontend.pid
+          setsid python -m http.server 4175 --bind 127.0.0.1 --directory mobile/tezjet-app/dist-unconfigured > artifacts/driver-route-qa/unconfigured.log 2>&1 &
+          echo "$!" > artifacts/driver-route-qa/unconfigured.pid
 
       - name: Wait for API and exported Expo app
         run: |
@@ -153,6 +165,7 @@ jobs:
           for label, url, health in (
               ("API", "http://127.0.0.1:5000/api/healthz", True),
               ("Expo app", "http://127.0.0.1:4174/", False),
+              ("Unconfigured Expo app", "http://127.0.0.1:4175/", False),
           ):
               last_error = "No response"
               while time.monotonic() < deadline:
@@ -198,6 +211,15 @@ jobs:
             --output-dir artifacts/driver-route-qa/line-ride \
             2>&1 | tee artifacts/driver-route-qa/line-ride-qa.log
 
+      - name: Check V2 entry, navigation and capture actual/reference screens
+        run: |
+          python scripts/onay-v2-browser-qa.py \
+            --base-url http://127.0.0.1:4174 \
+            --unconfigured-url http://127.0.0.1:4175 \
+            --api-url http://127.0.0.1:5000 \
+            --output-dir artifacts/driver-route-qa/onay-v2 \
+            2>&1 | tee artifacts/driver-route-qa/onay-v2.log
+
       - name: Stop saved server processes
         if: always()
         run: |
@@ -206,7 +228,7 @@ jobs:
           from pathlib import Path
           import signal
 
-          for name in ("frontend", "api"):
+          for name in ("frontend", "unconfigured", "api"):
               pid_file = Path("artifacts/driver-route-qa") / f"{name}.pid"
               if not pid_file.exists():
                   continue

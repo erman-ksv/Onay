@@ -38,6 +38,14 @@ test("auth tree stays mounted but cannot submit during session restoration", () 
   assert.equal(onayEntryScreen({ ...base, sessionLoading: true }), "auth");
   assert.equal(onayEntryScreen({ ...base, sessionLoading: true, apiBase: "" }), "loading");
   assert.equal(onayEntryScreen({ ...base, sessionLoading: false }), "auth");
-  assert.equal(onayEntryScreen({ ...base, sessionLoading: false, showEndpointSettings: true }), "legacy");
-  assert.equal(onayEntryScreen({ ...base, sessionLoading: false, token: "session-token" }), "legacy");
+  assert.equal(onayEntryScreen({ ...base, sessionLoading: false, showEndpointSettings: true }), "connection");
+  assert.equal(onayEntryScreen({ ...base, sessionLoading: false, token: "session-token" }), "application");
+});
+
+test("unconfigured and restored APK startup use only V2 connection/auth/application states", () => {
+  const base = { sessionLoading: false, token: "", apiBase: "", showEndpointSettings: true };
+  assert.equal(onayEntryScreen(base), "connection");
+  assert.equal(onayEntryScreen({ ...base, showEndpointSettings: false }), "auth");
+  assert.equal(onayEntryScreen({ ...base, token: "saved", showEndpointSettings: false }), "application");
+  assert.equal(onayEntryScreen({ ...base, sessionLoading: true }), "loading");
 });

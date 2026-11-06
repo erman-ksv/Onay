@@ -2,11 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-test("passenger and auth use the same user-confirmed logo asset", () => {
+test("passenger and auth use the exact published-reference logo asset", () => {
  for(const name of ["OnayPassengerHome.tsx","OnayAuthScreen.tsx"]){
   const code=readFileSync(new URL("../components/"+name,import.meta.url),"utf8");
-  assert.match(code,/require\("\.\.\/assets\/onay-confirmed-logo\.jpg"\)/);
-  assert.doesNotMatch(code,/require\("\.\.\/assets\/onay-original-logo\.png"\)/);
+  assert.match(code,/require\("\.\.\/assets\/onay-original-logo\.png"\)/);
+  assert.doesNotMatch(code,/require\("\.\.\/assets\/onay-confirmed-logo\.jpg"\)/);
  }
 });
 

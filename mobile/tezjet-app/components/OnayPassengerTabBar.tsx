@@ -21,7 +21,7 @@ export default function OnayPassengerTabBar({ active, onSelect, theme = "dark" }
   const insets = useSafeAreaInsets();
   const { width: viewportWidth } = useWindowDimensions();
   const tabWidths = onayTabWidths(viewportWidth);
-  return <View testID="onay-passenger-bottom-nav" style={[styles.container, { paddingBottom: Math.max(20, insets.bottom) }, light && { backgroundColor: "#f4f6f4" }]}>
+  return <View testID="onay-passenger-bottom-nav" style={[styles.container, { paddingBottom: Math.max(20, insets.bottom) }, light && { backgroundColor: "#f1f7f3" }]}>
     <View accessibilityRole="tablist" style={[styles.pill, styles.referencePill, light && styles.pillLight]}>
       {ONAY_PASSENGER_TABS.map(tab => {
         const selected = active === tab.id;
@@ -43,7 +43,7 @@ export default function OnayPassengerTabBar({ active, onSelect, theme = "dark" }
 }
 
 const styles = StyleSheet.create({
-  pillLight: { backgroundColor: "rgba(255,255,255,0.95)", borderColor: "#e3e8e4" },
+  pillLight: { backgroundColor: "rgba(255,255,255,0.95)", borderColor: "#d3e3d9" },
   inactiveTabLight: { backgroundColor: "#eef3ef" },
   iconLight: { tintColor: "#35594a" },
   container: { backgroundColor: onayDark.background, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 20 },

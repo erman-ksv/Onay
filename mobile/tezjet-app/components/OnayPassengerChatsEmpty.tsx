@@ -29,9 +29,9 @@ export default function OnayPassengerChatsEmpty({ theme = "dark" }: Props) {
 
 const styles = StyleSheet.create({
   page: { minHeight: 365, backgroundColor: onayDark.background, marginBottom: 18, paddingHorizontal: 0, paddingTop: 22, paddingBottom: 30 },
-  lightPage: { backgroundColor: "#f4f6f4" },
+  lightPage: { backgroundColor: "#f1f7f3" },
   heading: { fontSize: 30, fontWeight: "700", color: onayDark.text, letterSpacing: -0.3 },
-  lightHeading: { color: "#0e1a14" },
+  lightHeading: { color: "#0a1d15" },
   empty: { marginTop: 90, paddingHorizontal: 12, alignItems: "center", gap: 4 },
   iconCircle: { width: 72, height: 72, borderRadius: 36, backgroundColor: onayDark.cardRaised, alignItems: "center", justifyContent: "center" },
   lightIconCircle: { backgroundColor: "#e6f0ea" },

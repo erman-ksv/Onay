@@ -9,6 +9,7 @@ type Props = {
 };
 
 const APP_VERSION = Constants.expoConfig?.version ?? "0.1.0";
+const BUILD = Constants.expoConfig?.extra?.onayBuild as { commit?: string; branch?: string; versionCode?: number } | undefined;
 
 /** Passenger About page matching the Onay V2 HTML layout; no unverified legal links. */
 export default function OnayPassengerAbout({ theme, onBack, backLabel = "Назад в профиль" }: Props) {
@@ -29,10 +30,11 @@ export default function OnayPassengerAbout({ theme, onBack, backLabel = "Наз�
       </Pressable>
       <Text style={[styles.heading, { color: primaryText }]}>О приложении</Text>
     </View>
+    {BUILD?.commit && BUILD.commit !== "local" ? <Text testID="onay-build-identity" style={{ color: secondaryText, textAlign: "center", fontSize: 12, marginTop: 8 }}>Тестовая сборка {BUILD.versionCode} · {BUILD.commit.slice(0, 12)}</Text> : null}
     <View style={styles.intro}>
       <Image
         testID="onay-about-confirmed-logo"
-        source={require("../assets/onay-confirmed-logo.jpg")}
+        source={require("../assets/onay-original-logo.png")}
         accessibilityLabel="Логотип Onay"
         resizeMode="contain"
         style={styles.logo}
@@ -54,7 +56,7 @@ export default function OnayPassengerAbout({ theme, onBack, backLabel = "Наз�
 
 const styles = StyleSheet.create({
   root: { minHeight: 440, backgroundColor: onayDark.background, padding: 16, borderRadius: 20, marginBottom: 18 },
-  rootLight: { backgroundColor: "#f4f6f4" },
+  rootLight: { backgroundColor: "#f1f7f3" },
   header: { flexDirection: "row", alignItems: "center", gap: 14 },
   back: { height: 42, width: 42, borderRadius: 14, backgroundColor: onayDark.card, alignItems: "center", justifyContent: "center" },
   backLight: { backgroundColor: "#e6f0ea" },

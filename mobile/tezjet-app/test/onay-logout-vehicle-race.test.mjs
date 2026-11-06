@@ -14,7 +14,8 @@ test("driver logout unmounts token-bound views before server revocation", () => 
   assert.ok(logout.includes('request<void>("/api/auth/logout", logoutToken, { method: "POST" })'));
   assert.ok(logout.indexOf("await clearSession();") < logout.indexOf('request<void>("/api/auth/logout", logoutToken'));
   assert.ok(app.includes('key={driverRouteSession} endpoint={apiBase} token={token} blocked='));
-  assert.ok(app.includes('token && profile && activeRole === "driver" && mode === "driver" ? <DriverVehicleForm'));
+  assert.ok(app.indexOf('if (entryScreen === "auth")') < app.indexOf('return <OnayDriverShell'));
+  assert.ok(app.includes('if (!profile || !token) return <OnayScreenFrame'));
 });
 
 test("logout still revokes captured server token and keeps offline/failure cleanup", () => {

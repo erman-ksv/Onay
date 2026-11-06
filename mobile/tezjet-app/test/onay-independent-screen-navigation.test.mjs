@@ -3,13 +3,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 const app=readFileSync(new URL("../app/index.tsx",import.meta.url),"utf8");
 const shell=readFileSync(new URL("../components/OnayPassengerScreens.tsx",import.meta.url),"utf8");
+const passengerApp=app.slice(app.indexOf('if (token && profile && activeRole === "passenger"'), app.indexOf('return <OnayDriverShell'));
 const profile=readFileSync(new URL("../components/OnayPassengerProfile.tsx",import.meta.url),"utf8");
 const history=readFileSync(new URL("../components/PassengerHistory.tsx",import.meta.url),"utf8");
 const qa=readFileSync(new URL("../../../scripts/line-ride-browser-qa.py",import.meta.url),"utf8");
 
 test("four unique screens keep separate scroll containers with hidden-tab access gated",()=>{
   for(const id of ["home","trips","chats","profile"]) assert.ok(app.includes(id+"={<>"));
-  for(const id of ["Home","Trips","ChatsEmpty","Profile","TabBar"]) assert.equal((app.match(new RegExp("<OnayPassenger"+id+"\\b","g"))??[]).length,1);
+  for(const id of ["Home","Trips","ChatsEmpty","Profile","TabBar"]) assert.equal((passengerApp.match(new RegExp("<OnayPassenger"+id+"\\b","g"))??[]).length,1);
   assert.ok(shell.includes("pages.map(page =>"));
   assert.ok(shell.includes('style={[styles.page, !selected && styles.inactive]}'));
   assert.ok(shell.includes('importantForAccessibility={selected ? "auto" : "no-hide-descendants"}'));

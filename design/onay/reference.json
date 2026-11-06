@@ -1,0 +1,11 @@
+{
+  "source": "https://claude.ai/public/artifacts/5b33333c-4c91-47a5-aa16-416f8b485b03",
+  "retrieved": "2026-11-06",
+  "publishedTitle": "Onay_V2.html",
+  "file": "Onay.html",
+  "sha256": "f6af6a8e9f43b7035496f8a02091872572165d91108c710813133429cf8d7543",
+  "passengerSha256": "094737fd523bc4ee1fe77427aa45e176c9424debae42021d902da68790d8404d",
+  "driverSha256": "bb776485986b93dee17e9764d049ea0de9598f36468795450102720d4d4a6a28",
+  "logoSha256": "f98d52db2f961682cdc64b4252a346430526242da56b48746ec6c95b049d4604",
+  "purpose": "Pinned visual reference only; never import demo state or transactions into the mobile app. Admin design excluded from APK."
+}

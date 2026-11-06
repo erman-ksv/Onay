@@ -1,3 +1,4 @@
+import OnayIcon from "./OnayIcon";
 import { useEffect, useState } from "react";
 import Constants from "expo-constants";
 import { BackHandler, Image, Platform, Pressable, StyleSheet, Text, View } from "react-native";
@@ -24,7 +25,7 @@ function TripCard({ title, description, symbol, onPress, primary = false, testID
     onPress={onPress}
     style={[h.modeCard, primary ? h.primaryMode : h.secondaryMode, light && !primary && h.secondaryModeLight]}
   >
-    <View style={[h.modeIcon, primary && h.primaryIcon, light && !primary && h.modeIconLight]}><Text style={[h.modeIconText, primary && h.primaryIconText, light && !primary && h.modeIconTextLight]}>{symbol}</Text></View>
+    <View style={[h.modeIcon, primary && h.primaryIcon, light && !primary && h.modeIconLight]}><OnayIcon name={primary ? "city" : symbol === "⌂" ? "village" : "pin"} color={primary ? onayDark.accentInk : onayDark.accent} size={22}/></View>
     <View style={h.modeCopy}>
       <Text style={[h.modeTitle, primary && h.modeTitlePrimary, light && !primary && h.modeTitleLight]}>{title}</Text>
       <Text style={[h.modeDescription, primary && h.modeDescriptionPrimary, light && !primary && h.modeDescriptionLight]}>{description}</Text>
@@ -63,14 +64,14 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
   if (aboutOpen) {
     return <OnayPassengerAbout theme={theme} onBack={() => { setAboutOpen(false); setMenuOpen(false); }} backLabel="Назад на главную" />;
   }
-  return <View testID="onay-passenger-home" style={[h.root, light && { backgroundColor: "#f4f6f4" }]}>
+  return <View testID="onay-passenger-home" style={[h.root, light && { backgroundColor: "#f1f7f3" }]}>
     <View style={h.header}>
       <Pressable testID="onay-home-menu-open" accessibilityRole="button" accessibilityLabel={menuOpen ? "Закрыть настройки" : "Открыть настройки"}
         accessibilityState={{ expanded: menuOpen }} onPress={() => setMenuOpen(value => !value)}
-        style={[h.menuToggle, light && { backgroundColor: "#e3e8e4" }]}>
-        <Text style={{ fontSize: 24, color: light ? "#0e1a14" : onayDark.text }}>{menuOpen ? "×" : "☰"}</Text>
+        style={[h.menuToggle, light && { backgroundColor: "#d3e3d9" }]}>
+        <Text style={{ fontSize: 24, color: light ? "#0a1d15" : onayDark.text }}>{menuOpen ? "×" : "☰"}</Text>
       </Pressable>
-      <Image testID="onay-home-original-logo" source={require("../assets/onay-confirmed-logo.jpg")} style={h.logoImage} resizeMode="contain" accessibilityLabel="Onay" />
+      <Image testID="onay-home-original-logo" source={require("../assets/onay-original-logo.png")} style={h.logoImage} resizeMode="contain" accessibilityLabel="Onay" />
       <Pressable
         accessibilityRole="button" testID="onay-home-location"
         style={[h.location, light && h.locationLight]} onPress={onChooseLocation}
@@ -83,22 +84,22 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
         <Text style={[h.locationChevron, light && h.lightMuted]}>›</Text>
       </Pressable>
     </View>
-    {menuOpen ? <View testID="onay-home-settings-menu" style={[h.settingsPanel, light && { backgroundColor: "#ffffff", borderColor: "#e3e8e4" }]}>
-      <Text style={[h.settingsTitle, light && { color: "#0e1a14" }]}>Настройки</Text>
-      <View style={h.settingsRow}><Text style={[h.settingsLabel, light && { color: "#0e1a14" }]}>Способ оплаты</Text><Text style={[h.settingsMuted, light && h.settingsMutedLight]}>Наличными</Text></View>
+    {menuOpen ? <View testID="onay-home-settings-menu" style={[h.settingsPanel, light && { backgroundColor: "#ffffff", borderColor: "#d3e3d9" }]}>
+      <Text style={[h.settingsTitle, light && { color: "#0a1d15" }]}>Настройки</Text>
+      <View style={h.settingsRow}><Text style={[h.settingsLabel, light && { color: "#0a1d15" }]}>Способ оплаты</Text><Text style={[h.settingsMuted, light && h.settingsMutedLight]}>Наличными</Text></View>
       <View style={h.settingsRow}>
-        <Text style={[h.settingsLabel, light && { color: "#0e1a14" }]}>Режим света</Text>
+        <Text style={[h.settingsLabel, light && { color: "#0a1d15" }]}>Режим света</Text>
         <View style={h.themeControls}>
           {(["light", "dark"] as const).map(value => <Pressable key={value} testID={"onay-home-theme-" + value}
             accessibilityRole="button" accessibilityLabel={value === "light" ? "Светлая тема" : "Тёмная тема"} accessibilityState={{ selected: theme === value }}
             onPress={() => onThemeChange?.(value)}
             style={[h.themeToggle, light && h.themeToggleLight, theme === value && h.themeActive]}>
-            <Text style={{ color: theme === value ? onayDark.accentInk : (light ? "#0e1a14" : onayDark.text) }}>{value === "light" ? "☀" : "☾"}</Text>
+            <Text style={{ color: theme === value ? onayDark.accentInk : (light ? "#0a1d15" : onayDark.text) }}>{value === "light" ? "☀" : "☾"}</Text>
           </Pressable>)}
         </View>
       </View>
       <Pressable accessibilityRole="button" testID="onay-home-about" onPress={() => setAboutOpen(true)} style={h.settingsRow}>
-        <Text style={[h.settingsLabel, light && { color: "#0e1a14" }]}>О приложении</Text>
+        <Text style={[h.settingsLabel, light && { color: "#0a1d15" }]}>О приложении</Text>
         <Text style={[h.settingsMuted, light && h.settingsMutedLight]}>›</Text>
       </Pressable>
       <Text style={[h.settingsVersion, light && { color: "#6a7b72" }]}>Onay · Версия {Constants.expoConfig?.version ?? "0.1.0"}</Text>
@@ -148,14 +149,14 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
 }
 
 const h = StyleSheet.create({
-  lightText: { color: "#0e1a14" },
+  lightText: { color: "#0a1d15" },
   lightMuted: { color: "#63776c" },
-  locationLight: { backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#e3e8e4" },
-  activeBannerLight: { backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#e3e8e4" },
-  secondaryModeLight: { backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#e3e8e4" },
+  locationLight: { backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#d3e3d9" },
+  activeBannerLight: { backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#d3e3d9" },
+  secondaryModeLight: { backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#d3e3d9" },
   modeIconLight: { backgroundColor: "#e7f5e8" },
   modeIconTextLight: { color: "#116339" },
-  modeTitleLight: { color: "#0e1a14" },
+  modeTitleLight: { color: "#0a1d15" },
   modeDescriptionLight: { color: "#63776c" },
   logoImage: { width: 34, height: 38 },
   menuToggle: { width: 38, height: 44, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: onayDark.card },

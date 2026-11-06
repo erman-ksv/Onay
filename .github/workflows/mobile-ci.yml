@@ -49,6 +49,21 @@ jobs:
           node-version: 22
       - name: Install mobile dependencies
         run: pnpm install
+      - name: Record checked-out source identity
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { execFileSync } = require('node:child_process');
+          const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error('Invalid checked-out SHA');
+          if (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' && sha !== process.env.GITHUB_SHA) throw new Error('Manual APK checkout differs from requested SHA');
+          const config = JSON.parse(fs.readFileSync('app.json', 'utf8')).expo;
+          const branch = process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME;
+          const receipt = { sourceSha: sha, sourceBranch: branch, runId: process.env.GITHUB_RUN_ID, applicationId: config.android.package, versionCode: config.android.versionCode, displayName: config.name, artifactType: 'Android debug preview', embeddedJavaScript: true };
+          fs.writeFileSync('build-provenance.json', JSON.stringify(receipt, null, 2) + '\n');
+          fs.appendFileSync(process.env.GITHUB_ENV, `ONAY_BUILD_SHA=${sha}\nONAY_BUILD_BRANCH=${branch}\n`);
+          console.log(JSON.stringify(receipt));
+          NODE
       - name: Typecheck
         run: pnpm typecheck
       - name: Offer lifecycle and API error regressions
@@ -82,5 +97,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tezjet-android-debug-apk
-          path: mobile/tezjet-app/android/app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            mobile/tezjet-app/android/app/build/outputs/apk/debug/app-debug.apk
+            mobile/tezjet-app/build-provenance.json
           if-no-files-found: error

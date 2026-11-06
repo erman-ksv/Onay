@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 
 const app = readFileSync(new URL("../app/index.tsx", import.meta.url), "utf8");
 const from = app.indexOf("{!driverRouteGate.hasChoice && !driverQueueContext && !incomingOrder && !activeDriverOrders.length");
-const to = app.indexOf("<DriverHistory ", from);
+const to = app.indexOf(": null}", from) + 7;
 const noRoute = app.slice(from, to);
 
 test("driver with no chosen route sees accurate actionable Onay V2 empty state", () => {

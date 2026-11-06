@@ -1,6 +1,9 @@
-import { useState } from "react";
+import OnayIcon from "./OnayIcon";
+import { StatusBar } from "expo-status-bar";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useEffect, useState } from "react";
 import {
-  ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable,
+  ActivityIndicator, Alert, BackHandler, KeyboardAvoidingView, Platform, Pressable,
   Image, ScrollView, StyleSheet, Text, TextInput, View,
 } from "react-native";
 import { isCompleteOnayPhone, onayDark, onayPhoneFromInput, onayPhoneInput, onayPhonePrefix } from "../lib/onay-auth-ui";
@@ -35,31 +38,44 @@ type Props = {
  * All requests and tokens still flow through the existing app's login().
  */
 export default function OnayAuthScreen(props: Props) {
+  const insets = useSafeAreaInsets();
   const [consent, setConsent] = useState(true);
   const phoneReady = isCompleteOnayPhone(props.phone);
   const nameReady = !props.registering || !!registrationFullName(props.name, props.surname);
-  const canSubmit = !props.busy && (props.requested ? !!props.otp.trim() : phoneReady && nameReady && consent);
+  const canSubmit = !props.busy && (props.requested ? /^\d{6}$/.test(props.otp) : phoneReady && nameReady && consent);
+  useEffect(() => {
+    if (!props.requested || Platform.OS !== "android") return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (!props.busy) props.onBackToPhone();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [props.requested, props.busy, props.onBackToPhone]);
 
   return (
-    <KeyboardAvoidingView style={s.root} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+    <KeyboardAvoidingView style={[s.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <StatusBar style="light"/>
       <ScrollView
         style={s.scroller}
-        contentContainerStyle={s.screen}
+        contentContainerStyle={[s.screen, props.requested && { paddingTop: 20 }]}
         keyboardShouldPersistTaps="handled"
         accessibilityLabel="Вход в Onay"
       >
-        <View style={s.logoWrap}>
-          <Image testID="onay-auth-original-logo" source={require("../assets/onay-confirmed-logo.jpg")} style={s.brandImage} resizeMode="contain" accessibilityLabel="Onay" />
+        {!props.requested ? <View style={s.logoWrap}>
+          <Image testID="onay-auth-original-logo" source={require("../assets/onay-original-logo.png")} style={s.brandImage} resizeMode="contain" accessibilityLabel="Onay" />
           <Text style={s.subtitle}>
             {props.mode === "passenger" ? "Сельское такси между селом и городом" : "Режим водителя"}
           </Text>
-        </View>
+        </View> : null}
 
         <View style={s.form}>
-          <Text style={s.heading}>
-            {props.requested ? "Подтвердить номер телефона" :
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+          {props.requested ? <Pressable accessibilityRole="button" accessibilityLabel="Изменить номер телефона" onPress={props.onBackToPhone} disabled={props.busy} style={{ width: 46, height: 46, borderRadius: 23, backgroundColor: onayDark.card, alignItems: "center", justifyContent: "center" }}><OnayIcon name="back"/></Pressable> : null}
+          <Text style={[s.heading, { flex: 1 }]}>
+            {props.requested ? "Введите код" :
               props.registering ? (props.mode === "driver" ? "Регистрация водителя" : "Регистрация пассажира") : "Войти по номеру телефона"}
           </Text>
+          </View>
 
           {!props.requested ? (
             <>
@@ -97,7 +113,7 @@ export default function OnayAuthScreen(props: Props) {
                   style={[s.input, s.phoneInput]}
                   value={onayPhoneInput(props.phone)}
                   onChangeText={v => props.onPhone(onayPhoneFromInput(props.phone, v))}
-                  placeholder="+998 90 123 45 67"
+                  placeholder="90 123 45 67"
                   placeholderTextColor="#70857a"
                   keyboardType="phone-pad"
                   textContentType="telephoneNumber"
@@ -123,24 +139,28 @@ export default function OnayAuthScreen(props: Props) {
           ) : (
             <>
               <Text style={s.muted}>Код подтверждения отправляется на {props.phone}</Text>
+              <View style={s.otpWrap}>
+              <View pointerEvents="none" style={s.otpCells}>{Array.from({ length: 6 }, (_, index) => <View key={index} style={[s.otpCell, index === props.otp.length && s.otpCellActive]}><Text style={s.otpDigit}>{props.otp[index] || ""}</Text></View>)}</View>
               <TextInput
                 testID="onay-auth-otp"
-                style={s.input}
+                style={s.otpInput}
                 value={props.otp}
-                onChangeText={props.onOtp}
+                onChangeText={value => props.onOtp(value.replace(/\D/g, "").slice(0, 6))}
+                maxLength={6}
                 editable={!props.busy}
                 placeholder="Код подтверждения"
                 placeholderTextColor="#70857a"
                 keyboardType="number-pad"
                 autoComplete="one-time-code"
               />
+              </View>
               {props.demoCode ? <Text style={s.demo}>Тестовый код: {props.demoCode}</Text> : null}
               <Pressable onPress={props.onBackToPhone} disabled={props.busy}>
                 <Text style={s.inlineLink}>Изменить номер телефона</Text>
               </Pressable>
             </>
           )}
-          {props.error ? <Text style={s.error}>{props.error}</Text> : null}
+          {props.error ? <Text accessibilityRole="alert" style={s.error}>{props.error}</Text> : null}
         </View>
 
         <View style={s.bottom}>
@@ -154,7 +174,7 @@ export default function OnayAuthScreen(props: Props) {
           >
             {props.busy ? <ActivityIndicator color={onayDark.accentInk}/> :
               <Text style={[s.primaryText, !canSubmit && s.primaryTextOff]}>
-                {props.requested ? (props.mode === "driver" ? "Продолжить как водитель" : "Войти как пассажир") : "Получить код"}
+                {props.requested ? "Подтвердить" : "Получить код"}
               </Text>}
           </Pressable>
           <Text style={s.info}>
@@ -163,7 +183,7 @@ export default function OnayAuthScreen(props: Props) {
               "Код отправляется через настроенный SMS-сервис"}
           </Text>
 
-          <View style={s.links}>
+          {!props.requested ? <View style={s.links}>
             <Pressable
               testID={props.registering ? "auth-signin-mode" : "auth-signup-mode"}
               onPress={() => props.onRegisterMode(!props.registering)}
@@ -198,7 +218,7 @@ export default function OnayAuthScreen(props: Props) {
             <Pressable testID="onay-auth-server-settings" onPress={props.onServerSettings} disabled={props.busy}>
               <Text style={s.serverLink}>Настройки сервера</Text>
             </Pressable>
-          </View>
+          </View> : null}
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -206,10 +226,16 @@ export default function OnayAuthScreen(props: Props) {
 }
 
 const s = StyleSheet.create({
-  brandImage: { height: 118, width: 118 },
+  otpWrap: { position: "relative", marginTop: 22, minHeight: 58 },
+  otpCells: { flexDirection: "row", gap: 8 },
+  otpCell: { flex: 1, height: 58, borderRadius: 16, borderWidth: 1, borderColor: onayDark.border, backgroundColor: onayDark.card, alignItems: "center", justifyContent: "center" },
+  otpCellActive: { borderColor: onayDark.accent }, otpDigit: { fontSize: 26, color: onayDark.text, fontWeight: "600" },
+  otpInput: { position: "absolute", top: 0, bottom: 0, left: 0, right: 0, opacity: .01, color: "transparent", fontSize: 20 },
+
+  brandImage: { height: 116, width: 116 },
   root: { flex: 1, backgroundColor: onayDark.background },
   scroller: { flex: 1 },
-  screen: { flexGrow: 1, paddingHorizontal: 20, paddingTop: 44, paddingBottom: 20, minHeight: 720 },
+  screen: { flexGrow: 1, paddingHorizontal: 20, paddingTop: 40, paddingBottom: 20, maxWidth: 430, width: "100%", alignSelf: "center" },
   logoWrap: { alignItems: "center", marginBottom: 12 },
   symbol: { height: 76, width: 76, borderWidth: 5, borderColor: onayDark.accent, borderRadius: 38, alignItems: "center", justifyContent: "center" },
   symbolText: { fontSize: 37, color: onayDark.accent, fontWeight: "700" },

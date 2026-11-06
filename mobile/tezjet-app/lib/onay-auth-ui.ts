@@ -55,7 +55,7 @@ export function isCompleteOnayPhone(value: string): boolean {
   return /^\+[1-9]\d{9,14}$/.test(value);
 }
 
-export type OnayEntryScreen = "loading" | "auth" | "legacy";
+export type OnayEntryScreen = "loading" | "auth" | "connection" | "application";
 
 /** Never show the old auth UI before session restoration settles. */
 export function onayEntryScreen(input: {
@@ -64,9 +64,9 @@ export function onayEntryScreen(input: {
   apiBase: string;
   showEndpointSettings: boolean;
 }): OnayEntryScreen {
-  // Keep the auth tree mounted while AsyncStorage restores the session.
-  // User actions stay disabled by sessionLoading until restoration settles.
+  // Missing API configuration must use a V2 screen, including first APK launch.
   if (!input.token && input.apiBase && !input.showEndpointSettings) return "auth";
   if (input.sessionLoading) return "loading";
-  return "legacy";
+  if (input.showEndpointSettings) return "connection";
+  return input.token ? "application" : "auth";
 }

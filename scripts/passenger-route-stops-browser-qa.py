@@ -92,7 +92,15 @@ class PassengerStopsQA:
         self.checks.append({"name": description, "status": "passed"})
         print("PASS:", description, flush=True)
 
+    def open_booking(self):
+        if not self.page.get_by_test_id("onay-passenger-booking-page").count():
+            self.page.get_by_test_id("onay-tab-home").click()
+            self.page.get_by_test_id("onay-home-to-city").click()
+        self.expect(self.page.get_by_test_id("onay-passenger-booking-page")).to_be_visible()
+
     def control(self, test_id):
+        if test_id.startswith(("configured-route", "passenger-route-", "passenger-direction-", "passenger-pickup-", "passenger-destination-", "passenger-stop-", "route-")):
+            self.open_booking()
         return self.page.get_by_test_id(test_id)
 
     def response_for(self, path, method):
@@ -101,6 +109,7 @@ class PassengerStopsQA:
             timeout=20_000)
 
     def screenshot(self, name):
+        self.page.wait_for_timeout(400)  # V2 page transition duration; capture settled UI.
         self.page.screenshot(path=str(self.args.output_dir / (name + ".png")), full_page=True,
             mask=[self.page.get_by_placeholder("Код подтверждения", exact=True),
                   self.page.get_by_text(re.compile(r"Тестовый код:"))])
@@ -178,7 +187,7 @@ class PassengerStopsQA:
         self.control("auth-signup-mode").click()
         self.page.get_by_placeholder("Имя", exact=True).fill("CI stop selection")
         self.page.get_by_placeholder("Фамилия", exact=True).fill("passenger")
-        self.page.get_by_placeholder("+998 90 123 45 67", exact=True).fill(
+        self.page.get_by_test_id("onay-auth-phone").fill(
             "+77777" + str(uuid.uuid4().int % 1_000_000).zfill(6))
         with self.response_for("/auth/request-otp", "POST") as pending:
             self.page.get_by_role("button", name="Получить код", exact=True).click()
@@ -187,7 +196,7 @@ class PassengerStopsQA:
         require(bool(re.fullmatch(r"\d{6}", code)), "Actual passenger must receive local test OTP")
         self.page.get_by_placeholder("Код подтверждения", exact=True).fill(code)
         with self.response_for("/auth/verify-otp", "POST") as pending:
-            self.page.get_by_role("button", name="Войти как пассажир", exact=True).click()
+            self.page.get_by_test_id("onay-auth-submit").click()
         require(pending.value.status == 200, "Actual passenger screen must verify OTP")
         session = pending.value.json()
         self.passenger_token = self.remember(session["access_token"])

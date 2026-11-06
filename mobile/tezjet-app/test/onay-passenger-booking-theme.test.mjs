@@ -5,7 +5,8 @@ const booking = readFileSync(new URL("../components/PassengerRouteOrder.tsx", im
 const app = readFileSync(new URL("../app/index.tsx", import.meta.url), "utf8");
 
 test("booking form receives Onay passenger theme and preserves original dark mode", () => {
-  assert.ok(app.includes("onCreated={refreshOrders} theme={passengerTheme} />"));
+  assert.ok(app.includes('onCreated={refreshOrders} onBooked={() => { setBookingPage(null); setPassengerTab("trips"); }} theme={passengerTheme} />'));
+  assert.ok(app.includes('<Modal visible={bookingPage !== null}'));
   assert.ok(booking.includes('theme?: "light" | "dark"'));
   assert.ok(booking.includes('theme = "dark"'));
   assert.ok(booking.includes('theme === "light" ? { ...v, ...vLight } : v'));
@@ -30,4 +31,12 @@ test("route actions forward stable test IDs through the real Pressable, without 
   assert.match(booking, /button\(submitting \? "Оформляем…" : "Заказать поездку",\s*\(\) => \{ void submit\(\); \}, !canOrder, true, "route-book-trip"\)/);
   assert.match(booking, /if \(!selection \|\| !canOrder \|\| !bookingGate\.tryStart\("configured"\)\) return;/);
   assert.match(booking, /isFreshPassengerRouteQuote\(availability, key, now\)/);
+});
+
+// A closed/absent interrupted request is not a newly created ride.
+test("recovery refresh keeps the builder open when the server fences an absent order", () => {
+  const recovery = booking.slice(booking.indexOf("async function retrySync()"), booking.indexOf("async function submit()"));
+  assert.match(recovery, /syncConfirmedRouteBooking\(onCreated\)/);
+  assert.match(recovery, /if \(closedRequestKey === null\) onBooked\?\.\(\);/);
+  assert.ok(!app.includes('onCreated={async () => { setBookingPage(null)'));
 });

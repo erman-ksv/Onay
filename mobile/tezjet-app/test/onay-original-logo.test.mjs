@@ -2,11 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-test("screens use the newly confirmed logo while the earlier artifact remains preserved", () => {
+test("screens use the published reference logo while the earlier artifact remains preserved", () => {
   const home = readFileSync(new URL("../components/OnayPassengerHome.tsx", import.meta.url), "utf8");
   const auth = readFileSync(new URL("../components/OnayAuthScreen.tsx", import.meta.url), "utf8");
   for (const screen of [home, auth]) {
-    assert.match(screen, /source=\{require\("\.\.\/assets\/onay-confirmed-logo\.jpg"\)\}/);
+    assert.match(screen, /source=\{require\("\.\.\/assets\/onay-original-logo\.png"\)\}/);
     assert.match(screen, /accessibilityLabel="Onay"/);
   }
   assert.match(home, /testID="onay-home-original-logo"/);

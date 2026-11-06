@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { OnayThemeContext } from "../lib/onay-theme-context";
+import { onayThemedStyles } from "../lib/onay-themed-styles";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { onayDark } from "../lib/onay-auth-ui";
 import {
@@ -8,6 +10,7 @@ import {
 } from "../lib/driver-routes";
 
 type Props = {
+  theme?: "light" | "dark";
   endpoint: string;
   token: string;
   busy: boolean;
@@ -27,6 +30,8 @@ const unavailableLabels = {
 function Action({ title, onPress, disabled, secondary = false, testID }: {
   title: string; onPress: () => void; disabled: boolean; secondary?: boolean; testID: string;
 }) {
+  const theme = useContext(OnayThemeContext);
+  const s = useMemo(() => onayThemedStyles(baseStyles, theme), [theme]);
   return <Pressable accessibilityRole="button" accessibilityLabel={title} accessibilityState={{ disabled }}
     testID={testID} disabled={disabled} onPress={onPress} style={[s.button, secondary && s.secondary, disabled && s.disabled]}>
     <Text style={[s.buttonText, secondary && s.secondaryText]}>{title}</Text>
@@ -34,6 +39,7 @@ function Action({ title, onPress, disabled, secondary = false, testID }: {
 }
 
 export default function DriverRoutePicker(props: Props) {
+  const s = onayThemedStyles(baseStyles, props.theme ?? "dark");
   const { endpoint, token, onStatusChange } = props;
   const sessionKey = driverRouteSessionKey(endpoint, token);
   const client = useMemo(() => createDriverRouteClient(endpoint, token), [endpoint, token]);
@@ -178,7 +184,7 @@ export default function DriverRoutePicker(props: Props) {
 }
 
 /** Driver V2 visual palette. Preserve real route, FIFO, loading and mutation behaviour. */
-const s = StyleSheet.create({
+const baseStyles = StyleSheet.create({
   card: { padding: 20, backgroundColor: onayDark.card, borderRadius: 24, borderWidth: 1, borderColor: onayDark.border, marginBottom: 16 },
   heading: { fontSize: 21, fontWeight: "800", color: onayDark.text, marginBottom: 12 },
   description: { fontSize: 14, lineHeight: 22, color: onayDark.muted },

@@ -1,3 +1,4 @@
+import { onayThemedStyles } from "../lib/onay-themed-styles";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { validateApiEndpoint } from "../lib/api";
@@ -8,7 +9,8 @@ import { ridePickupLabel, rideDestinationLabel, statusLabels } from "../lib/orde
 
 // Parent keys this component by endpoint/session/user and unmounts it on role
 // change. Generation + abort also discard superseded responses and teardown.
-export default function DriverHistory({ endpoint, token, driverId }: { endpoint: string; token: string; driverId: string }) {
+export default function DriverHistory({ endpoint, token, driverId, theme = "dark", active: visible = false }: { endpoint: string; token: string; driverId: string; theme?: "light" | "dark"; active?: boolean }) {
+  const s = onayThemedStyles(baseStyles, theme);
   const [open, setOpen] = useState(false);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(false);
@@ -35,6 +37,7 @@ export default function DriverHistory({ endpoint, token, driverId }: { endpoint:
     if (open) void load();
     return () => { generation.current++; active.current?.abort(); };
   }, [open, load]);
+  useEffect(() => { if (visible) { setOpen(true); void load(); } }, [visible, load]);
   return <View style={s.card} testID="driver-history">
     <Text style={s.heading}>История и заработок</Text>
     <Pressable accessibilityRole="button" testID="driver-history-toggle" onPress={() => setOpen(value => !value)} style={s.button}><Text style={s.buttonText}>{open ? "Скрыть историю" : "Показать историю"}</Text></Pressable>
@@ -63,7 +66,7 @@ export default function DriverHistory({ endpoint, token, driverId }: { endpoint:
   </View>;
 }
 // Driver V2 presentation only: amounts, server snapshots and request guards stay authoritative.
-const s = StyleSheet.create({
+const baseStyles = StyleSheet.create({
   card: { padding: 20, marginBottom: 16, backgroundColor: onayDark.card, borderRadius: 24, borderWidth: 1, borderColor: onayDark.border, gap: 10 },
   heading: { fontSize: 20, fontWeight: "800", color: onayDark.text },
   note: { color: onayDark.muted, lineHeight: 21, fontSize: 13 },

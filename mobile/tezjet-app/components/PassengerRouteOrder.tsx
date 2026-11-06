@@ -11,9 +11,9 @@ import { createPassengerRouteRequestScope, passengerRouteSelection, passengerRou
   parsePassengerRouteAvailability, passengerRouteOrderBody, passengerRouteCatalogStatus, routeBookingRecoveryKey, routeBookingRequestKey, resolveRouteBookingRequest, readRouteBookingRecovery, saveRouteBookingRecovery, clearRouteBookingRecovery, clearClosedRouteBookingRecovery, discardUnsentRouteBooking, confirmedRouteBookingPresent, isFreshPassengerRouteQuote, routeBookingDefinitivelyRejected, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability, type PassengerRouteSegment } from "../lib/passenger-route-orders";
 
 export type PassengerDirectionIntent = { direction: DriverDirection; revision: number };
-type Props = { token: string; endpoint: string; userId: string; busy: boolean; activeOrder: boolean; directionIntent?: PassengerDirectionIntent | null; bookingGate: PassengerBookingGate; onCreated: () => Promise<void>; theme?: "light" | "dark" };
+type Props = { token: string; endpoint: string; userId: string; busy: boolean; activeOrder: boolean; directionIntent?: PassengerDirectionIntent | null; bookingGate: PassengerBookingGate; onCreated: () => Promise<void>; onBooked?: () => void; theme?: "light" | "dark" };
 const choices: DriverDirection[] = ["a_to_b", "b_to_a"];
-export default function PassengerRouteOrder({ token, endpoint, userId, busy, activeOrder, directionIntent, bookingGate, onCreated, theme = "dark" }: Props) {
+export default function PassengerRouteOrder({ token, endpoint, userId, busy, activeOrder, directionIntent, bookingGate, onCreated, onBooked, theme = "dark" }: Props) {
   const [routes, setRoutes] = useState<DriverRouteOption[]>([]);
   const [routeId, setRouteId] = useState("");
   const [direction, setDirection] = useState<DriverDirection>("a_to_b");
@@ -192,6 +192,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
         setMessage(closedRequestKey !== null
           ? "Сервер подтвердил: заказ не был создан. Можно проверить водителей снова."
           : "Заказы обновлены. Проверь состояние поездки.");
+        if (closedRequestKey === null) onBooked?.();
       } else if (synced) setMessage("Проверка завершена, но конкретный заказ не подтверждён. Повторная отправка заблокирована; обратись в поддержку.");
       else setError("Не удалось обновить заказы. Повтори проверку; не создавай ещё один заказ.");
     } catch (cause) {
@@ -248,6 +249,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
         // successfully without containing the just-created order.
         // The explicit reconciliation button verifies the exact order ID.
         setMessage("Заказ создан. Ожидаем подтверждения водителя.");
+        if (inScope()) onBooked?.();
       } else {
         setMessage("Заказ создан, но список поездок не обновился. Проверь статус; повторно заказывать не нужно.");
       }
@@ -284,10 +286,9 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
     </Pressable>;
 
   return <View testID="configured-route-passenger" style={themeStyles.card}>
-    <Text style={themeStyles.eyebrow}>ONAY · МАРШРУТНОЕ ТАКСИ</Text>
-    <Text style={themeStyles.title}>Куда едем?</Text>
+    <Text style={themeStyles.title}>Маршрут и остановки</Text>
     <Text style={themeStyles.subtitle}>Выберите линию и количество мест. Доступность водителей и цену проверит сервер.</Text>
-    {loading ? <ActivityIndicator color="#33DB9C" style={themeStyles.loader}/> : null}
+    {loading ? <ActivityIndicator color="#5bd62f" style={themeStyles.loader}/> : null}
     {catalogStatus === "empty" && token && endpoint ? <Text style={themeStyles.hint}>Настроенных маршрутов пока нет.</Text> : null}
     {catalogStatus === "error" ? <View><Text style={themeStyles.error}>Не удалось загрузить маршруты: {catalogError}</Text>
       {button("Повторить загрузку маршрутов", () => setCatalogRetry(value => value + 1), submitting || busy, false, "route-catalog-retry")}</View> : null}
@@ -383,46 +384,46 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
 }
 
 const v = StyleSheet.create({
-  card:{padding:20,borderRadius:24,backgroundColor:"#0B271A",marginBottom:16,borderWidth:1,borderColor:"#1F4B32"},
-  eyebrow:{color:"#31DE9C",fontSize:10,fontWeight:"800",letterSpacing:1.5,marginBottom:10},
-  title:{color:"#F2FFF6",fontSize:30,fontWeight:"900"},
-  subtitle:{color:"#ADCCB9",fontSize:13,lineHeight:20,marginTop:6,marginBottom:18},
-  loader:{marginVertical:12},hint:{color:"#C6DECE",marginBottom:10,fontSize:13},
-  route:{flexDirection:"row",alignItems:"center",backgroundColor:"#153624",borderWidth:1,borderColor:"#315540",borderRadius:16,padding:13,marginBottom:8,gap:10},
-  routeActive:{backgroundColor:"#195338",borderColor:"#35D99B"},
-  indicator:{height:12,width:12,borderRadius:6,borderWidth:2,borderColor:"#83AA95"},
-  indicatorActive:{backgroundColor:"#35DF9D",borderColor:"#35DF9D"},
-  routeContent:{flex:1},routeName:{color:"#EFFFF1",fontSize:15,fontWeight:"800"},
-  routeInfo:{color:"#97B8A2",fontSize:11,marginTop:3},chevron:{color:"#36DD9B",fontSize:26},
-  sectionHeading:{color:"#A2C4AD",fontSize:10,fontWeight:"800",letterSpacing:1.2,marginTop:14,marginBottom:10},
+  card:{padding:0,borderRadius:0,backgroundColor:"#0a1d15",marginBottom:16},
+  eyebrow:{color:"#5bd62f",fontSize:10,fontWeight:"800",letterSpacing:1.5,marginBottom:10},
+  title:{color:"#f2faf6",fontSize:20,fontWeight:"700"},
+  subtitle:{color:"#9bb3a6",fontSize:13,lineHeight:20,marginTop:6,marginBottom:18},
+  loader:{marginVertical:12},hint:{color:"#9bb3a6",marginBottom:10,fontSize:13},
+  route:{flexDirection:"row",alignItems:"center",backgroundColor:"#12291f",borderWidth:1,borderColor:"#1f3d2f",borderRadius:16,padding:13,marginBottom:8,gap:10},
+  routeActive:{backgroundColor:"#17332a",borderColor:"#5bd62f"},
+  indicator:{height:12,width:12,borderRadius:6,borderWidth:2,borderColor:"#9bb3a6"},
+  indicatorActive:{backgroundColor:"#5bd62f",borderColor:"#5bd62f"},
+  routeContent:{flex:1},routeName:{color:"#f2faf6",fontSize:15,fontWeight:"800"},
+  routeInfo:{color:"#9bb3a6",fontSize:11,marginTop:3},chevron:{color:"#5bd62f",fontSize:26},
+  sectionHeading:{color:"#9bb3a6",fontSize:10,fontWeight:"800",letterSpacing:1.2,marginTop:14,marginBottom:10},
   directions:{flexDirection:"row",gap:9},
-  direction:{flex:1,alignItems:"center",paddingVertical:12,borderWidth:1,borderRadius:13,backgroundColor:"#153624",borderColor:"#315540"},
-  directionActive:{backgroundColor:"#236C49",borderColor:"#33DC9B"},
-  directionText:{color:"#ACC9B7",fontSize:15,fontWeight:"700"},directionTextActive:{color:"#F5FFF7"},
-  trip:{backgroundColor:"#153624",borderRadius:16,marginTop:16,padding:15,flexDirection:"row",gap:14},
+  direction:{flex:1,alignItems:"center",paddingVertical:12,borderWidth:1,borderRadius:13,backgroundColor:"#12291f",borderColor:"#1f3d2f"},
+  directionActive:{backgroundColor:"#17332a",borderColor:"#5bd62f"},
+  directionText:{color:"#9bb3a6",fontSize:15,fontWeight:"700"},directionTextActive:{color:"#f2faf6"},
+  trip:{backgroundColor:"#12291f",borderRadius:16,marginTop:16,padding:15,flexDirection:"row",gap:14},
   tripDots:{alignItems:"center",width:15,paddingTop:4},
-  originDot:{width:11,height:11,borderRadius:6,backgroundColor:"#37DAA1"},
-  tripLine:{height:40,width:2,backgroundColor:"#3F7754"},
-  destinationDot:{width:11,height:11,borderRadius:6,borderWidth:2,borderColor:"#37DAA1"},
-  tripLabels:{flex:1},tripName:{color:"#F0FFF5",fontWeight:"700",fontSize:14},
+  originDot:{width:11,height:11,borderRadius:6,backgroundColor:"#5bd62f"},
+  tripLine:{height:40,width:2,backgroundColor:"#1f3d2f"},
+  destinationDot:{width:11,height:11,borderRadius:6,borderWidth:2,borderColor:"#5bd62f"},
+  tripLabels:{flex:1},tripName:{color:"#f2faf6",fontWeight:"700",fontSize:14},
   stopField:{minHeight:48,justifyContent:"center",paddingVertical:5},
-  stopPicker:{marginTop:8,padding:12,borderRadius:14,backgroundColor:"#153624"},
-  stopOption:{minHeight:44,justifyContent:"center",paddingHorizontal:10,paddingVertical:10,borderRadius:10,marginBottom:5,borderWidth:1,borderColor:"#315540"},
-  stopOptionSelected:{backgroundColor:"#236C49",borderColor:"#33DC9B"},
-  stopOptionName:{color:"#EFFFF1",fontSize:14},
-  destinationName:{marginTop:16},tripCaption:{color:"#8CAD98",fontSize:11,marginTop:2},
+  stopPicker:{marginTop:8,padding:12,borderRadius:14,backgroundColor:"#12291f"},
+  stopOption:{minHeight:44,justifyContent:"center",paddingHorizontal:10,paddingVertical:10,borderRadius:10,marginBottom:5,borderWidth:1,borderColor:"#1f3d2f"},
+  stopOptionSelected:{backgroundColor:"#17332a",borderColor:"#5bd62f"},
+  stopOptionName:{color:"#f2faf6",fontSize:14},
+  destinationName:{marginTop:16},tripCaption:{color:"#9bb3a6",fontSize:11,marginTop:2},
   seats:{flexDirection:"row",alignItems:"center",justifyContent:"space-between",marginTop:18},
-  seatsTitle:{color:"#F3FFF7",fontSize:14,fontWeight:"800"},seatsDescription:{color:"#91B29D",fontSize:11,marginTop:3},
+  seatsTitle:{color:"#f2faf6",fontSize:14,fontWeight:"800"},seatsDescription:{color:"#9bb3a6",fontSize:11,marginTop:3},
   stepper:{flexDirection:"row",gap:12,alignItems:"center"},
-  step:{height:34,width:34,alignItems:"center",justifyContent:"center",borderRadius:17,backgroundColor:"#22583A"},
-  stepText:{color:"#45E7A7",fontSize:22,fontWeight:"700"},
-  count:{color:"#F5FFF7",fontWeight:"800",fontSize:17,minWidth:18,textAlign:"center"},
-  button:{minHeight:49,borderRadius:14,padding:13,alignItems:"center",justifyContent:"center",marginTop:12},
-  buttonPrimary:{backgroundColor:"#31DA9C"},buttonSecondary:{backgroundColor:"#1B4C32",borderWidth:1,borderColor:"#36A978"},
-  buttonLabel:{fontSize:14,fontWeight:"800"},
-  primaryText:{color:"#062718"},secondaryText:{color:"#E8FFF0"},disabled:{opacity:0.43},
-  priceCard:{marginTop:14,padding:14,borderRadius:16,backgroundColor:"#153624"},
-  price:{fontSize:26,color:"#F2FFF7",fontWeight:"900"},
+  step:{height:34,width:34,alignItems:"center",justifyContent:"center",borderRadius:17,backgroundColor:"#12291f"},
+  stepText:{color:"#5bd62f",fontSize:22,fontWeight:"700"},
+  count:{color:"#f2faf6",fontWeight:"800",fontSize:17,minWidth:18,textAlign:"center"},
+  button:{minHeight:54,borderRadius:18,padding:13,alignItems:"center",justifyContent:"center",marginTop:12},
+  buttonPrimary:{backgroundColor:"#5bd62f"},buttonSecondary:{backgroundColor:"#0a1d15",borderWidth:1,borderColor:"#1f3d2f"},
+  buttonLabel:{fontSize:17,fontWeight:"600"},
+  primaryText:{color:"#08261a"},secondaryText:{color:"#f2faf6"},disabled:{opacity:0.43},
+  priceCard:{marginTop:14,padding:14,borderRadius:16,backgroundColor:"#12291f"},
+  price:{fontSize:26,color:"#f2faf6",fontWeight:"700"},
   availability:{fontSize:12,color:"#B3CDBA",marginTop:6,lineHeight:19},
   availabilityPositive:{color:"#42ECA9"},
   notice:{fontSize:12,color:"#C8FAE0",backgroundColor:"#19543A",padding:11,borderRadius:12,marginTop:12},
@@ -431,7 +432,7 @@ const v = StyleSheet.create({
 
 /** Light palette changes presentation only; API and booking guards remain unchanged. */
 const vLight = StyleSheet.create({
-  card: { backgroundColor: "#ffffff", borderColor: "#dce8e1" },
+  card: { backgroundColor: "#f1f7f3", borderColor: "#dce8e1" },
   eyebrow: { color: "#176347" },
   title: { color: "#0e1a14" },
   subtitle: { color: "#5a7366" },
@@ -463,9 +464,9 @@ const vLight = StyleSheet.create({
   step: { backgroundColor: "#e5f0e9" },
   stepText: { color: "#175444" },
   count: { color: "#0e1a14" },
-  buttonPrimary: { backgroundColor: "#0d735c" },
+  buttonPrimary: { backgroundColor: "#5bd62f" },
   buttonSecondary: { backgroundColor: "#edf8f2", borderColor: "#dce8e1" },
-  primaryText: { color: "#ffffff" },
+  primaryText: { color: "#08261a" },
   secondaryText: { color: "#175444" },
   priceCard: { backgroundColor: "#f4f7f5" },
   price: { color: "#0d735c" },

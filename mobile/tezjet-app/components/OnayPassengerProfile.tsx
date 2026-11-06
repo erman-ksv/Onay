@@ -39,11 +39,11 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
   }, [active, supportOpen, aboutOpen, personalOpen, onBackToHome]);
   const light = theme === "light";
   const surface = light ? "#ffffff" : onayDark.card;
-  const foreground = light ? "#0e1a14" : onayDark.text;
+  const foreground = light ? "#0a1d15" : onayDark.text;
   const muted = light ? "#6a7b72" : onayDark.muted;
   const row = (id: string, label: string, action: () => void, trailing = "") => (
     <Pressable testID={"onay-profile-" + id} accessibilityRole="button" disabled={busy}
-      onPress={action} style={[s.linkRow, { borderColor: light ? "#e3e8e4" : onayDark.border }]}>
+      onPress={action} style={[s.linkRow, { borderColor: light ? "#d3e3d9" : onayDark.border }]}>
       <Text style={{ color: foreground, fontWeight: "600" }}>{label}</Text>
       <Text style={{ color: muted }}>{trailing ? trailing + "  ›" : "›"}</Text>
     </Pressable>
@@ -54,7 +54,7 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
   if (aboutOpen) {
     return <OnayPassengerAbout theme={theme} onBack={() => setAboutOpen(false)} />;
   }
-  return <View testID="onay-passenger-profile-panel" style={[s.root, { backgroundColor: light ? "#f4f6f4" : onayDark.background }]}>
+  return <View testID="onay-passenger-profile-panel" style={[s.root, { backgroundColor: light ? "#f1f7f3" : onayDark.background }]}>
     <View style={s.identity}>
       <View style={[s.avatar, { backgroundColor: light ? "#e3f7df" : onayDark.cardRaised }]}>
         <Text testID="onay-profile-avatar-initial" style={{ color: light ? "#5a7366" : onayDark.muted, fontSize: 30, fontWeight: "700" }}>{onayProfileInitial(fullName)}</Text>
@@ -85,7 +85,7 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
         accessibilityRole="button"
         accessibilityState={{ expanded: personalOpen }}
         onPress={() => setPersonalOpen(previous => !previous)}
-        style={[s.linkRow, { borderColor: light ? "#e3e8e4" : onayDark.border }]}
+        style={[s.linkRow, { borderColor: light ? "#d3e3d9" : onayDark.border }]}
       >
         <Text style={{ color: foreground, fontWeight: "600" }}>Личные данные</Text>
         <Text style={{ color: muted }}>{personalOpen ? "⌃" : "›"}</Text>

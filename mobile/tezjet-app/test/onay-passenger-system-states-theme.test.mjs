@@ -1,46 +1,24 @@
-import test from "node:test";
-import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-
-const app = readFileSync(new URL("../app/index.tsx", import.meta.url), "utf8");
-
-function section(start, end) {
-  const a = app.indexOf(start);
-  const b = app.indexOf(end, a);
-  assert.ok(a >= 0 && b > a, "Expected UI section boundaries: " + start);
-  return app.slice(a, b);
-}
-
-test("passenger server settings and error cards follow Onay dark theme without changing driver mode", () => {
-  assert.ok(app.includes('const passengerDarkSystem = Boolean(token && mode === "passenger" && passengerTheme === "dark")'));
-  const server = section('{showEndpointSettings ? <View testID="onay-server-settings-panel"', '{visibleError ? <View');
-  assert.ok(server.includes('passengerDarkSystem && s.darkPassengerTripCard'));
-  assert.ok(server.includes('passengerDarkSystem && s.darkPassengerTripTitle'));
-  assert.ok(server.includes('passengerDarkSystem && s.darkPassengerTripMuted'));
-  assert.ok(server.includes('passengerDarkSystem && s.legacyInputDark'));
-  assert.ok(server.includes('placeholderTextColor={passengerDarkSystem ? onayDark.muted : "#71837a"}'));
-  assert.ok(server.includes('dark={passengerDarkSystem}'));
-  assert.ok(server.includes('accessibilityRole="alert"'));
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+const read=path=>readFileSync(new URL(path,import.meta.url),'utf8');
+const app=read('../app/index.tsx'),server=read('../components/OnayServerSettings.tsx'),frame=read('../components/OnayScreenFrame.tsx');
+test('connection settings are an independent V2 page with theme, explicit save and safe back',()=>{
+ assert.ok(app.includes('entryScreen === "connection"'));
+ assert.ok(app.includes('onSave={() => { void saveEndpoint(); }}'));
+ assert.ok(server.includes('testID="onay-server-settings-panel"'));
+ assert.ok(server.includes('const c = onayPalette(theme)'));
+ assert.ok(server.includes('disabled={busy || !value.trim()}'));
+ assert.ok(server.includes('editable={!busy}'));
+ assert.ok(server.includes('accessibilityRole="alert"'));
+ assert.ok(frame.includes('BackHandler.addEventListener("hardwareBackPress"'));
 });
-
-test("stale data uses a readable alert, retry control and unchanged server refresh actions", () => {
-  const card = section('{visibleError ? <View testID="onay-data-error"', '{token && profile && activeRole === "driver"');
-  assert.ok(card.includes('accessibilityRole="alert"'));
-  assert.ok(card.includes('passengerDarkSystem && s.darkPassengerTripCard'));
-  assert.ok(card.includes('passengerDarkSystem && s.darkPassengerTripTitle'));
-  assert.ok(card.includes('passengerDarkSystem && s.darkPassengerTripMuted'));
-  assert.ok(card.includes('testID="onay-data-error-retry"'));
-  assert.ok(card.includes('void refreshOrders(); void refreshAvailability(); setProfileRefresh(value => value + 1);'));
-  assert.ok(card.includes('secondary disabled={busy} dark={passengerDarkSystem}'));
+test('stale passenger data keeps readable alert and unchanged real refresh actions',()=>{
+ const from=app.indexOf('{visibleError ? <View testID="onay-data-error"');const to=app.indexOf('<Modal visible={bookingPage',from);assert.ok(from>0&&to>from);const card=app.slice(from,to);
+ for(const value of ['accessibilityRole="alert"','passengerDarkSystem && s.darkPassengerTripCard','testID="onay-data-error-retry"','void refreshOrders(); void refreshAvailability(); setProfileRefresh(value => value + 1);','disabled={busy}'])assert.ok(card.includes(value));
 });
-
-test("profile recovery retains loading, disconnection and retry without falsely reporting an empty profile", () => {
-  const card = section('!profile ? <View testID="onay-profile-unavailable"', ': mode === "driver" ? (');
-  assert.ok(card.includes('profileLoading ? "Загружаем профиль…" : "Нет связи с профилем"'));
-  assert.ok(card.includes('profileError || "Вход сохранён. Подключись к Onay, чтобы продолжить."'));
-  assert.ok(card.includes('passengerDarkSystem && s.darkPassengerTripCard'));
-  assert.ok(card.includes('passengerDarkSystem ? onayDark.accent : "#0D735C"'));
-  assert.ok(card.includes('testID="onay-profile-retry"'));
-  assert.ok(card.includes('onPress={() => setProfileRefresh(value => value + 1)} disabled={profileLoading}'));
-  assert.ok(card.includes('secondary dark={passengerDarkSystem}'));
+test('profile recovery remains distinct from empty and never renders the previous shell',()=>{
+ const from=app.indexOf('if (token && !profile) return <OnayScreenFrame');const to=app.indexOf('// Presentation only;',from);assert.ok(from>0&&to>from);const card=app.slice(from,to);
+ for(const value of ['profileLoading ? "Загружаем профиль…" : "Нет связи с профилем"','testID="onay-profile-unavailable"','profileError ||','<ActivityIndicator','testID="onay-profile-retry"','onPress={() => setProfileRefresh(value => value + 1)}','disabled={busy || profileLoading}','onPress={logout}'])assert.ok(card.includes(value));
+ assert.ok(!app.includes('ТВОЙ ГОРОД. ТВОЙ МАРШРУТ.'));
 });

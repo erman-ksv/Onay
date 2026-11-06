@@ -65,10 +65,10 @@ export default function OnayPassengerTrips({
 
 const s = StyleSheet.create({
   page: { minHeight: 320, marginBottom: 16, backgroundColor: onayDark.background, paddingTop: 18, paddingHorizontal: 4 },
-  lightPage: { backgroundColor: "#f4f6f4" },
+  lightPage: { backgroundColor: "#f1f7f3" },
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12, paddingBottom: 12 },
   heading: { fontSize: 30, fontWeight: "700", letterSpacing: -0.3, color: onayDark.text },
-  lightText: { color: "#0e1a14" },
+  lightText: { color: "#0a1d15" },
   lightMuted: { color: "#5a7366" },
   historyButton: { minHeight: 44, justifyContent: "center", paddingHorizontal: 10, borderRadius: 12 },
   historyButtonLight: { backgroundColor: "#e7f1e9" },
