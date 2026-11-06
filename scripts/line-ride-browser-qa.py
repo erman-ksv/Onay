@@ -766,7 +766,7 @@ class LineRideQA(shared.DriverRouteQA):
     def driver_seats_logout(self):
         self.hold_queue()
         try:
-            self.page.get_by_text("Выйти", exact=True).click()
+            self.logout_driver()
             self.expect(self.control("driver-free-seats")).to_have_count(0)
             self.release_queue()
             self.expect(self.control("driver-free-seats")).to_have_count(0)
