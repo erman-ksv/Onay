@@ -3,6 +3,7 @@
 import argparse
 import base64
 import hashlib
+import html
 import json
 import os
 from pathlib import Path
@@ -158,7 +159,11 @@ def main():
                 assert hashlib.sha256(raw).hexdigest() == metadata[role + "Sha256"]
                 reference_page.goto("about:blank")  # reset each prototype's independent JS globals
                 reference_page.set_content(raw.decode(), wait_until="load")
-                reference_page.wait_for_timeout(1000)
+                # The public source schedules its first navigation at 1000ms.
+                # Capture after that transition, not halfway through its fade.
+                reference_page.wait_for_timeout(1500)
+                reference_page.evaluate("S.auth = false; reset('welcome')")
+                reference_page.wait_for_timeout(450)
                 reference_page.screenshot(path=str(args.output_dir / f"reference-{role}-auth.png"))
                 for state in (["home", "builder", "trips", "chats", "profile", "support"] if role == "passenger" else ["line", "queue", "history", "profile"]):
                     reference_page.evaluate("state => { S.auth = true; if (state === 'builder') S.draft = newDraft('A'); reset(state); }", state)
@@ -173,6 +178,23 @@ def main():
         print(helpers.redact(traceback.format_exc()))
     finally:
         report["screenshots"] = sorted(path.name for path in args.output_dir.glob("*.png"))
+        pairs = [("Вход", "reference-passenger-auth", "actual-unconfigured-auth"),
+                 ("Главная пассажира", "reference-passenger-home", "actual-passenger-home"),
+                 ("Оформление", "reference-passenger-builder", "actual-passenger-builder"),
+                 ("Поездки", "reference-passenger-trips", "actual-passenger-trips"),
+                 ("Профиль пассажира", "reference-passenger-profile", "actual-passenger-profile"),
+                 ("Поддержка", "reference-passenger-support", "actual-passenger-support"),
+                 ("Линия водителя", "reference-driver-line", "actual-driver-line-390"),
+                 ("Очередь", "reference-driver-queue", "actual-driver-queue-390"),
+                 ("Профиль водителя", "reference-driver-profile", "actual-driver-profile-390")]
+        gallery = '<!doctype html><meta charset="utf-8"><title>Onay: HTML / React Native</title><style>body{font:16px system-ui;background:#eee;color:#15271e;margin:24px}section{margin:32px 0}div{display:flex;gap:20px;flex-wrap:wrap}figure{margin:0}img{width:390px;max-width:100%;border:1px solid #999}figcaption{padding:10px 0}</style><h1>Onay: опубликованный HTML / настоящее приложение</h1><p>Разные реальные данные и состояния. Эта галерея помогает ручному сравнению и не доказывает попиксельное совпадение. Android не проверен.</p>'
+        for title, reference_name, actual_name in pairs:
+            gallery += '<section><h2>' + html.escape(title) + '</h2><div>'
+            for label, name in [("Утверждённый HTML", reference_name), ("React Native Web, реальный API", actual_name)]:
+                if name + ".png" in report["screenshots"]:
+                    gallery += '<figure><figcaption>' + label + '</figcaption><img src="' + name + '.png" alt="' + html.escape(title + " — " + label) + '"></figure>'
+            gallery += '</div></section>'
+        (args.output_dir / "comparison.html").write_text(gallery)
         (args.output_dir / "verification.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
     return 0 if report["status"] == "passed" else 1
 
