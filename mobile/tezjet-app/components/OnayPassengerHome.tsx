@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Constants from "expo-constants";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { BackHandler, Image, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { onayDark } from "../lib/onay-auth-ui";
 import type { OnayPassengerHomeMode } from "../lib/onay-home-modes";
 import OnayPassengerAbout from "./OnayPassengerAbout";
@@ -9,6 +9,7 @@ type Props = {
   onChoose: (mode: OnayPassengerHomeMode) => void;
   onChooseLocation: () => void;
   activeOrder?: boolean;
+  active?: boolean;
   onViewActiveOrder: () => void;
   theme?: "light" | "dark";
   onThemeChange?: (value: "light" | "dark") => void;
@@ -37,9 +38,27 @@ function TripCard({ title, description, symbol, onPress, primary = false, testID
  * The route drawing is a schematic, never a live map or a GPS claim.
  * The actual availability, quote and booking stay in PassengerRouteOrder.
  */
-export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOrder = false, onViewActiveOrder, theme = "dark", onThemeChange }: Props) {
+export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOrder = false, active = true, onViewActiveOrder, theme = "dark", onThemeChange }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  // Home remains mounted when another passenger tab is selected. Only the visible
+  // Home page may consume Android Back, and nested pages take priority.
+  useEffect(() => {
+    if (!active || Platform.OS !== "android") return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (aboutOpen) {
+        setAboutOpen(false);
+        setMenuOpen(false);
+        return true;
+      }
+      if (menuOpen) {
+        setMenuOpen(false);
+        return true;
+      }
+      return false;
+    });
+    return () => subscription.remove();
+  }, [active, aboutOpen, menuOpen]);
   const light = theme === "light";
   if (aboutOpen) {
     return <OnayPassengerAbout theme={theme} onBack={() => { setAboutOpen(false); setMenuOpen(false); }} backLabel="Назад на главную" />;

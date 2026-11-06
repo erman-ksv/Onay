@@ -891,6 +891,7 @@ export default function Home() {
         active={passengerTab} theme={passengerTheme} homeScroll={homeScroll}
         home={<>
     <OnayPassengerHome
+      active={passengerTab === "home"}
       activeOrder={passengerHasActiveOrder}
       onViewActiveOrder={() => selectPassengerTab("trips")}
       theme={passengerTheme}
