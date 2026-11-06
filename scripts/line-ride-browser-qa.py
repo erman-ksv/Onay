@@ -83,6 +83,15 @@ class LineRideQA(shared.DriverRouteQA):
             timeout=20_000)
 
     def shot(self, page, name):
+        # Evidence names must match the actual browser viewport, not a test
+        # description that only claims to exercise a mobile/desktop layout.
+        viewport = page.viewport_size
+        if "mobile-390" in name:
+            require(viewport is not None and viewport["width"] == 390,
+                "Mobile QA screenshot " + name + " was not captured at 390px")
+        if "desktop" in name:
+            require(viewport is not None and viewport["width"] == 1440,
+                "Desktop QA screenshot " + name + " was not captured at 1440px")
         page.screenshot(path=str(self.args.output_dir / (name + ".png")), full_page=True,
             mask=[page.get_by_placeholder("Код подтверждения", exact=True),
                   page.get_by_text(re.compile(r"Тестовый код:")),
@@ -437,7 +446,11 @@ class LineRideQA(shared.DriverRouteQA):
         self.expect(self.control("driver-line-join")).to_have_count(0)
         self.expect(self.control("driver-route-save")).to_be_disabled()
         self.expect(self.control("driver-direction-b_to_a")).to_be_disabled()
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        require(self.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"),
+            "Finished enrollment must fit 390px without horizontal overflow")
         self.shot(self.page, "mobile-390-finished-retained-enrollment")
+        self.page.set_viewport_size({"width": 1440, "height": 1000})
         with self.response_for("/queue/leave", "DELETE") as pending:
             leave.click()
         require(pending.value.status == 204, "Actual close control must DELETE the finished enrollment")
@@ -463,7 +476,11 @@ class LineRideQA(shared.DriverRouteQA):
         require(self.enrollment_id != previous, "Opposite-direction enrollment must receive a fresh server receipt")
         self.expect(self.control("driver-queue-status")).to_contain_text("позиция 1")
         self.assert_stops(self.route, "b_to_a")
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        require(self.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"),
+            "Reverse enrollment must fit 390px without horizontal overflow")
         self.shot(self.page, "mobile-390-new-B-to-A-enrollment")
+        self.page.set_viewport_size({"width": 1440, "height": 1000})
         for page in (self.page, self.passenger_page):
             require(page.locator("vite-error-overlay, nextjs-portal, [data-nextjs-dialog-overlay]").count() == 0, "Actual app must have no framework error overlay")
         require(not [entry for entry in self.console if entry["type"] == "error"] and not self.page_errors,
@@ -533,6 +550,7 @@ class LineRideQA(shared.DriverRouteQA):
         actual_ids = page.locator('[data-testid^="passenger-history-row-"]').evaluate_all("nodes => nodes.map(n => n.getAttribute('data-testid').replace('passenger-history-row-', ''))")
         require(actual_ids == expected_ids, "Rendered history must retain server newest-first creation order beyond three records")
         self.expect(page.get_by_test_id("passenger-driver-card")).to_have_count(0)
+        page.set_viewport_size({"width": 1440, "height": 1000})
         self.shot(page, "task3-14-history-desktop")
         page.set_viewport_size({"width": 390, "height": 844})
         require(page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "Full passenger history must fit390px")
