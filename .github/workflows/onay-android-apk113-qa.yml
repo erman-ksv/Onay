@@ -56,6 +56,34 @@ jobs:
           "$signer" verify --print-certs apk113/Onay-offline-demo.apk | grep 'certificate SHA-256 digest' > /tmp/113-cert
           "$signer" verify --print-certs apk114/Onay-offline-demo-APK114.apk | grep 'certificate SHA-256 digest' > /tmp/114-cert
           diff -u /tmp/113-cert /tmp/114-cert
+      - name: Install Android SDK Emulator before acceleration checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [ -z "$sdk_root" ] || [ ! -d "$sdk_root" ]; then
+            echo "::error::ANDROID_SDK_BLOCKER: ANDROID_SDK_ROOT/ANDROID_HOME is not configured"
+            exit 1
+          fi
+          sdkmanager_bin="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$sdkmanager_bin" ]; then
+            sdkmanager_bin="$(command -v sdkmanager || true)"
+          fi
+          if [ -z "$sdkmanager_bin" ] || [ ! -x "$sdkmanager_bin" ]; then
+            echo "::error::ANDROID_SDK_BLOCKER: sdkmanager is unavailable"
+            exit 1
+          fi
+          echo "Using sdkmanager: $sdkmanager_bin"
+          "$sdkmanager_bin" --sdk_root="$sdk_root" --install "emulator"
+          emulator_bin="$sdk_root/emulator/emulator"
+          echo "Installed emulator path: $emulator_bin"
+          if [ ! -f "$emulator_bin" ] || [ ! -x "$emulator_bin" ]; then
+            echo "::error::ANDROID_SDK_BLOCKER: installed emulator executable missing or not executable"
+            exit 1
+          fi
+          ls -l "$emulator_bin"
+          "$emulator_bin" -version
+          echo "Emulator installed and executable; proceeding to KVM access and acceleration check."
       - name: Check runner KVM ACL, open the device and verify emulator acceleration
         shell: bash
         run: |
