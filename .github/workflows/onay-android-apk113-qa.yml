@@ -82,8 +82,23 @@ jobs:
             exit 1
           fi
           ls -l "$emulator_bin"
+          # Ubuntu 22.04 runners can lack the PulseAudio shared library
+          # required by qemu-system-x86_64 even for headless emulation.
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libpulse0
+          qemu_bin="$sdk_root/emulator/qemu/linux-x86_64/qemu-system-x86_64"
+          if [ ! -x "$qemu_bin" ]; then
+            echo "::error::ANDROID_SDK_BLOCKER: QEMU executable is missing"
+            exit 1
+          fi
+          missing_libs="$(ldd "$qemu_bin" | grep 'not found' || true)"
+          if [ -n "$missing_libs" ]; then
+            echo "$missing_libs"
+            echo "::error::ANDROID_SDK_BLOCKER: Emulator QEMU shared libraries unavailable"
+            exit 1
+          fi
           "$emulator_bin" -version
-          echo "Emulator installed and executable; proceeding to KVM access and acceleration check."
+          echo "Emulator installed, linked and executable; proceeding to KVM access and acceleration check."
       - name: Check runner KVM ACL, open the device and verify emulator acceleration
         shell: bash
         run: |
