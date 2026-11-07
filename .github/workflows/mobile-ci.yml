@@ -83,16 +83,16 @@ jobs:
       - name: Export Android and iOS bundles
         run: pnpm exec expo export --clear --platform android --platform ios
       - name: Set up Java for Android
-        if: (github.event_name == 'workflow_dispatch' && inputs.build_apk) || (github.event_name == 'pull_request' && github.event.pull_request.number == 110)
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
       - name: Generate Android native project
-        if: (github.event_name == 'workflow_dispatch' && inputs.build_apk) || (github.event_name == 'pull_request' && github.event.pull_request.number == 110)
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk
         run: pnpm exec expo prebuild --platform android --no-install --clean
       - name: Embed JavaScript in the debug preview
-        if: (github.event_name == 'workflow_dispatch' && inputs.build_apk) || (github.event_name == 'pull_request' && github.event.pull_request.number == 110)
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk
         run: |
           node <<'NODE'
           const fs = require('node:fs');
@@ -102,11 +102,11 @@ jobs:
           fs.writeFileSync(file, source.replace('react {', 'react {\n    debuggableVariants = []'));
           NODE
       - name: Assemble Android debug APK
-        if: (github.event_name == 'workflow_dispatch' && inputs.build_apk) || (github.event_name == 'pull_request' && github.event.pull_request.number == 110)
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk
         run: cd android && ./gradlew assembleDebug
       - name: Prepare distinctly named APK for diagnostics
         id: apk-meta
-        if: (github.event_name == 'workflow_dispatch' && inputs.build_apk) || (github.event_name == 'pull_request' && github.event.pull_request.number == 110)
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk
         run: |
           version_code="$(node -p "require('./app.json').expo.android.versionCode")"
           echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
@@ -114,7 +114,7 @@ jobs:
             cp android/app/build/outputs/apk/debug/app-debug.apk "Onay-offline-demo-APK${version_code}.apk"
           fi
       - name: Verify final artifact matches the checked-out source
-        if: (github.event_name == 'workflow_dispatch' && inputs.build_apk) || (github.event_name == 'pull_request' && github.event.pull_request.number == 110)
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk
         run: |
           python3 - <<'PY'
           import json, zipfile
@@ -134,7 +134,7 @@ jobs:
           print(f"Verified APK identity: {name}, SHA={data['sourceSha']}, versionCode={data['versionCode']}")
           PY
       - name: Upload Android debug APK
-        if: (github.event_name == 'workflow_dispatch' && inputs.build_apk) || (github.event_name == 'pull_request' && github.event.pull_request.number == 110)
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ONAY_DEMO_PREVIEW == 'true' && format('onay-android-demo-apk-{0}', steps.apk-meta.outputs.version_code) || 'tezjet-android-debug-apk' }}
@@ -161,10 +161,13 @@ jobs:
           repository: erman-ksv/Onay
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: apk114
-      - name: Download exactly one new APK from this same run
+      - name: Download already published final APK115 (no rebuild)
         uses: actions/download-artifact@v4
         with:
-          pattern: onay-android-demo-apk-*
+          name: onay-android-demo-apk-115
+          run-id: 42406229478
+          repository: erman-ksv/Onay
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           path: apk-current
       - name: Verify both original APKs, same signing certificate and source receipt
         run: |
@@ -178,7 +181,7 @@ jobs:
           currentreceipt=json.loads(next(Path("apk-current").rglob("build-provenance.json")).read_text())
           assert oldreceipt["versionCode"] == 114
           assert currentreceipt["versionCode"] == 115
-          assert currentreceipt["sourceSha"] == '${{ github.event.pull_request.head.sha }}'
+          assert currentreceipt["sourceSha"] == '5c9f94044608f762c8f382a1e23afaa7a3d4c569'
           assert oldreceipt["applicationId"] == currentreceipt["applicationId"] == "uz.tezjet.app"
           assert oldreceipt["offlineDemoPreview"] and currentreceipt["offlineDemoPreview"]
           print("Old and new APK provenance verified",currentreceipt)
@@ -238,9 +241,7 @@ jobs:
           disable-animations: false
           disable-linux-hw-accel: false
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: |
-            current_apk="$(find apk-current -name 'Onay-offline-demo-APK*.apk' -print -quit)"
-            python3 scripts/onay-driver-mode-chats-android-qa.py --old-apk apk114/Onay-offline-demo-APK114.apk --new-apk "$current_apk" --version-code 115 --output artifacts/driver-mode-chats-android
+          script: python3 scripts/onay-driver-mode-chats-android-qa.py --old-apk apk114/Onay-offline-demo-APK114.apk --new-apk apk-current/Onay-offline-demo-APK115.apk --version-code 115 --output artifacts/driver-mode-chats-android
       - name: Publish native screenshots, UI XML and the verification receipt
         if: always()
         uses: actions/upload-artifact@v4
