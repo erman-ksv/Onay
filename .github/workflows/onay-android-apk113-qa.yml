@@ -1,0 +1,55 @@
+name: Onay APK113 Android device-path diagnosis
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/onay-android-apk113-qa.yml"
+      - "scripts/onay-android-apk-smoke.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  inspect-published-apk113:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch exact published APK113 artifact (no rebuild)
+        uses: actions/download-artifact@v4
+        with:
+          name: onay-android-demo-apk
+          run-id: 42389986724
+          repository: erman-ksv/Onay
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: apk113
+      - name: Verify APK113 archive and immutable build receipt
+        run: |
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          apk=Path("apk113/Onay-offline-demo.apk")
+          data=json.loads(Path("apk113/build-provenance.json").read_text())
+          assert hashlib.sha256(apk.read_bytes()).hexdigest() == "9659f9fbc5752a6482bcb1326e6e326be368d49817719c5990c65644df8b8593"
+          assert data["versionCode"] == 113
+          assert data["sourceSha"] == "53db518ab52d2f1ca86e52da7e20a3d987a720c2"
+          assert data["offlineDemoPreview"] is True
+          PY
+      - name: Launch exact APK113 in Android emulator without Metro
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_6
+          target: google_apis
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: python3 scripts/onay-android-apk-smoke.py --apk apk113/Onay-offline-demo.apk --version-code 113 --output artifacts/apk113-android
+      - name: Upload actual Android screenshots and UI hierarchy (even on failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onay-apk113-android-qa
+          path: artifacts/apk113-android/
+          if-no-files-found: warn
