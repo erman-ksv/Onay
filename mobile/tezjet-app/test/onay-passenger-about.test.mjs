@@ -21,7 +21,10 @@ test("about page uses the confirmed Onay logo, actual app version and company at
   assert.match(about, /testID="onay-about-real-version"/);
   assert.match(about, /ONAY OST E\.K\.K Technologies/);
   assert.match(about, /One Founder\. Intelligent Systems\./);
-  assert.doesNotMatch(about, /2\.0\.0|Политика конфиденциальности|Условия использования/);
+  assert.doesNotMatch(about, /2\.0\.0/);
+  assert.match(about, /Политика конфиденциальности/);
+  assert.match(about, /Условия использования/);
+  assert.match(about, /Документ не опубликован/);
 });
 
 test("both themes work while profile history, support, driver mode and logout stay connected", () => {

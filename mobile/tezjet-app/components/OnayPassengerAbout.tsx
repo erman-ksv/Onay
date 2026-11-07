@@ -47,10 +47,19 @@ export default function OnayPassengerAbout({ theme, onBack, backLabel = "Наз�
         Стоимость и доступность водителей подтверждаются сервером.
       </Text>
     </View>
+    <View style={[styles.legalCard, light && styles.companyCardLight]}>
+      {(["Политика конфиденциальности", "Условия использования"] as const).map((label, index) =>
+        <View key={label} testID={index === 0 ? "onay-legal-privacy-unavailable" : "onay-legal-terms-unavailable"}
+          style={[styles.legalRow, index > 0 && { borderTopWidth: 1, borderTopColor: light ? "#d3e3d9" : onayDark.border }]}>
+          <Text style={{ color: primaryText, fontSize: 15, fontWeight: "600" }}>{label}</Text>
+          <Text style={{ color: secondaryText, fontSize: 12, marginTop: 5 }}>Документ не опубликован</Text>
+        </View>)}
+    </View>
     <View style={[styles.companyCard, light && styles.companyCardLight]}>
       <Text style={[styles.companyName, { color: primaryText }]}>ONAY OST E.K.K Technologies</Text>
       <Text style={[styles.tagline, { color: secondaryText }]}>One Founder. Intelligent Systems.</Text>
     </View>
+    <View style={{ height: 1, backgroundColor: light ? "#d3e3d9" : onayDark.border, marginTop: 20 }}/>
     <Text style={[styles.copyright, { color: secondaryText }]}>© 2026 ONAY OST E.K.K Technologies · All rights reserved.</Text>
   </View>;
 }
@@ -68,7 +77,9 @@ const styles = StyleSheet.create({
   name: { fontSize: 28, fontWeight: "800" },
   version: { fontSize: 15 },
   description: { fontSize: 15, lineHeight: 23, textAlign: "center", marginTop: 4 },
-  companyCard: { marginTop: 32, backgroundColor: onayDark.card, borderRadius: 20, alignItems: "center", gap: 8, padding: 20 },
+  legalCard: { marginTop: 26, backgroundColor: onayDark.card, borderRadius: 20, overflow: "hidden", paddingHorizontal: 16 },
+  legalRow: { minHeight: 66, paddingVertical: 14, justifyContent: "center" },
+  companyCard: { marginTop: 20, backgroundColor: onayDark.card, borderRadius: 20, alignItems: "center", gap: 8, padding: 20 },
   companyCardLight: { backgroundColor: "#ffffff" },
   companyName: { fontSize: 15, fontWeight: "800", textAlign: "center" },
   tagline: { fontSize: 13, textAlign: "center" },

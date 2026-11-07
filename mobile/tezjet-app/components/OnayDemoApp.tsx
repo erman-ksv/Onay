@@ -16,6 +16,7 @@ import OnayPassengerTrips from "./OnayPassengerTrips";
 import OnayPassengerProfile from "./OnayPassengerProfile";
 import OnayPassengerChatsEmpty from "./OnayPassengerChatsEmpty";
 import OnayPassengerAbout from "./OnayPassengerAbout";
+import OnayPassengerSupport from "./OnayPassengerSupport";
 import OnayDriverShell, { type OnayDriverTab } from "./OnayDriverShell";
 import OnayDriverProfile from "./OnayDriverProfile";
 import OnayHistoryRow from "./OnayHistoryRow";
@@ -89,7 +90,7 @@ export default function OnayDemoApp({ initialRole, onExit }: { initialRole: Demo
       profile: <OnayDriverProfile fullName="Демо-водитель" vehicle={{ make: car, model: "", plate_number: plate, seat_capacity: capacity }} theme={theme} onTheme={setTheme} busy={false} onVehicle={() => setPopup("vehicle")} onSupport={() => setPopup("support")} onAbout={() => setPopup("about")} onPassenger={() => role("passenger")} onServer={() => setPopup("server")} onLogout={onExit}/>,
     }}/>}
     <Modal visible={popup !== null} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setPopup(null)}>
-      <OnayScreenFrame title={popup === "booking" ? "Демо · Оформление" : popup === "route" ? "Демо · Маршрут" : popup === "vehicle" ? "Демо · Автомобиль" : popup === "about" ? undefined : popup === "support" ? "Демо · Поддержка" : "Демо · Сервер"} theme={theme} onBack={popup === "about" ? undefined : () => setPopup(null)} testID="onay-demo-page">
+      <OnayScreenFrame title={popup === "booking" ? "Демо · Оформление" : popup === "route" ? "Демо · Маршрут" : popup === "vehicle" ? "Демо · Автомобиль" : popup === "about" ? undefined : popup === "support" ? undefined : "Демо · Сервер"} theme={theme} onBack={popup === "about" ? undefined : () => setPopup(null)} testID="onay-demo-page">
         <DemoNotice color={c.muted}/>
         {popup === "booking" ? <>
           {[['Откуда', reverse ? 'Gazalkent' : 'Shaxsham'], ['Куда', reverse ? 'Shaxsham' : 'Gazalkent']].map(([label, value]) => <Pressable key={label} accessibilityRole="button" onPress={() => setReverse(value => !value)} style={{ backgroundColor: c.card, padding: 16, borderRadius: 20, marginTop: 12, gap: 5 }}><Text style={{ color: c.muted }}>{label}</Text><Text style={{ color: c.text, fontSize: 17, fontWeight: "700" }}>ДЕМО · {value}</Text></Pressable>)}
@@ -98,7 +99,7 @@ export default function OnayDemoApp({ initialRole, onExit }: { initialRole: Demo
           {button("onay-demo-preview-trip", state.ride ? "Открыть учебную поездку" : "Показать учебную поездку", () => { if (!state.ride) dispatch({ type: "start", seats, reverse }); setPopup(null); setTab("trips"); setHistoryOpen(false); })}
         </> : popup === "route" ? <>{button("onay-demo-route-forward", "Shaxsham → Gazalkent", () => setReverse(false), reverse)}{button("onay-demo-route-reverse", "Gazalkent → Shaxsham", () => setReverse(true), !reverse)}{button("onay-demo-route-done", "Выбрать учебный маршрут", () => setPopup(state.role === "passenger" ? "booking" : null))}</> : popup === "vehicle" ? <>
           <Text style={{ color: c.muted, marginTop: 16 }}>Автомобиль</Text><TextInput testID="onay-demo-car" value={car} onChangeText={setCar} style={{ backgroundColor: c.card, color: c.text, borderRadius: 16, padding: 16, marginTop: 8 }}/><Text style={{ color: c.muted, marginTop: 16 }}>Учебный номер</Text><TextInput testID="onay-demo-plate" value={plate} onChangeText={setPlate} style={{ backgroundColor: c.card, color: c.text, borderRadius: 16, padding: 16, marginTop: 8 }}/><Text style={{ color: c.muted, marginTop: 16 }}>Мест в салоне: {capacity}</Text><View style={{ flexDirection: "row", gap: 16 }}>{button("onay-demo-car-minus", "−", () => setCapacity(value => Math.max(1, value - 1)), true, capacity <= 1)}{button("onay-demo-car-plus", "+", () => setCapacity(value => Math.min(8, value + 1)), true, capacity >= 8)}</View>{button("onay-demo-car-done", "Вернуться к демо", () => setPopup(null))}<Text style={{ color: c.muted, marginTop: 16 }}>Изменения только для демонстрации; после выхода они исчезнут.</Text>
-        </> : popup === "about" ? <OnayPassengerAbout theme={theme} onBack={() => setPopup(null)}/> : <Text style={{ color: c.text, fontSize: 16, lineHeight: 24, marginTop: 24 }}>{popup === "server" ? "Демо работает без подключения. Для настоящего входа выйдите из демо и откройте настройки сервера на экране авторизации." : "В деморежиме сообщения не отправляются. Здесь можно только посмотреть интерфейс."}</Text>}
+        </> : popup === "about" ? <OnayPassengerAbout theme={theme} onBack={() => setPopup(null)}/> : popup === "support" ? <OnayPassengerSupport theme={theme} previewOnly onBack={() => setPopup(null)}/> : <Text style={{ color: c.text, fontSize: 16, lineHeight: 24, marginTop: 24 }}>{popup === "server" ? "Демо работает без подключения. Для настоящего входа выйдите из демо и откройте настройки сервера на экране авторизации." : "В деморежиме сообщения не отправляются. Здесь можно только посмотреть интерфейс."}</Text>}
       </OnayScreenFrame>
     </Modal>
   </View>;
