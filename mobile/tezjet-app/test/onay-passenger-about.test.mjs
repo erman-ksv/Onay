@@ -8,7 +8,7 @@ const about = readFileSync(new URL("../components/OnayPassengerAbout.tsx", impor
 test("about opens a dedicated V2 page and returns to the existing passenger profile", () => {
   assert.match(profile, /row\("about", "О приложении", \(\) => setAboutOpen\(true\)\)/);
   assert.match(profile, /if \(aboutOpen\)/);
-  assert.match(profile, /<OnayPassengerAbout theme=\{theme\} onBack=\{\(\) => setAboutOpen\(false\)\}/);
+  assert.match(profile, /<OnayPassengerAbout theme=\{theme\} mode=\{demoMode \? "demo" : "live"\} onBack=\{\(\) => setAboutOpen\(false\)\}/);
   assert.match(about, /testID="onay-passenger-about-screen"/);
   assert.match(about, /testID="onay-about-back"/);
   assert.match(about, /onPress=\{onBack\}/);
@@ -18,6 +18,8 @@ test("about opens a dedicated V2 page and returns to the existing passenger prof
 test("about page uses the confirmed Onay logo, actual app version and company attribution", () => {
   assert.match(about, /onay-original-logo\.png/);
   assert.match(about, /Constants\.expoConfig\?\.version/);
+  assert.match(about, /Constants\.nativeAppVersion/);
+  assert.match(about, /<OnayBuildIdentity mode=\{mode\}/);
   assert.match(about, /testID="onay-about-real-version"/);
   assert.match(about, /ONAY OST E\.K\.K Technologies/);
   assert.match(about, /One Founder\. Intelligent Systems\./);

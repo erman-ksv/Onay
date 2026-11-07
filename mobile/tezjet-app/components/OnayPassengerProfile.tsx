@@ -1,4 +1,5 @@
 import OnayInlineLanguage from "./OnayInlineLanguage";
+import OnayBuildIdentity from "./OnayBuildIdentity";
 import Text from "./OnayText";
 import OnayIcon from "./OnayIcon";
 import OnayScreenFrame from "./OnayScreenFrame";
@@ -23,11 +24,12 @@ type Props = {
   onDriver: () => void;
   onLogout: () => void;
   onSupportPreview?: () => void;
+  demoMode?: boolean;
 };
 
 const APP_VERSION = Constants.expoConfig?.version ?? "0.1.0";
 
-export default function OnayPassengerProfile({ fullName, phoneNumber, busy, theme, active, onBackToHome, onThemeChange, onHistory, onDriver, onLogout, onSupportPreview }: Props) {
+export default function OnayPassengerProfile({ fullName, phoneNumber, busy, theme, active, onBackToHome, onThemeChange, onHistory, onDriver, onLogout, onSupportPreview, demoMode = false }: Props) {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [personalOpen, setPersonalOpen] = useState(false);
   const [supportOpen, setSupportOpen] = useState(false);
@@ -57,7 +59,7 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
     return <OnayPassengerSupport theme={theme} onBack={() => setSupportOpen(false)} />;
   }
   if (aboutOpen) {
-    return <OnayPassengerAbout theme={theme} onBack={() => setAboutOpen(false)} />;
+    return <OnayPassengerAbout theme={theme} mode={demoMode ? "demo" : "live"} onBack={() => setAboutOpen(false)} />;
   }
   if (personalOpen) return <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setPersonalOpen(false)}>
     <OnayScreenFrame title="Личные данные" theme={theme} onBack={() => setPersonalOpen(false)}>
@@ -131,6 +133,7 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
     </View>
 
     <Text style={[s.version, { color: muted }]}>Onay · Версия {APP_VERSION}</Text>
+    <OnayBuildIdentity mode={demoMode ? "demo" : "live"} compact color={muted}/>
     <Text style={[s.copyright, { color: muted }]}>© 2026 ONAY OST E.K.K Technologies</Text>
   </View>;
 }

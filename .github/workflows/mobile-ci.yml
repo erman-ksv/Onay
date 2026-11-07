@@ -28,6 +28,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: mobile-ci-${{ github.workflow }}-${{ github.ref }}
@@ -103,15 +104,105 @@ jobs:
       - name: Assemble Android debug APK
         if: (github.event_name == 'workflow_dispatch' && inputs.build_apk) || (github.event_name == 'pull_request' && github.event.pull_request.number == 110)
         run: cd android && ./gradlew assembleDebug
-      - name: Prepare offline demo APK filename
-        if: env.ONAY_DEMO_PREVIEW == 'true'
-        run: cp android/app/build/outputs/apk/debug/app-debug.apk Onay-offline-demo.apk
+      - name: Prepare distinctly named APK for diagnostics
+        id: apk-meta
+        if: (github.event_name == 'workflow_dispatch' && inputs.build_apk) || (github.event_name == 'pull_request' && github.event.pull_request.number == 110)
+        run: |
+          version_code="$(node -p "require('./app.json').expo.android.versionCode")"
+          echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
+          if [ "$ONAY_DEMO_PREVIEW" = "true" ]; then
+            cp android/app/build/outputs/apk/debug/app-debug.apk "Onay-offline-demo-APK${version_code}.apk"
+          fi
+      - name: Verify final artifact matches the checked-out source
+        if: (github.event_name == 'workflow_dispatch' && inputs.build_apk) || (github.event_name == 'pull_request' && github.event.pull_request.number == 110)
+        run: |
+          python3 - <<'PY'
+          import json, zipfile
+          from pathlib import Path
+          data=json.loads(Path("build-provenance.json").read_text())
+          name=f"Onay-offline-demo-APK{data['versionCode']}.apk" if data['offlineDemoPreview'] else "android/app/build/outputs/apk/debug/app-debug.apk"
+          path=Path(name)
+          assert path.is_file(),name
+          with zipfile.ZipFile(path) as z:
+              bundle=z.read("assets/index.android.bundle")
+              assert bundle.startswith(bytes.fromhex("c61fbc03")), "Hermes bundle missing from APK"
+              assert b"onay-profile-language-row" in bundle, "Passenger language not in native asset"
+              assert b"onay-driver-language" in bundle, "Driver language not in native asset"
+              assert b"onay-profile-build-identity" in bundle, "Build identity UI missing"
+          assert data['applicationId'] == 'uz.tezjet.app'
+          assert data['sourceSha'] == __import__('os').environ['ONAY_BUILD_SHA']
+          print(f"Verified APK identity: {name}, SHA={data['sourceSha']}, versionCode={data['versionCode']}")
+          PY
       - name: Upload Android debug APK
         if: (github.event_name == 'workflow_dispatch' && inputs.build_apk) || (github.event_name == 'pull_request' && github.event.pull_request.number == 110)
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ONAY_DEMO_PREVIEW == 'true' && 'onay-android-demo-apk' || 'tezjet-android-debug-apk' }}
+          name: ${{ env.ONAY_DEMO_PREVIEW == 'true' && format('onay-android-demo-apk-{0}', steps.apk-meta.outputs.version_code) || 'tezjet-android-debug-apk' }}
           path: |
-            ${{ env.ONAY_DEMO_PREVIEW == 'true' && 'mobile/tezjet-app/Onay-offline-demo.apk' || 'mobile/tezjet-app/android/app/build/outputs/apk/debug/app-debug.apk' }}
+            ${{ env.ONAY_DEMO_PREVIEW == 'true' && 'mobile/tezjet-app/Onay-offline-demo-APK*.apk' || 'mobile/tezjet-app/android/app/build/outputs/apk/debug/app-debug.apk' }}
             mobile/tezjet-app/build-provenance.json
           if-no-files-found: error
+
+  android-apk-acceptance:
+    name: Verify packaged APK113 and new APK on Android without Metro
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 110
+    needs: verify-mobile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Download old published APK113 for actual device reproduction
+        uses: actions/download-artifact@v4
+        with:
+          name: onay-android-demo-apk
+          run-id: 42389986724
+          repository: erman-ksv/Onay
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: apk113
+      - name: Download new APK produced by this exact run
+        uses: actions/download-artifact@v4
+        with:
+          pattern: onay-android-demo-apk-*
+          path: apk-current
+      - name: Verify source and APK certificates before install
+        run: |
+          python3 - <<'PY'
+          import json, hashlib, glob
+          from pathlib import Path
+          old = Path("apk113/Onay-offline-demo.apk")
+          new_files = list(Path("apk-current").rglob("Onay-offline-demo-APK*.apk"))
+          assert len(new_files)==1, new_files
+          assert hashlib.sha256(old.read_bytes()).hexdigest() == '9659f9fbc5752a6482bcb1326e6e326be368d49817719c5990c65644df8b8593'
+          latest = new_files[0]
+          meta = json.loads(next(Path("apk-current").rglob("build-provenance.json")).read_text())
+          assert meta['sourceSha'] == '${{ github.event.pull_request.head.sha }}'
+          assert meta['versionCode'] > 113
+          assert meta['offlineDemoPreview'] is True
+          print("Current APK:", latest, meta)
+          PY
+      - name: Install and open exact APK113 then upgrade to current build on Android
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: |
+            set +e
+            python3 scripts/onay-android-apk-smoke.py --apk apk113/Onay-offline-demo.apk --version-code 113 --output artifacts/android-apk113
+            baseline=$?
+            set -e
+            current_apk="$(find apk-current -name 'Onay-offline-demo-APK*.apk' -print -quit)"
+            current_code="$(python3 -c "import json,pathlib;print(json.loads(next(pathlib.Path('apk-current').rglob('build-provenance.json')).read_text())['versionCode'])")"
+            python3 scripts/onay-android-apk-smoke.py --apk "$current_apk" --version-code "$current_code" --output artifacts/android-current
+            echo "APK113 baseline status: $baseline (see diagnostic screenshot and Android UI hierarchy)"
+      - name: Upload actual Android screenshots, UI hierarchy and logcat on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onay-android-installed-profile-qa
+          path: artifacts/android-*/
+          if-no-files-found: warn

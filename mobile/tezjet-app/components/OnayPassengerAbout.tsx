@@ -1,4 +1,6 @@
 import Text from "./OnayText";
+import OnayBuildIdentity from "./OnayBuildIdentity";
+import type { OnayBuildMode } from "../lib/onay-build-identity";
 import Constants from "expo-constants";
 import { Image, Pressable, StyleSheet, View } from "react-native";
 import { onayDark } from "../lib/onay-auth-ui";
@@ -7,13 +9,13 @@ type Props = {
   theme: "light" | "dark";
   onBack: () => void;
   backLabel?: string;
+  mode?: OnayBuildMode;
 };
 
-const APP_VERSION = Constants.expoConfig?.version ?? "0.1.0";
-const BUILD = Constants.expoConfig?.extra?.onayBuild as { commit?: string; branch?: string; versionCode?: number } | undefined;
+const APP_VERSION = Constants.nativeAppVersion ?? Constants.expoConfig?.version ?? "недоступна";
 
 /** Passenger About page matching the Onay V2 HTML layout; no unverified legal links. */
-export default function OnayPassengerAbout({ theme, onBack, backLabel = "Назад в профиль" }: Props) {
+export default function OnayPassengerAbout({ theme, onBack, backLabel = "Назад в профиль", mode = "live" }: Props) {
   const light = theme === "light";
   const primaryText = light ? "#0a1d15" : onayDark.text;
   const secondaryText = light ? "#5a7366" : onayDark.muted;
@@ -31,7 +33,6 @@ export default function OnayPassengerAbout({ theme, onBack, backLabel = "Наз�
       </Pressable>
       <Text style={[styles.heading, { color: primaryText }]}>О приложении</Text>
     </View>
-    {BUILD?.commit && BUILD.commit !== "local" ? <Text testID="onay-build-identity" style={{ color: secondaryText, textAlign: "center", fontSize: 12, marginTop: 8 }}>Тестовая сборка {BUILD.versionCode} · {BUILD.commit.slice(0, 12)}</Text> : null}
     <View style={styles.intro}>
       <Image
         testID="onay-about-confirmed-logo"
@@ -42,6 +43,7 @@ export default function OnayPassengerAbout({ theme, onBack, backLabel = "Наз�
       />
       <Text style={[styles.name, { color: primaryText }]}>Onay</Text>
       <Text testID="onay-about-real-version" style={[styles.version, { color: secondaryText }]}>Версия {APP_VERSION}</Text>
+      <OnayBuildIdentity mode={mode} color={secondaryText}/>
       <Text style={[styles.description, { color: secondaryText }]}>
         Междугородние поездки на такси. Выберите маршрут и остановку, затем оформите заказ.
         Стоимость и доступность водителей подтверждаются сервером.
