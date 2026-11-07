@@ -1035,6 +1035,11 @@ function LiveOnayApp({ onDemo }: { onDemo?: (role: Mode) => void }) {
         onBackToHome={() => setPassengerTab("home")}
         onThemeChange={changePassengerTheme}
         onHistory={openPassengerHistory}
+        driverApprovalStatus={profile.driver_approval_status}
+        driverVehicle={profile.driver_vehicle}
+        driverRouteName={driverQueueContext?.routeName}
+        driverQueueReady={canJoinQueue}
+        driverEnrolled={queueMembership === "enrolled"}
         onDriver={() => { void switchMode("driver"); }}
         onLogout={logout}
       />
@@ -1102,7 +1107,7 @@ function LiveOnayApp({ onDemo }: { onDemo?: (role: Mode) => void }) {
       history: <>
 <DriverHistory screen active={driverTab === "history"} theme={passengerTheme} key={`${driverRouteSession}:${profile.id}`} endpoint={apiBase} token={token} driverId={profile.id} />
       </>,
-      chats: <OnayPassengerChatsEmpty theme={passengerTheme}/>,
+      chats: <OnayPassengerChatsEmpty theme={passengerTheme} role="driver" showHeading={false}/>,
       profile: <>
         <OnayDriverProfile fullName={profile.full_name || ""} phoneNumber={profile.phone_number} vehicle={profile.driver_vehicle} approval={profile.driver_approval_status}
           theme={passengerTheme} onTheme={changePassengerTheme} busy={busy || profileLoading}

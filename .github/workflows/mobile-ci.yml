@@ -144,65 +144,107 @@ jobs:
           if-no-files-found: error
 
   android-apk-acceptance:
-    name: Verify packaged APK113 and new APK on Android without Metro
+    name: Android E2E - driver overview and honest driver chats
     if: github.event_name == 'pull_request' && github.event.pull_request.number == 110
     needs: verify-mobile
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - name: Download old published APK113 for actual device reproduction
+      - name: Download existing APK114 (no rebuild)
         uses: actions/download-artifact@v4
         with:
-          name: onay-android-demo-apk
-          run-id: 42389986724
+          name: onay-android-demo-apk-114
+          run-id: 42395049951
           repository: erman-ksv/Onay
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: apk113
-      - name: Download new APK produced by this exact run
+          path: apk114
+      - name: Download exactly one new APK from this same run
         uses: actions/download-artifact@v4
         with:
           pattern: onay-android-demo-apk-*
           path: apk-current
-      - name: Verify source and APK certificates before install
+      - name: Verify both original APKs, same signing certificate and source receipt
         run: |
           python3 - <<'PY'
-          import json, hashlib, glob
+          import hashlib, json
           from pathlib import Path
-          old = Path("apk113/Onay-offline-demo.apk")
-          new_files = list(Path("apk-current").rglob("Onay-offline-demo-APK*.apk"))
-          assert len(new_files)==1, new_files
-          assert hashlib.sha256(old.read_bytes()).hexdigest() == '9659f9fbc5752a6482bcb1326e6e326be368d49817719c5990c65644df8b8593'
-          latest = new_files[0]
-          meta = json.loads(next(Path("apk-current").rglob("build-provenance.json")).read_text())
-          assert meta['sourceSha'] == '${{ github.event.pull_request.head.sha }}'
-          assert meta['versionCode'] > 113
-          assert meta['offlineDemoPreview'] is True
-          print("Current APK:", latest, meta)
+          old=Path("apk114/Onay-offline-demo-APK114.apk")
+          current=list(Path("apk-current").rglob("Onay-offline-demo-APK*.apk"))
+          assert old.is_file() and len(current)==1, current
+          oldreceipt=json.loads(Path("apk114/build-provenance.json").read_text())
+          currentreceipt=json.loads(next(Path("apk-current").rglob("build-provenance.json")).read_text())
+          assert oldreceipt["versionCode"] == 114
+          assert currentreceipt["versionCode"] == 115
+          assert currentreceipt["sourceSha"] == '${{ github.event.pull_request.head.sha }}'
+          assert oldreceipt["applicationId"] == currentreceipt["applicationId"] == "uz.tezjet.app"
+          assert oldreceipt["offlineDemoPreview"] and currentreceipt["offlineDemoPreview"]
+          print("Old and new APK provenance verified",currentreceipt)
           PY
-      - name: Install and open exact APK113 then upgrade to current build on Android
+          signer="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)"
+          "$signer" verify --print-certs apk114/Onay-offline-demo-APK114.apk | grep 'certificate SHA-256 digest' >/tmp/oldcert
+          "$signer" verify --print-certs "$(find apk-current -name 'Onay-offline-demo-APK*.apk' -print -quit)" | grep 'certificate SHA-256 digest' >/tmp/newcert
+          diff -u /tmp/oldcert /tmp/newcert
+      - name: Install Android SDK Emulator and runtime library before checking KVM
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          sdkmanager_bin="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$sdkmanager_bin"
+          "$sdkmanager_bin" --sdk_root="$sdk_root" --install "emulator"
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libpulse0
+          test -x "$sdk_root/emulator/emulator"
+          test -x "$sdk_root/emulator/qemu/linux-x86_64/qemu-system-x86_64"
+          if ldd "$sdk_root/emulator/qemu/linux-x86_64/qemu-system-x86_64" | grep 'not found'; then
+            echo "::error::ANDROID_SDK_BLOCKER: QEMU shared libraries missing"
+            exit 1
+          fi
+          "$sdk_root/emulator/emulator" -version
+      - name: Prove current runner KVM O_RDWR and usable acceleration
+        shell: bash
+        run: |
+          set -euo pipefail
+          id
+          groups
+          stat -c '%n %a %U %G' /dev/kvm
+          if command -v setfacl >/dev/null 2>&1; then
+            sudo setfacl -m "u:$(id -u):rw" /dev/kvm
+          else
+            old_gid="$(stat -c %g /dev/kvm)"
+            sudo chown "$(id -u):$old_gid" /dev/kvm
+            sudo chmod u+rw /dev/kvm
+          fi
+          if command -v getfacl >/dev/null 2>&1; then getfacl /dev/kvm; fi
+          python3 - <<'PY'
+          import os
+          fd=os.open("/dev/kvm",os.O_RDWR|os.O_CLOEXEC)
+          print("KVM O_RDWR passed",fd)
+          os.close(fd)
+          PY
+          "$ANDROID_HOME/emulator/emulator" -accel-check | tee /tmp/onay-accel.log
+          grep -Eiq 'KVM.*(installed and usable|is usable|is enabled)' /tmp/onay-accel.log
+      - name: One Android emulator session - update APK114 and take native screenshots
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: 30
           arch: x86_64
           target: google_apis
-          profile: pixel_6
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
+          profile: pixel_2
+          emulator-boot-timeout: 900
+          disable-animations: false
+          disable-linux-hw-accel: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
           script: |
-            set +e
-            python3 scripts/onay-android-apk-smoke.py --apk apk113/Onay-offline-demo.apk --version-code 113 --output artifacts/android-apk113
-            baseline=$?
-            set -e
             current_apk="$(find apk-current -name 'Onay-offline-demo-APK*.apk' -print -quit)"
-            current_code="$(python3 -c "import json,pathlib;print(json.loads(next(pathlib.Path('apk-current').rglob('build-provenance.json')).read_text())['versionCode'])")"
-            python3 scripts/onay-android-apk-smoke.py --apk "$current_apk" --version-code "$current_code" --output artifacts/android-current
-            echo "APK113 baseline status: $baseline (see diagnostic screenshot and Android UI hierarchy)"
-      - name: Upload actual Android screenshots, UI hierarchy and logcat on failure
+            python3 scripts/onay-driver-mode-chats-android-qa.py --old-apk apk114/Onay-offline-demo-APK114.apk --new-apk "$current_apk" --version-code 115 --output artifacts/driver-mode-chats-android
+      - name: Publish native screenshots, UI XML and the verification receipt
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: onay-android-installed-profile-qa
-          path: artifacts/android-*/
+          name: onay-driver-mode-chats-android-qa
+          path: artifacts/driver-mode-chats-android/
           if-no-files-found: warn

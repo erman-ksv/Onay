@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""Android QA: installed APK114 -> one final PR110 APK, no Metro or backend."""
+import argparse,json,importlib.util
+from pathlib import Path
+p=Path(__file__).with_name("onay-android-apk-smoke.py")
+spec=importlib.util.spec_from_file_location("onay_helpers",p)
+if spec is None or spec.loader is None: raise RuntimeError("Android smoke helpers unavailable")
+h=importlib.util.module_from_spec(spec);spec.loader.exec_module(h)
+
+def record(out,name):
+ h.screenshot(out,name);h.xml_snapshot(out,name)
+
+def main():
+ parser=argparse.ArgumentParser()
+ parser.add_argument("--old-apk",type=Path,required=True)
+ parser.add_argument("--new-apk",type=Path,required=True)
+ parser.add_argument("--version-code",type=int,required=True)
+ parser.add_argument("--output",type=Path,required=True)
+ a=parser.parse_args();a.output.mkdir(parents=True,exist_ok=True)
+ result={"status":"failed","checks":[],"failures":[]}
+ try:
+  h.wait_for_healthy_android()
+  for apk,code in [(a.old_apk,114),(a.new_apk,a.version_code)]:
+   h.install_exact(apk,code,a.output,f"apk{code}")
+   result["checks"].append(f"Installed versionCode={code} via ADB")
+  h.open_demo()
+  h.click("onay-tab-profile","id")
+  h.await_node("onay-passenger-profile-panel","id")
+  h.click("onay-profile-driver","id")
+  h.await_node("onay-driver-mode-overview","id")
+  h.await_node("Учебные статусы")
+  record(a.output,"android-driver-overview-unfilled")
+  h.click("onay-driver-mode-demo-approved","id")
+  h.await_node("Подтверждено")
+  record(a.output,"android-driver-overview-demo-approved")
+  root,_=h.ui_tree()
+  if h.find_node(root,"onay-driver-mode-enter","id") is not None:raise AssertionError("Demo UI offered real driver activation")
+  h.click("onay-screen-back","id")
+  h.await_node("onay-passenger-profile-panel","id")
+  record(a.output,"android-driver-overview-arrow-back")
+  h.click("onay-profile-driver","id")
+  h.await_node("onay-driver-mode-overview","id")
+  h.adb("shell","input","keyevent","4")
+  h.await_node("onay-passenger-profile-panel","id")
+  record(a.output,"android-driver-overview-hardware-back")
+  result["checks"].append("Driver overview demo, arrow Back, Android Back returned to passenger")
+  h.click("onay-demo-role-driver","id")
+  h.click("onay-driver-tab-chats","id")
+  h.await_node("Чаты с пассажирами пока недоступны")
+  root,_=h.ui_tree()
+  if h.find_node(root,"onay-chats-inner-heading","id") is not None:raise AssertionError("Duplicate chat heading visible")
+  if h.find_node(root,"Переписка с водителем") is not None:raise AssertionError("Passenger-specific text visible in driver chats")
+  record(a.output,"android-driver-chats-dark")
+  h.click("onay-driver-tab-profile","id")
+  h.click("onay-driver-theme-light","id")
+  h.click("onay-driver-tab-chats","id")
+  h.await_node("Чаты с пассажирами пока недоступны")
+  record(a.output,"android-driver-chats-light")
+  result["checks"].append("Driver chats correct in dark and light themes, no duplicate title")
+  result["status"]="passed"
+ except Exception as e:
+  result["failures"].append(repr(e))
+  try:record(a.output,"android-failure")
+  except Exception as d:result["failures"].append("screenshot: "+repr(d))
+ finally:
+  (a.output/"verification.json").write_text(json.dumps(result,ensure_ascii=False,indent=2)+"\n")
+  print(json.dumps(result,ensure_ascii=False,indent=2))
+ if result["status"]!="passed":raise SystemExit(1)
+if __name__=="__main__":main()

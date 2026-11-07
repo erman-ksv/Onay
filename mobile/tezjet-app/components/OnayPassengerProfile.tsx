@@ -10,6 +10,8 @@ import { onayDark } from "../lib/onay-auth-ui";
 import { onayProfileInitial } from "../lib/onay-profile-avatar";
 import OnayPassengerSupport from "./OnayPassengerSupport";
 import OnayPassengerAbout from "./OnayPassengerAbout";
+import OnayDriverModeOverview from "./OnayDriverModeOverview";
+import type { DriverModeVehicle } from "../lib/onay-driver-mode-status";
 
 type Theme = "light" | "dark";
 type Props = {
@@ -25,17 +27,25 @@ type Props = {
   onLogout: () => void;
   onSupportPreview?: () => void;
   demoMode?: boolean;
+  driverApprovalStatus?: "pending" | "approved" | "rejected" | "blocked" | null;
+  driverVehicle?: DriverModeVehicle | null;
+  driverRouteName?: string | null;
+  driverQueueReady?: boolean;
+  driverEnrolled?: boolean;
 };
 
 const APP_VERSION = Constants.expoConfig?.version ?? "0.1.0";
 
-export default function OnayPassengerProfile({ fullName, phoneNumber, busy, theme, active, onBackToHome, onThemeChange, onHistory, onDriver, onLogout, onSupportPreview, demoMode = false }: Props) {
+export default function OnayPassengerProfile({ fullName, phoneNumber, busy, theme, active, onBackToHome, onThemeChange, onHistory, onDriver, onLogout, onSupportPreview, demoMode = false, driverApprovalStatus, driverVehicle,
+  driverRouteName, driverQueueReady = false, driverEnrolled = false }: Props) {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [personalOpen, setPersonalOpen] = useState(false);
   const [supportOpen, setSupportOpen] = useState(false);
+  const [driverModeOpen, setDriverModeOpen] = useState(false);
   useEffect(() => {
     if (!active || Platform.OS === "web") return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (driverModeOpen) { setDriverModeOpen(false); return true; }
       if (supportOpen) { setSupportOpen(false); return true; }
       if (aboutOpen) { setAboutOpen(false); return true; }
       if (personalOpen) { setPersonalOpen(false); return true; }
@@ -43,7 +53,7 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
       return true;
     });
     return () => subscription.remove();
-  }, [active, supportOpen, aboutOpen, personalOpen, onBackToHome]);
+  }, [active, driverModeOpen, supportOpen, aboutOpen, personalOpen, onBackToHome]);
   const light = theme === "light";
   const surface = light ? "#ffffff" : onayDark.card;
   const foreground = light ? "#0a1d15" : onayDark.text;
@@ -55,6 +65,14 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
       <Text style={{ color: muted }}>{trailing ? trailing + "  ›" : "›"}</Text>
     </Pressable>
   );
+  if (driverModeOpen) return <Modal visible animationType="slide" presentationStyle="fullScreen"
+    onRequestClose={() => setDriverModeOpen(false)}>
+    <OnayDriverModeOverview theme={theme} demoMode={demoMode} approval={driverApprovalStatus}
+      vehicle={driverVehicle} routeName={driverRouteName} queueReady={driverQueueReady}
+      enrolled={driverEnrolled} busy={busy} onBack={() => setDriverModeOpen(false)}
+      onOpenDriver={() => { setDriverModeOpen(false); onDriver(); }}
+      onSupport={() => { setDriverModeOpen(false); if (onSupportPreview) onSupportPreview(); else setSupportOpen(true); }}/>
+  </Modal>;
   if (supportOpen) {
     return <OnayPassengerSupport theme={theme} onBack={() => setSupportOpen(false)} />;
   }
@@ -120,7 +138,7 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
     </View>
 
     <View style={[s.group, { backgroundColor: surface }]}>
-      {row("driver", "Режим водителя", onDriver)}
+      {row("driver", "Режим водителя", () => setDriverModeOpen(true))}
       {row("support", "Поддержка", () => setSupportOpen(true))}
       {row("about", "О приложении", () => setAboutOpen(true))}
     </View>

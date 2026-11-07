@@ -18,6 +18,9 @@ test("empty chats layout uses the reference V2 title, spacing, icon and typograp
 
 test("reference chat empty state preserves live limitation, navigation and theme", () => {
   assert.ok(chats.includes('Переписка с водителем пока недоступна.'));
+  assert.ok(chats.includes('Чаты с пассажирами пока недоступны.'));
+  assert.ok(chats.includes('showHeading = true'));
+  assert.ok(app.includes('role="driver" showHeading={false}'));
   assert.ok(chats.includes('testID="onay-chats-empty-title"'));
   assert.ok(chats.includes('light && styles.lightPage'));
   assert.ok(chats.includes('light && styles.lightHeading'));

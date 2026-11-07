@@ -2,16 +2,16 @@ import Text from "./OnayText";
 import { StyleSheet, View } from "react-native";
 import { onayDark } from "../lib/onay-auth-ui";
 
-type Props = { theme?: "light" | "dark" };
+type Props = { theme?: "light" | "dark"; role?: "passenger" | "driver"; showHeading?: boolean };
 
 /**
  * Onay Passenger V2 chat-list empty state.
  * Messaging is not implemented: do not simulate driver conversations or send requests.
  */
-export default function OnayPassengerChatsEmpty({ theme = "dark" }: Props) {
+export default function OnayPassengerChatsEmpty({ theme = "dark", role = "passenger", showHeading = true }: Props) {
   const light = theme === "light";
   return <View testID="onay-chats-empty-state" style={[styles.page, light && styles.lightPage]}>
-    <Text style={[styles.heading, light && styles.lightHeading]}>Чаты</Text>
+    {showHeading ? <Text testID="onay-chats-inner-heading" style={[styles.heading, light && styles.lightHeading]}>Чаты</Text> : null}
     <View style={styles.empty}>
       <View style={[styles.iconCircle, light && styles.lightIconCircle]} accessible={false}>
         <View style={styles.bubble}>
@@ -21,8 +21,11 @@ export default function OnayPassengerChatsEmpty({ theme = "dark" }: Props) {
       <Text testID="onay-chats-empty-title" style={[styles.title, light && styles.lightHeading]}>
         Чатов пока нет
       </Text>
-      <Text style={[styles.explanation, light && styles.lightMuted]}>
-        Переписка с водителем пока недоступна. Когда функция будет подключена, чаты появятся здесь.
+      <Text testID={role === "driver" ? "onay-driver-chats-unavailable" : "onay-passenger-chats-unavailable"}
+        style={[styles.explanation, light && styles.lightMuted]}>
+        {role === "driver"
+          ? "Чаты с пассажирами пока недоступны. Сообщения и переписка ещё не реализованы."
+          : "Переписка с водителем пока недоступна. Когда функция будет подключена, чаты появятся здесь."}
       </Text>
     </View>
   </View>;

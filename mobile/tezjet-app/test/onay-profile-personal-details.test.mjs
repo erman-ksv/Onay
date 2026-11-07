@@ -26,7 +26,7 @@ test("personal data is sourced from the authenticated account and never fabricat
 
 test("profile actions and current trip navigation remain connected", () => {
   assert.match(profile, /row\("history", "История поездок", onHistory\)/);
-  assert.match(profile, /row\("driver", "Режим водителя", onDriver\)/);
+  assert.match(profile, /row\("driver", "Режим водителя", \(\) => setDriverModeOpen\(true\)\)/);
   assert.match(profile, /testID="onay-profile-logout"/);
   assert.match(app, /<PassengerHistory /);
 });
