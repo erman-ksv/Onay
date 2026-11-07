@@ -1,0 +1,122 @@
+name: Onay APK115 native UI acceptance from published artifact only
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/onay-apk115-native-acceptance.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify-driver-mode-and-chats:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Download existing APK114 (no build)
+        uses: actions/download-artifact@v4
+        with:
+          name: onay-android-demo-apk-114
+          repository: erman-ksv/Onay
+          run-id: 42395049951
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: apk114
+      - name: Download final APK115 from published Mobile CI (no build)
+        uses: actions/download-artifact@v4
+        with:
+          name: onay-android-demo-apk-115
+          repository: erman-ksv/Onay
+          run-id: 42406229478
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: apk115
+      - name: Verify exact artifact provenance, embedded Hermes UI and signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/onay-driver-mode-chats-android-qa.py
+          python3 - <<'PY'
+          import hashlib,json,zipfile
+          from pathlib import Path
+          old=Path("apk114/Onay-offline-demo-APK114.apk")
+          new=Path("apk115/Onay-offline-demo-APK115.apk")
+          assert old.is_file() and new.is_file(), "Both published APK files are required"
+          oldmeta=json.loads(Path("apk114/build-provenance.json").read_text())
+          newmeta=json.loads(Path("apk115/build-provenance.json").read_text())
+          assert oldmeta["versionCode"]==114 and newmeta["versionCode"]==115
+          assert oldmeta["applicationId"]==newmeta["applicationId"]=="uz.tezjet.app"
+          assert newmeta["sourceSha"]=="5c9f94044608f762c8f382a1e23afaa7a3d4c569"
+          assert newmeta["runId"]=="42406229478"
+          assert oldmeta["offlineDemoPreview"] is True and newmeta["offlineDemoPreview"] is True
+          with zipfile.ZipFile(new) as z:
+              bundle=z.read("assets/index.android.bundle")
+              assert bundle.startswith(bytes.fromhex("c61fbc03"))
+              for marker in (b"onay-driver-mode-overview",b"onay-driver-chats-unavailable",b"onay-driver-mode-status"):
+                  assert marker in bundle, marker
+          print("APK115 SHA256:",hashlib.sha256(new.read_bytes()).hexdigest())
+          print("Valid Android APK114->115 preview artifacts; no rebuild")
+          PY
+          signer="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)"
+          test -x "$signer"
+          "$signer" verify --print-certs apk114/Onay-offline-demo-APK114.apk | grep 'certificate SHA-256 digest' > /tmp/cert114
+          "$signer" verify --print-certs apk115/Onay-offline-demo-APK115.apk | grep 'certificate SHA-256 digest' > /tmp/cert115
+          diff -u /tmp/cert114 /tmp/cert115
+      - name: Install SDK Emulator and required shared libraries before KVM acceleration check
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          test -d "$sdk_root"
+          sdkmanager_bin="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$sdkmanager_bin"
+          "$sdkmanager_bin" --sdk_root="$sdk_root" --install "emulator"
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libpulse0
+          test -x "$sdk_root/emulator/emulator"
+          test -x "$sdk_root/emulator/qemu/linux-x86_64/qemu-system-x86_64"
+          missing="$(ldd "$sdk_root/emulator/qemu/linux-x86_64/qemu-system-x86_64" | grep 'not found' || true)"
+          test -z "$missing" || { echo "$missing"; exit 1; }
+          "$sdk_root/emulator/emulator" -version
+      - name: Prove active runner KVM read-write and acceleration
+        shell: bash
+        run: |
+          set -euo pipefail
+          id
+          groups
+          stat -c '%n %a %U %G' /dev/kvm
+          if command -v setfacl >/dev/null 2>&1; then
+            sudo setfacl -m "u:$(id -u):rw" /dev/kvm
+          else
+            sudo chown "$(id -u):$(stat -c '%g' /dev/kvm)" /dev/kvm
+            sudo chmod u+rw /dev/kvm
+          fi
+          if command -v getfacl >/dev/null 2>&1; then getfacl /dev/kvm; fi
+          python3 - <<'PY'
+          import os
+          fd=os.open("/dev/kvm",os.O_RDWR|os.O_CLOEXEC)
+          print("Confirmed /dev/kvm O_RDWR",fd)
+          os.close(fd)
+          PY
+          "$ANDROID_HOME/emulator/emulator" -accel-check | tee /tmp/accel-check.log
+          grep -Eiq 'KVM.*(installed and usable|is usable|is enabled)' /tmp/accel-check.log
+      - name: Native Android APK114 to APK115 QA: chats, status, both Back paths
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: google_apis
+          profile: pixel_2
+          emulator-boot-timeout: 900
+          disable-animations: false
+          disable-linux-hw-accel: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: python3 scripts/onay-driver-mode-chats-android-qa.py --old-apk apk114/Onay-offline-demo-APK114.apk --new-apk apk115/Onay-offline-demo-APK115.apk --version-code 115 --output artifacts/onay115-native
+      - name: Upload Android screenshot, UI hierarchy and result, including on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onay-apk115-driver-mode-chats-native-qa
+          path: artifacts/onay115-native/
+          if-no-files-found: warn
