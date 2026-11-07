@@ -1,7 +1,8 @@
+import Text from "./OnayText";
 import { OnayThemeContext } from "../lib/onay-theme-context";
 import { onayThemedStyles } from "../lib/onay-themed-styles";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 import { onayDark } from "../lib/onay-auth-ui";
 import {
   canMutateDriverRoute, createDriverRouteClient, createDriverRouteRequestScope, driverDirectionLabel,

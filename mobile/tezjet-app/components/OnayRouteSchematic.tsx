@@ -1,7 +1,8 @@
+import Text from "./OnayText";
 import { useContext } from "react";
 import { OnayThemeContext } from "../lib/onay-theme-context";
 import { onayPalette } from "./OnayScreenFrame";
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 /** Reference route artwork only. No fabricated cars, positions, fares or ETA. */
 export default function OnayRouteSchematic({ start, end }: { start?: string; end?: string }) {
  const theme = useContext(OnayThemeContext), c = onayPalette(theme);

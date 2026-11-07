@@ -1,5 +1,6 @@
+import Text from "./OnayText";
 import { useState, type ReactNode } from "react";
-import { ActivityIndicator, Modal, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Modal, Pressable, View } from "react-native";
 import { ridePickupLabel, rideDestinationLabel, statusLabels, type RideOrder } from "../lib/orders";
 import { formatFareMoney, parseServerFareMoney } from "../lib/fare-money";
 import OnayScreenFrame, { onayPalette } from "./OnayScreenFrame";

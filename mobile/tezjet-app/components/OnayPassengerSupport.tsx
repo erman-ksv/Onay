@@ -1,4 +1,5 @@
-import { Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import Text from "./OnayText";
+import { Alert, Linking, Pressable, StyleSheet, View } from "react-native";
 import { onayDark } from "../lib/onay-auth-ui";
 
 type Props = {

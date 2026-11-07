@@ -1,8 +1,9 @@
+import Text from "./OnayText";
 import OnayIcon from "./OnayIcon";
 import OnayScreenFrame, { onayPalette } from "./OnayScreenFrame";
 import { useEffect, useRef, useState } from "react";
 import { formatFareMoney } from "../lib/fare-money";
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Modal, Pressable, StyleSheet, View } from "react-native";
 import * as Location from "expo-location";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { API, ApiError, errorMessage, request } from "../lib/api";

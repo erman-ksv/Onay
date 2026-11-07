@@ -1,5 +1,6 @@
+import Text from "./OnayText";
 import Constants from "expo-constants";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, Pressable, StyleSheet, View } from "react-native";
 import { onayDark } from "../lib/onay-auth-ui";
 
 type Props = {

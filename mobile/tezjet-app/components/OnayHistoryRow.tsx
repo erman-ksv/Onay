@@ -1,5 +1,6 @@
+import Text from "./OnayText";
 import { useState } from "react";
-import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { Modal, Pressable, StyleSheet, View } from "react-native";
 import { ridePickupLabel, rideDestinationLabel, statusLabels, type RideOrder } from "../lib/orders";
 import { passengerHistoryDate } from "../lib/passenger-history";
 import OnayScreenFrame, { onayPalette } from "./OnayScreenFrame";

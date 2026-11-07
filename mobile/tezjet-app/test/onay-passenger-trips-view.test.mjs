@@ -19,7 +19,7 @@ test("Trips tab shows active orders by default, with explicitly opened API-backe
   assert.match(app, /<PassengerHistory[^\n]+theme=\{passengerTheme\}/);
   assert.match(app, /historyOpen=\{tripsHistoryOpen\}/);
   assert.match(tripsScreen, /historyOpen \? historyContent : activeCount > 0 \? activeContent/);
-  assert.match(tripsScreen, /onPress=\{onShowHistory\}/);
+  assert.doesNotMatch(tripsScreen, /onay-trips-open-history/);
   assert.match(tripsScreen, /onPress=\{onShowActive\}/);
   assert.match(app, /onHistory=\{openPassengerHistory\}/);
   assert.match(app, /onViewActiveOrder=\{\(\) => selectPassengerTab\("trips"\)\}/);

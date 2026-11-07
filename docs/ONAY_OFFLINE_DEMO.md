@@ -35,3 +35,18 @@ Use the demo for viewing screens. It does not verify real SMS, phone GPS,
 production payments, real dispatch or physical Android behavior. It does not
 change the confirmed 96/151 implementation count or establish 1:1 visual
 acceptance. No VPS or live SMS is required or authorized by this request.
+
+## Phone review, 7 November 2026
+
+The owner confirmed the demo opens on a physical Android phone, then requested:
+- Remove the duplicate History link from Trips; history remains in Profile.
+- Remove the Home hamburger; theme and About remain in Profile.
+- Return from history to its entry tab using both screen Back and Android Back.
+- Add Kazakh, Russian and Uzbek language choices in both profiles.
+
+Language is a device preference (`onay_language_v1`), persisted independently of
+sessions. It survives demo exit and restart; sample orders and vehicles still do
+not persist. Known UI copy is translated; unknown server messages and user data
+retain their original values. Translation quality and physical Android Back for
+this update remain manual acceptance items. Debug versionCode is 112, with the
+same applicationId so installation updates the existing app.

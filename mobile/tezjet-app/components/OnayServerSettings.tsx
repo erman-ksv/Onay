@@ -1,4 +1,6 @@
-import { Pressable, StyleSheet, Text, TextInput } from "react-native";
+import TextInput from "./OnayTextInput";
+import Text from "./OnayText";
+import { Pressable, StyleSheet, } from "react-native";
 import OnayScreenFrame, { onayPalette } from "./OnayScreenFrame";
 export default function OnayServerSettings({ value, onChange, onSave, onBack, busy, error, theme = "dark" }: {
  value: string; onChange: (value: string) => void; onSave: () => void; onBack: () => void; busy: boolean; error: string; theme?: "light" | "dark";

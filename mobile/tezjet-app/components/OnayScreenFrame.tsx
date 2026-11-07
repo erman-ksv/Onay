@@ -1,6 +1,7 @@
+import Text from "./OnayText";
 import { OnayThemeContext } from "../lib/onay-theme-context";
 import { useEffect, type ReactNode } from "react";
-import { BackHandler, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { BackHandler, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { onayDark } from "../lib/onay-auth-ui";

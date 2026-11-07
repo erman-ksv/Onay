@@ -5,24 +5,13 @@ import { readFileSync } from "node:fs";
 const source = readFileSync(new URL("../components/OnayPassengerHome.tsx", import.meta.url), "utf8");
 const about = readFileSync(new URL("../components/OnayPassengerAbout.tsx", import.meta.url), "utf8");
 
-test("light menu keeps payment and chevrons legible and opens readable About page", () => {
-  assert.match(source, /testID="onay-home-settings-menu"/);
-  assert.match(source, /settingsMutedLight: \{ color: "#546b5e" \}/);
-  assert.match(source, /style=\{\[h\.settingsMuted, light && h\.settingsMutedLight\]\}>Наличными/);
-  assert.match(source, /testID="onay-home-about" onPress=\{\(\) => setAboutOpen\(true\)\}/);
-  assert.match(source, /<OnayPassengerAbout theme=\{theme\}/);
-  assert.match(about, /testID="onay-passenger-about-screen"/);
+const profile = readFileSync(new URL("../components/OnayPassengerProfile.tsx", import.meta.url), "utf8");
+test("theme and About remain legible in profile without a second Home settings menu", () => {
+  assert.doesNotMatch(source, /onay-home-settings-menu|onay-home-menu-open/);
+  assert.match(profile, /light \? "#6a7b72" : onayDark.muted/);
+  assert.match(profile, /accessibilityLabel=\{value === "light" \? "Светлая тема" : "Тёмная тема"\}/);
+  assert.match(profile, /accessibilityState=\{\{ selected: theme === value \}\}/);
+  assert.match(profile, /onPress=\{\(\) => onThemeChange\(value\)\}/);
   assert.match(about, /light && styles\.rootLight/);
-  assert.match(about, /light \? "#5a7366" : onayDark\.muted/);
   assert.match(about, /testID="onay-about-real-version"/);
-  assert.match(source, /style=\{\[h\.settingsMuted, light && h\.settingsMutedLight\]\}>›/);
-});
-
-test("light and dark theme buttons retain selection, labels and callbacks", () => {
-  assert.match(source, /accessibilityLabel=\{value === "light" \? "Светлая тема" : "Тёмная тема"\}/);
-  assert.match(source, /accessibilityState=\{\{ selected: theme === value \}\}/);
-  assert.match(source, /onPress=\{\(\) => onThemeChange\?\.\(value\)\}/);
-  assert.match(source, /style=\{\[h\.themeToggle, light && h\.themeToggleLight, theme === value && h\.themeActive\]\}/);
-  assert.match(source, /themeToggleLight: \{ backgroundColor: "#e6f0ea" \}/);
-  assert.match(source, /theme === value \? onayDark\.accentInk : \(light \? "#0a1d15" : onayDark\.text\)/);
 });

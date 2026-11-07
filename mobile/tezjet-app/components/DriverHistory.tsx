@@ -1,9 +1,10 @@
+import Text from "./OnayText";
 import OnayHistoryRow from "./OnayHistoryRow";
 import OnayIcon from "./OnayIcon";
 import { onayPalette } from "./OnayScreenFrame";
 import { onayThemedStyles } from "../lib/onay-themed-styles";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 import { validateApiEndpoint } from "../lib/api";
 import { parseDriverHistory, type DriverHistory as Snapshot } from "../lib/driver-history";
 import { formatFareMoney } from "../lib/fare-money";

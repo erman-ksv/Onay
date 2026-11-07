@@ -1,7 +1,8 @@
+import Text from "./OnayText";
 import OnayIcon from "./OnayIcon";
 import { onayPalette } from "./OnayScreenFrame";
 import { useEffect, useRef, useState } from "react";
-import { AppState, Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { AppState, Linking, Pressable, StyleSheet, View } from "react-native";
 import { canReadDriverContact, createPassengerDriverClient, createPassengerDriverScope, type PassengerDriver } from "../lib/passenger-driver";
 import { onayDark } from "../lib/onay-auth-ui";
 

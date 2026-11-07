@@ -32,7 +32,8 @@ test("booking remains fully server-backed and only visible in Home",()=>{
 test("hardware back returns correctly from Trips history and profile nested screens",()=>{
   assert.ok(app.includes('BackHandler.addEventListener("hardwareBackPress"'));
   assert.ok(app.includes('if (passengerTab === "trips" && tripsHistoryOpen)'));
-  assert.ok(app.includes('setTripsHistoryOpen(false); return true;'));
+  assert.ok(app.includes('closePassengerHistory(); return true;'));
+  assert.ok(app.includes('setPassengerTab(historyReturnTab.current)'));
   assert.ok(app.includes('if (passengerTab !== "home")'));
   assert.ok(profile.includes('BackHandler.addEventListener("hardwareBackPress"'));
   for(const id of ["supportOpen","aboutOpen","personalOpen"])assert.ok(profile.includes("if ("+id+")"));
@@ -42,6 +43,6 @@ test("browser QA switches the real tabs and continues to inspect genuine API his
   assert.ok(qa.includes('for tab in ("trips", "chats", "profile", "home")'));
   assert.ok(qa.includes('get_by_test_id("onay-screen-" + tab)).to_be_visible()'));
   assert.ok(qa.includes('get_by_test_id("onay-screen-home")).to_be_hidden()'));
-  assert.ok(qa.includes('get_by_test_id("onay-trips-open-history").click()'));
+  assert.ok(qa.includes('get_by_test_id("onay-profile-history").click()'));
   assert.ok(qa.includes("Passenger history must read the real authorized API"));
 });

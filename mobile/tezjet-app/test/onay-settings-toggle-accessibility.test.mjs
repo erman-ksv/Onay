@@ -4,26 +4,13 @@ import { readFileSync } from "node:fs";
 
 const home = readFileSync(new URL("../components/OnayPassengerHome.tsx", import.meta.url), "utf8");
 
-test("home settings toggle announces whether it opens or closes the menu", () => {
-  const start = home.indexOf('<Pressable testID="onay-home-menu-open"');
-  const end = home.indexOf('</Pressable>', start);
-  const toggle = home.slice(start, end);
-  assert.ok(start > 0 && end > start, "Onay home settings toggle must exist");
-  assert.ok(toggle.includes('accessibilityRole="button"'));
-  assert.ok(toggle.includes('accessibilityLabel={menuOpen ? "Закрыть настройки" : "Открыть настройки"}'));
-  assert.ok(toggle.includes('accessibilityState={{ expanded: menuOpen }}'));
-  assert.ok(toggle.includes('onPress={() => setMenuOpen(value => !value)}'));
-});
-
-test("screen reader label change preserves the existing settings content and About navigation", () => {
-  assert.ok(home.includes('const [menuOpen, setMenuOpen] = useState(false)'));
-  assert.ok(home.includes('{menuOpen ? <View testID="onay-home-settings-menu"'));
-  assert.ok(home.includes('Способ оплаты'));
-  assert.ok(home.includes('Наличными'));
-  assert.ok(home.includes('testID={"onay-home-theme-" + value}'));
-  assert.ok(home.includes('testID="onay-home-about" onPress={() => setAboutOpen(true)}'));
-  assert.ok(home.includes('setAboutOpen(false); setMenuOpen(false);'));
-  assert.ok(home.includes('onPress={() => onChoose("city")}'));
-  assert.ok(home.includes('onPress={() => onChoose("village")}'));
-  assert.ok(home.includes('onPress={() => onChoose("address")}'));
+const profile = readFileSync(new URL("../components/OnayPassengerProfile.tsx", import.meta.url), "utf8");
+const language = readFileSync(new URL("../components/OnayLanguageSettings.tsx", import.meta.url), "utf8");
+test("removed Home hamburger is not focusable; language options expose radio selection", () => {
+  assert.doesNotMatch(home, /onay-home-menu-open|onay-home-settings-menu/);
+  assert.match(profile, /row\("language", "Язык приложения"/);
+  assert.match(language, /accessibilityRole="radiogroup"/);
+  assert.match(language, /accessibilityRole="radio"/);
+  assert.match(language, /accessibilityState=\{\{ checked: language === item.code \}\}/);
+  assert.match(language, /onPress=\{\(\) => changeLanguage\(item.code\)\}/);
 });

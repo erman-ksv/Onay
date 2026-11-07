@@ -229,9 +229,10 @@ class LineRideQA(shared.DriverRouteQA):
         # Enter Trips, then explicitly request its server-backed history.
         # The V2 screen no longer exposes archive controls on the home page.
         self.passenger_page.get_by_test_id("onay-tab-trips").click()
-        self.expect(self.passenger_page.get_by_test_id("onay-trips-open-history")).to_be_visible()
+        self.expect(self.passenger_page.get_by_test_id("onay-trips-open-history")).to_have_count(0)
         with self.response(self.passenger_page, "/orders", "GET") as pending:
-            self.passenger_page.get_by_test_id("onay-trips-open-history").click()
+            self.passenger_page.get_by_test_id("onay-tab-profile").click()
+            self.passenger_page.get_by_test_id("onay-profile-history").click()
         require(pending.value.status == 200, "Passenger history must read the real authorized API")
         self.expect(self.passenger_page.get_by_test_id("passenger-history-empty")).to_be_visible()
         self.expect(self.passenger_page.get_by_test_id("passenger-history-toggle")).to_have_count(0)
@@ -411,7 +412,8 @@ class LineRideQA(shared.DriverRouteQA):
         self.progress("completed")
         self.expect(self.control("driver-trip-" + self.order_id)).to_have_count(0)
         self.expect(self.passenger_page.get_by_test_id("passenger-trip-" + self.order_id)).to_have_count(0)
-        self.passenger_page.get_by_test_id("onay-trips-open-history").click()
+        self.passenger_page.get_by_test_id("onay-tab-profile").click()
+        self.passenger_page.get_by_test_id("onay-profile-history").click()
         completed_row = self.passenger_page.get_by_test_id("passenger-history-row-" + self.order_id)
         self.expect(completed_row).to_be_visible()
         self.expect(completed_row).to_contain_text(re.compile(r"QA линия A.*QA линия B"))
@@ -594,7 +596,8 @@ class LineRideQA(shared.DriverRouteQA):
         self.expect(page.get_by_test_id("onay-tab-trips")).to_be_visible()
         page.get_by_test_id("onay-tab-trips").click()
         with self.response(page, "/orders", "GET") as pending:
-            page.get_by_test_id("onay-trips-open-history").click()
+            page.get_by_test_id("onay-tab-profile").click()
+            page.get_by_test_id("onay-profile-history").click()
         require(pending.value.status == 200, "Reloaded Trips history must use the authorized API")
         self.expect(page.get_by_test_id("passenger-history-results")).to_contain_text("Закрытых поездок: 6")
         self.passed("Task3.14 explicit refresh and actual app reload retain all six persisted passenger rides")

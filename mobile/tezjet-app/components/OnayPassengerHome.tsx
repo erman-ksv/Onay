@@ -1,10 +1,8 @@
+import Text from "./OnayText";
 import OnayIcon from "./OnayIcon";
-import { useEffect, useState } from "react";
-import Constants from "expo-constants";
-import { BackHandler, Image, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, Pressable, StyleSheet, View } from "react-native";
 import { onayDark } from "../lib/onay-auth-ui";
 import type { OnayPassengerHomeMode } from "../lib/onay-home-modes";
-import OnayPassengerAbout from "./OnayPassengerAbout";
 
 type Props = {
   onChoose: (mode: OnayPassengerHomeMode) => void;
@@ -40,37 +38,9 @@ function TripCard({ title, description, symbol, onPress, primary = false, testID
  * The actual availability, quote and booking stay in PassengerRouteOrder.
  */
 export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOrder = false, active = true, onViewActiveOrder, theme = "dark", onThemeChange }: Props) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [aboutOpen, setAboutOpen] = useState(false);
-  // Home remains mounted when another passenger tab is selected. Only the visible
-  // Home page may consume Android Back, and nested pages take priority.
-  useEffect(() => {
-    if (!active || Platform.OS !== "android") return;
-    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (aboutOpen) {
-        setAboutOpen(false);
-        setMenuOpen(false);
-        return true;
-      }
-      if (menuOpen) {
-        setMenuOpen(false);
-        return true;
-      }
-      return false;
-    });
-    return () => subscription.remove();
-  }, [active, aboutOpen, menuOpen]);
   const light = theme === "light";
-  if (aboutOpen) {
-    return <OnayPassengerAbout theme={theme} onBack={() => { setAboutOpen(false); setMenuOpen(false); }} backLabel="Назад на главную" />;
-  }
   return <View testID="onay-passenger-home" style={[h.root, light && { backgroundColor: "#f1f7f3" }]}>
     <View style={h.header}>
-      <Pressable testID="onay-home-menu-open" accessibilityRole="button" accessibilityLabel={menuOpen ? "Закрыть настройки" : "Открыть настройки"}
-        accessibilityState={{ expanded: menuOpen }} onPress={() => setMenuOpen(value => !value)}
-        style={[h.menuToggle, light && { backgroundColor: "#d3e3d9" }]}>
-        <Text style={{ fontSize: 24, color: light ? "#0a1d15" : onayDark.text }}>{menuOpen ? "×" : "☰"}</Text>
-      </Pressable>
       <Image testID="onay-home-original-logo" source={require("../assets/onay-original-logo.png")} style={h.logoImage} resizeMode="contain" accessibilityLabel="Onay" />
       <Pressable
         accessibilityRole="button" testID="onay-home-location"
@@ -84,26 +54,6 @@ export default function OnayPassengerHome({ onChoose, onChooseLocation, activeOr
         <Text style={[h.locationChevron, light && h.lightMuted]}>›</Text>
       </Pressable>
     </View>
-    {menuOpen ? <View testID="onay-home-settings-menu" style={[h.settingsPanel, light && { backgroundColor: "#ffffff", borderColor: "#d3e3d9" }]}>
-      <Text style={[h.settingsTitle, light && { color: "#0a1d15" }]}>Настройки</Text>
-      <View style={h.settingsRow}><Text style={[h.settingsLabel, light && { color: "#0a1d15" }]}>Способ оплаты</Text><Text style={[h.settingsMuted, light && h.settingsMutedLight]}>Наличными</Text></View>
-      <View style={h.settingsRow}>
-        <Text style={[h.settingsLabel, light && { color: "#0a1d15" }]}>Режим света</Text>
-        <View style={h.themeControls}>
-          {(["light", "dark"] as const).map(value => <Pressable key={value} testID={"onay-home-theme-" + value}
-            accessibilityRole="button" accessibilityLabel={value === "light" ? "Светлая тема" : "Тёмная тема"} accessibilityState={{ selected: theme === value }}
-            onPress={() => onThemeChange?.(value)}
-            style={[h.themeToggle, light && h.themeToggleLight, theme === value && h.themeActive]}>
-            <Text style={{ color: theme === value ? onayDark.accentInk : (light ? "#0a1d15" : onayDark.text) }}>{value === "light" ? "☀" : "☾"}</Text>
-          </Pressable>)}
-        </View>
-      </View>
-      <Pressable accessibilityRole="button" testID="onay-home-about" onPress={() => setAboutOpen(true)} style={h.settingsRow}>
-        <Text style={[h.settingsLabel, light && { color: "#0a1d15" }]}>О приложении</Text>
-        <Text style={[h.settingsMuted, light && h.settingsMutedLight]}>›</Text>
-      </Pressable>
-      <Text style={[h.settingsVersion, light && { color: "#6a7b72" }]}>Onay · Версия {Constants.expoConfig?.version ?? "0.1.0"}</Text>
-    </View> : null}
     {activeOrder ? <Pressable
       testID="onay-home-active-trip"
       accessibilityRole="button"
@@ -159,18 +109,6 @@ const h = StyleSheet.create({
   modeTitleLight: { color: "#0a1d15" },
   modeDescriptionLight: { color: "#63776c" },
   logoImage: { width: 34, height: 38 },
-  menuToggle: { width: 38, height: 44, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: onayDark.card },
-  settingsPanel: { borderWidth: 1, borderColor: onayDark.border, borderRadius: 18, backgroundColor: onayDark.card, padding: 16, marginBottom: 14, gap: 12 },
-  settingsTitle: { fontSize: 19, fontWeight: "800", color: onayDark.text },
-  settingsRow: { minHeight: 45, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
-  settingsLabel: { color: onayDark.text, fontSize: 14, fontWeight: "600" },
-  settingsMuted: { color: onayDark.muted, fontSize: 12, flexShrink: 1 },
-  settingsMutedLight: { color: "#546b5e" },
-  themeControls: { flexDirection: "row", gap: 4 },
-  themeToggle: { height: 35, width: 40, backgroundColor: onayDark.cardRaised, borderRadius: 10, alignItems: "center", justifyContent: "center" },
-  themeToggleLight: { backgroundColor: "#e6f0ea" },
-  themeActive: { backgroundColor: onayDark.accent },
-  settingsVersion: { textAlign: "center", marginTop: 25, color: onayDark.muted, fontSize: 12 },
   root: { backgroundColor: onayDark.background, paddingTop: 8, marginBottom: 16 },
   header: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 15 },
   logo: { width: 38, alignItems: "center", justifyContent: "center" },

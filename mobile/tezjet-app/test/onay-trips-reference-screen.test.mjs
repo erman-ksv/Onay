@@ -25,9 +25,9 @@ test("Trips and history are separate states, real history loads explicitly", () 
   assert.ok(trips.includes('historyOpen ? historyContent : activeCount > 0 ? activeContent'));
   assert.ok(app.includes('<PassengerHistory '));
   assert.ok(app.includes('openRequest={historyOpenRequest}'));
-  assert.ok(trips.includes('testID="onay-trips-open-history"'));
+  assert.ok(!trips.includes('testID="onay-trips-open-history"'));
   assert.ok(trips.includes('testID="onay-trips-back-to-active"'));
-  assert.ok(trips.includes('onPress={onShowHistory}'));
+  assert.ok(app.includes('onHistory={openPassengerHistory}'));
   assert.ok(trips.includes('onPress={onShowActive}'));
 });
 

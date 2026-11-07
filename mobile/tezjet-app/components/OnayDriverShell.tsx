@@ -1,7 +1,8 @@
+import Text from "./OnayText";
 import { OnayThemeContext } from "../lib/onay-theme-context";
 import type { ReactNode } from "react";
 import { useEffect } from "react";
-import { BackHandler, Image, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { BackHandler, Image, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import OnayIcon, { type OnayIconName } from "./OnayIcon";

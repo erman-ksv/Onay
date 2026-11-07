@@ -6,14 +6,12 @@ const home = readFileSync(new URL("../components/OnayPassengerHome.tsx", import.
 const profile = readFileSync(new URL("../components/OnayPassengerProfile.tsx", import.meta.url), "utf8");
 const app = readFileSync(new URL("../app/index.tsx", import.meta.url), "utf8");
 
-test("home menu has the requested cash payment, theme, about and actual app version", () => {
-  assert.match(home, /testID="onay-home-menu-open"/);
-  assert.match(home, /testID="onay-home-settings-menu"/);
-  assert.match(home, /Способ оплаты/);
-  assert.match(home, /Наличными/);
-  assert.match(home, /Режим света/);
-  assert.match(home, /О приложении/);
-  assert.match(home, /Constants\.expoConfig\?\.version/);
+test("home has no hamburger; profile retains theme, about, version and language", () => {
+  assert.doesNotMatch(home, /onay-home-menu-open|onay-home-settings-menu/);
+  assert.match(profile, /onay-profile-theme-/);
+  assert.match(profile, /row\("about", "О приложении"/);
+  assert.match(profile, /row\("language", "Язык приложения"/);
+  assert.match(profile, /Constants\.expoConfig\?\.version/);
 });
 
 test("passenger profile uses real user data, current version and existing actions", () => {

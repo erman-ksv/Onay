@@ -1,6 +1,7 @@
+import Text from "./OnayText";
 import OnayIcon from "./OnayIcon";
 import type { ReactNode } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 import { onayDark } from "../lib/onay-auth-ui";
 
 type Props = {
@@ -29,20 +30,14 @@ export default function OnayPassengerTrips({
       <Pressable
         testID="onay-trips-back-to-active"
         accessibilityRole="button"
-        accessibilityLabel="Назад к активным поездкам"
+        accessibilityLabel="Назад"
         onPress={onShowActive}
         style={[s.back, { backgroundColor: light ? "#ffffff" : onayDark.card }]}
       ><OnayIcon name="back" color={light ? "#0a1d15" : onayDark.text}/></Pressable> : null}
       <Text testID="onay-passenger-trips-title" accessibilityRole="header" style={[s.heading, light && s.lightText, historyOpen && { fontSize: 21, flex: 1 }]}>
         {historyOpen ? "История поездок" : "Поездки"}
       </Text>
-      {!historyOpen ? <Pressable
-        testID="onay-trips-open-history"
-        accessibilityRole="button"
-        accessibilityLabel="Открыть историю поездок"
-        onPress={onShowHistory}
-        style={[s.historyButton, light && s.historyButtonLight]}
-      ><Text style={[s.historyLink, light && s.historyLinkLight]}>История  ›</Text></Pressable> : null}
+
     </View>
     {historyOpen ? historyContent : activeCount > 0 ? activeContent :
       <View testID="onay-trips-empty" style={s.empty}>

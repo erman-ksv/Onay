@@ -1,5 +1,6 @@
+import Text from "./OnayText";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, View } from "react-native";
 import { validateApiEndpoint } from "../lib/api";
 import { parseOnayLaneQueue, type OnayLaneRow } from "../lib/onay-lane-queue";
 import { onayPalette } from "./OnayScreenFrame";

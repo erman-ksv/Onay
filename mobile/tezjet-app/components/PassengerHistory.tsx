@@ -1,8 +1,9 @@
+import Text from "./OnayText";
 import OnayHistoryRow from "./OnayHistoryRow";
 import OnayIcon from "./OnayIcon";
 import { onayPalette } from "./OnayScreenFrame";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 import { validateApiEndpoint } from "../lib/api";
 import { parsePassengerHistory, passengerHistoryDate, type PassengerHistoryRow } from "../lib/passenger-history";
 import { formatFareMoney } from "../lib/fare-money";

@@ -28,7 +28,7 @@ test("V2 card sizes, brand palette and real booking interactions remain aligned"
     'testID="onay-home-to-city"', 'testID="onay-home-to-village"', 'testID="onay-home-to-address"',
     'onPress={() => onChoose("city")}', 'onPress={() => onChoose("village")}',
     'onPress={() => onChoose("address")}', 'onPress={onChooseLocation}',
-    'onPress={onViewActiveOrder}', 'accessibilityLabel={menuOpen ? "Закрыть настройки" : "Открыть настройки"}'
+    'onPress={onViewActiveOrder}'
   ]) assert.ok(home.includes(item), "Existing handler must remain: " + item);
   assert.ok(home.includes('Уточнение подачи на маршруте C/D'));
 });

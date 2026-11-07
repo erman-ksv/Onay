@@ -1,5 +1,7 @@
+import TextInput from "./OnayTextInput";
+import Text from "./OnayText";
 import { useEffect, useReducer, useRef, useState } from "react";
-import { BackHandler, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { BackHandler, Modal, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { createDemoState, onayDemoReducer, type DemoRole } from "../lib/onay-demo";
@@ -32,6 +34,8 @@ export default function OnayDemoApp({ initialRole, onExit }: { initialRole: Demo
   const [state, dispatch] = useReducer(onayDemoReducer, initialRole, createDemoState);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [tab, setTab] = useState<OnayPassengerTab>("home"), [driverTab, setDriverTab] = useState<OnayDriverTab>("line");
+  const historyReturnTab = useRef<OnayPassengerTab>("profile");
+  function closeHistory() { setHistoryOpen(false); setTab(historyReturnTab.current); }
   const [historyOpen, setHistoryOpen] = useState(false), [popup, setPopup] = useState<Popup>(null);
   const [seats, setSeats] = useState(1), [reverse, setReverse] = useState(false);
   const [car, setCar] = useState("Chevrolet Cobalt"), [plate, setPlate] = useState("DEMO"), [capacity, setCapacity] = useState(4);
@@ -44,7 +48,7 @@ export default function OnayDemoApp({ initialRole, onExit }: { initialRole: Demo
       if (state.role === "passenger") {
         // Nested Home/Profile pages own their Back handlers; do not intercept them.
         if (tab === "home" || tab === "profile") return false;
-        if (tab === "trips" && historyOpen) { setHistoryOpen(false); return true; }
+        if (tab === "trips" && historyOpen) { closeHistory(); return true; }
         setTab("home"); return true;
       }
       if (state.role === "driver" && driverTab !== "line") { setDriverTab("line"); return true; }
@@ -70,9 +74,9 @@ export default function OnayDemoApp({ initialRole, onExit }: { initialRole: Demo
     {state.role === "passenger" ? <>
       <OnayPassengerScreens active={tab} theme={theme} homeScroll={scroll}
         home={<OnayPassengerHome active={tab === "home"} theme={theme} onThemeChange={setTheme} activeOrder={!!state.ride} onViewActiveOrder={() => setTab("trips")} onChoose={value => chooseBooking(value === "village")} onChooseLocation={() => setPopup("route")}/>}
-        trips={<OnayPassengerTrips theme={theme} activeCount={state.ride ? 1 : 0} historyOpen={historyOpen} onShowHistory={() => setHistoryOpen(true)} onShowActive={() => setHistoryOpen(false)} onBook={() => chooseBooking()} activeContent={demoTrip} historyContent={history}/>}
+        trips={<OnayPassengerTrips theme={theme} activeCount={state.ride ? 1 : 0} historyOpen={historyOpen} onShowHistory={() => setHistoryOpen(true)} onShowActive={closeHistory} onBook={() => chooseBooking()} activeContent={demoTrip} historyContent={history}/>}
         chats={<OnayPassengerChatsEmpty theme={theme}/>}
-        profile={<OnayPassengerProfile fullName="Демо-пассажир" busy={false} theme={theme} active={tab === "profile"} onBackToHome={() => setTab("home")} onThemeChange={setTheme} onHistory={() => { setTab("trips"); setHistoryOpen(true); }} onDriver={() => role("driver")} onLogout={onExit} onSupportPreview={() => setPopup("support")}/>}/>
+        profile={<OnayPassengerProfile fullName="Демо-пассажир" busy={false} theme={theme} active={tab === "profile"} onBackToHome={() => setTab("home")} onThemeChange={setTheme} onHistory={() => { historyReturnTab.current = tab; setTab("trips"); setHistoryOpen(true); }} onDriver={() => role("driver")} onLogout={onExit} onSupportPreview={() => setPopup("support")}/>}/>
       <OnayPassengerTabBar active={tab} onSelect={value => { setTab(value); if (value !== "trips") setHistoryOpen(false); }} theme={theme}/>
     </> : <OnayDriverShell active={driverTab} onSelect={setDriverTab} theme={theme} fullName="Демо-водитель" online={state.online} disabled={false} onOnline={() => dispatch({ type: "online" })} pages={{
       line: <><OnayRouteSchematic start="ДЕМО · Shaxsham" end="ДЕМО · Gazalkent"/><View style={{ backgroundColor: c.card, padding: 16, borderRadius: 20, gap: 8 }}><Text style={{ color: c.text, fontSize: 18, fontWeight: "700" }}>{car} · {plate}</Text><Text style={{ color: c.muted }}>Демо-автомобиль · мест: {capacity}</Text><DemoNotice color={c.muted}/></View>

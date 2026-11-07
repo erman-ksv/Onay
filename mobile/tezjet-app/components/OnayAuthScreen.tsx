@@ -1,10 +1,12 @@
+import TextInput from "./OnayTextInput";
+import Text from "./OnayText";
 import OnayIcon from "./OnayIcon";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator, Alert, BackHandler, KeyboardAvoidingView, Platform, Pressable,
-  Image, ScrollView, StyleSheet, Text, TextInput, View,
+  Image, ScrollView, StyleSheet, View,
 } from "react-native";
 import { isCompleteOnayPhone, onayDark, onayPhoneFromInput, onayPhoneInput, onayPhonePrefix } from "../lib/onay-auth-ui";
 import { registrationFullName } from "../lib/registration";

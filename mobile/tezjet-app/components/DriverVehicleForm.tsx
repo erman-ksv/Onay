@@ -1,6 +1,8 @@
+import TextInput from "./OnayTextInput";
+import Text from "./OnayText";
 import { onayThemedStyles } from "../lib/onay-themed-styles";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 import { validateApiEndpoint } from "../lib/api";
 import { onayDark } from "../lib/onay-auth-ui";
 import { driverVehicleBody, parseDriverVehicleSnapshot, type DriverVehicleSnapshot, type VehicleDraft } from "../lib/driver-vehicle";

@@ -1,3 +1,5 @@
+import TextInput from "../components/OnayTextInput";
+import Text from "../components/OnayText";
 import Constants from "expo-constants";
 import OnayDemoApp from "../components/OnayDemoApp";
 import { onayDemoPreviewEnabled } from "../lib/onay-demo";
@@ -15,7 +17,7 @@ import { parseServerFareMoney, formatFareMoney, type FareMoney } from "../lib/fa
 import * as Location from "expo-location";
 import { io } from "socket.io-client";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, AppState, BackHandler, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, AppState, BackHandler, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { API, ApiError, errorMessage, request, setApiEndpoint, validateApiEndpoint, type Availability } from "../lib/api";
 import { isClosed, isLiveOffer, mergeOrder, mergeOrderSnapshot, nextDriverTripStatus, nextTripLabel, ridePickupLabel, rideDestinationLabel, statusLabels, type RideOrder } from "../lib/orders";
 import { registrationFullName } from "../lib/registration";
@@ -88,6 +90,7 @@ function LiveOnayApp({ onDemo }: { onDemo?: (role: Mode) => void }) {
   const [bookingPage, setBookingPage] = useState<"route" | "legacy" | null>(null);
   const [passengerTab, setPassengerTab] = useState<OnayPassengerTab>("home");
   const [tripsHistoryOpen, setTripsHistoryOpen] = useState(false);
+  const historyReturnTab = useRef<OnayPassengerTab>("profile");
   const [passengerTheme, setPassengerTheme] = useState<"light" | "dark">("dark");
   const s = useMemo(() => onayThemedStyles(baseStyles, passengerTheme), [passengerTheme]);
   const [historyOpenRequest, setHistoryOpenRequest] = useState(0);
@@ -848,7 +851,13 @@ function LiveOnayApp({ onDemo }: { onDemo?: (role: Mode) => void }) {
     setPassengerTab(tab);
   }
 
+  function closePassengerHistory() {
+    setTripsHistoryOpen(false);
+    setPassengerTab(historyReturnTab.current);
+  }
+
   function openPassengerHistory() {
+    historyReturnTab.current = passengerTab;
     setHistoryOpenRequest(revision => revision + 1);
     setTripsHistoryOpen(true);
     setPassengerTab("trips");
@@ -882,7 +891,7 @@ function LiveOnayApp({ onDemo }: { onDemo?: (role: Mode) => void }) {
     const sub = BackHandler.addEventListener("hardwareBackPress", () => {
       if (bookingPage) { setBookingPage(null); return true; }
       if (passengerTab === "profile") return false;
-      if (passengerTab === "trips" && tripsHistoryOpen) { setTripsHistoryOpen(false); return true; }
+      if (passengerTab === "trips" && tripsHistoryOpen) { closePassengerHistory(); return true; }
       if (passengerTab !== "home") { setPassengerTab("home"); return true; }
       return false;
     });
@@ -993,7 +1002,7 @@ function LiveOnayApp({ onDemo }: { onDemo?: (role: Mode) => void }) {
         activeCount={passengerOrders.filter(order => !isClosed(order)).length}
         historyOpen={tripsHistoryOpen}
         onShowHistory={() => { setTripsHistoryOpen(true); setHistoryOpenRequest(revision => revision + 1); }}
-        onShowActive={() => setTripsHistoryOpen(false)}
+        onShowActive={closePassengerHistory}
         onBook={openPassengerRoutePicker}
         activeContent={
           <>
