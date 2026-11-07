@@ -56,13 +56,73 @@ jobs:
           "$signer" verify --print-certs apk113/Onay-offline-demo.apk | grep 'certificate SHA-256 digest' > /tmp/113-cert
           "$signer" verify --print-certs apk114/Onay-offline-demo-APK114.apk | grep 'certificate SHA-256 digest' > /tmp/114-cert
           diff -u /tmp/113-cert /tmp/114-cert
-      - name: Enable KVM before emulator
+      - name: Check runner KVM ACL, open the device and verify emulator acceleration
+        shell: bash
         run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
+          set -euo pipefail
+          echo "Runner: $(id -un), UID: $(id -u), GID: $(id -g)"
+          id
+          groups
+          if [ ! -e /dev/kvm ]; then
+            echo "::error::KVM_BLOCKER: /dev/kvm does not exist on this runner"
+            exit 1
+          fi
+          echo "KVM device before permission grant:"
           ls -l /dev/kvm
-          test -r /dev/kvm && test -w /dev/kvm
+          stat -c 'mode=%a owner=%U group=%G uid=%u gid=%g' /dev/kvm
+          if command -v getfacl >/dev/null 2>&1; then getfacl -p /dev/kvm; fi
+
+          # ACL applies to the already-running process; adding a user to a
+          # supplementary group would not refresh this runner's credentials.
+          if command -v setfacl >/dev/null 2>&1; then
+            sudo setfacl -m "u:$(id -u):rw" /dev/kvm
+            echo "Granted KVM read/write using user-specific ACL."
+          else
+            # Temporary, runner-local fallback: preserve the original GID and
+            # grant only this active user's UID ownership/read-write.
+            original_gid="$(stat -c '%g' /dev/kvm)"
+            sudo chown "$(id -u):$original_gid" /dev/kvm
+            sudo chmod u+rw /dev/kvm
+            echo "setfacl unavailable; granted KVM access to active UID by ownership."
+          fi
+          echo "KVM device after permission grant:"
+          ls -l /dev/kvm
+          stat -c 'mode=%a owner=%U group=%G uid=%u gid=%g' /dev/kvm
+          if command -v getfacl >/dev/null 2>&1; then getfacl -p /dev/kvm; fi
+
+          # Test actual read/write open, not just stat or shell test -r/-w.
+          python3 - <<'PY'
+          import os
+          import stat
+          path = "/dev/kvm"
+          mode = os.stat(path).st_mode
+          assert stat.S_ISCHR(mode), "KVM_BLOCKER: /dev/kvm is not a character device"
+          fd = os.open(path, os.O_RDWR | os.O_CLOEXEC)
+          try:
+              print(f"KVM opened O_RDWR successfully: fd={fd}, uid={os.geteuid()}")
+          finally:
+              os.close(fd)
+          PY
+
+          emulator_bin="${ANDROID_HOME}/emulator/emulator"
+          if [ ! -x "$emulator_bin" ]; then
+            emulator_bin="$(command -v emulator || true)"
+          fi
+          if [ -z "$emulator_bin" ] || [ ! -x "$emulator_bin" ]; then
+            echo "::error::KVM_BLOCKER: Android emulator binary is unavailable for -accel-check"
+            exit 1
+          fi
+          if ! "$emulator_bin" -accel-check > /tmp/onay-emulator-accel-check.log 2>&1; then
+            cat /tmp/onay-emulator-accel-check.log
+            echo "::error::KVM_BLOCKER: emulator -accel-check returned failure"
+            exit 1
+          fi
+          cat /tmp/onay-emulator-accel-check.log
+          if ! grep -Eiq 'KVM.*(installed and usable|is usable|is enabled)' /tmp/onay-emulator-accel-check.log; then
+            echo "::error::KVM_BLOCKER: emulator -accel-check did not confirm usable KVM"
+            exit 1
+          fi
+          echo "KVM device and hardware acceleration verified; one APK113 -> APK114 emulator run may begin."
       - name: One emulator session, APK113 then APK114 update, no Metro
         uses: reactivecircus/android-emulator-runner@v2
         with:
