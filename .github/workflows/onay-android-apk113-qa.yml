@@ -1,23 +1,24 @@
-name: Onay APK113 Android device-path diagnosis
+name: Onay APK113 -> APK114 Android reproduction (existing artifacts only)
 
 on:
   pull_request:
     paths:
       - ".github/workflows/onay-android-apk113-qa.yml"
       - "scripts/onay-android-apk-smoke.py"
-  workflow_dispatch:
 
 permissions:
   contents: read
   actions: read
 
 jobs:
-  inspect-published-apk113:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
+  inspect-published-apks:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch exact published APK113 artifact (no rebuild)
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Download published APK113, do not rebuild
         uses: actions/download-artifact@v4
         with:
           name: onay-android-demo-apk
@@ -25,31 +26,59 @@ jobs:
           repository: erman-ksv/Onay
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: apk113
-      - name: Verify APK113 archive and immutable build receipt
+      - name: Download published APK114, do not rebuild
+        uses: actions/download-artifact@v4
+        with:
+          name: onay-android-demo-apk-114
+          run-id: 42395049951
+          repository: erman-ksv/Onay
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: apk114
+      - name: Check exact APKs, provenance and signing certificates
         run: |
           python3 - <<'PY'
-          import hashlib, json
+          import hashlib,json
           from pathlib import Path
-          apk=Path("apk113/Onay-offline-demo.apk")
-          data=json.loads(Path("apk113/build-provenance.json").read_text())
-          assert hashlib.sha256(apk.read_bytes()).hexdigest() == "9659f9fbc5752a6482bcb1326e6e326be368d49817719c5990c65644df8b8593"
-          assert data["versionCode"] == 113
-          assert data["sourceSha"] == "53db518ab52d2f1ca86e52da7e20a3d987a720c2"
-          assert data["offlineDemoPreview"] is True
+          a=Path("apk113/Onay-offline-demo.apk")
+          b=Path("apk114/Onay-offline-demo-APK114.apk")
+          assert a.is_file() and b.is_file(), "Published artifact missing"
+          assert hashlib.sha256(a.read_bytes()).hexdigest()=="9659f9fbc5752a6482bcb1326e6e326be368d49817719c5990c65644df8b8593"
+          x=json.loads(Path("apk113/build-provenance.json").read_text())
+          y=json.loads(Path("apk114/build-provenance.json").read_text())
+          assert (x["versionCode"],y["versionCode"])==(113,114)
+          assert x["sourceSha"]=="53db518ab52d2f1ca86e52da7e20a3d987a720c2"
+          assert x["applicationId"]==y["applicationId"]=="uz.tezjet.app"
+          assert x["offlineDemoPreview"] and y["offlineDemoPreview"]
+          print("Verified existing APK113 & APK114, no APK assembled")
           PY
-      - name: Launch exact APK113 in Android emulator without Metro
+          signer="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)"
+          test -x "$signer"
+          "$signer" verify --print-certs apk113/Onay-offline-demo.apk | grep 'certificate SHA-256 digest' > /tmp/113-cert
+          "$signer" verify --print-certs apk114/Onay-offline-demo-APK114.apk | grep 'certificate SHA-256 digest' > /tmp/114-cert
+          diff -u /tmp/113-cert /tmp/114-cert
+      - name: Enable KVM before emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+      - name: One emulator session, APK113 then APK114 update, no Metro
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: 30
           arch: x86_64
-          profile: pixel_6
           target: google_apis
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: python3 scripts/onay-android-apk-smoke.py --apk apk113/Onay-offline-demo.apk --version-code 113 --output artifacts/apk113-android
-      - name: Upload actual Android screenshots and UI hierarchy (even on failure)
+          profile: pixel_2
+          emulator-boot-timeout: 900
+          disable-animations: false
+          disable-linux-hw-accel: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: python3 scripts/onay-android-apk-smoke.py --apk apk113/Onay-offline-demo.apk --version-code 113 --upgrade-apk apk114/Onay-offline-demo-APK114.apk --upgrade-version-code 114 --output artifacts/onay-apk113-to-114
+      - name: Upload actual Android screenshots, hierarchy and blocker
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: onay-apk113-android-qa
-          path: artifacts/apk113-android/
+          name: onay-apk113-to-114-native-qa
+          path: artifacts/onay-apk113-to-114/
           if-no-files-found: warn

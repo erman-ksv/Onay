@@ -91,71 +91,136 @@ def verify_languages(out, label):
     xml_snapshot(out, label)
 
 
+
+def wait_for_healthy_android(timeout=180):
+    """Do not mistake ADB connected for Android boot or PackageManager readiness."""
+    last = "No responsive Android device"
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        try:
+            state = adb("get-state", timeout=10)
+            boot = adb("shell", "getprop", "sys.boot_completed", timeout=10).strip()
+            if state.strip() == "device" and boot == "1":
+                pm = adb("shell", "pm", "path", "android", timeout=15)
+                if "package:" not in pm:
+                    raise RuntimeError(f"PackageManager unresponsive: {pm!r}")
+                adb("shell", "input", "keyevent", "82", timeout=15)
+                return {"adb": "device", "sys.boot_completed": "1", "packageManager": "ready", "input": "ready"}
+            last = f"adb={state.strip()}, sys.boot_completed={boot}"
+        except (RuntimeError, subprocess.TimeoutExpired) as exc:
+            last = str(exc)
+        time.sleep(3)
+    raise RuntimeError(f"ANDROID_EMULATOR_BLOCKER: no healthy ADB/Android after {timeout}s: {last}")
+
+
+def installed_code():
+    pkg = adb("shell", "dumpsys", "package", "uz.tezjet.app", timeout=45)
+    match = re.search(r"\bversionCode=(\d+)", pkg)
+    if not match:
+        raise AssertionError("Installed Android package uz.tezjet.app has no verifiable versionCode")
+    return int(match.group(1))
+
+
+def install_exact(apk, code, out, stage):
+    wait_for_healthy_android()
+    if not apk.is_file():
+        raise RuntimeError(f"Published APK missing: {apk}")
+    response = adb("install", "-r", str(apk.resolve()), timeout=180)
+    if "Success" not in response:
+        raise RuntimeError(f"{stage} adb install failed: {response}")
+    device_code = installed_code()
+    if device_code != code:
+        raise AssertionError(f"{stage}: device has versionCode={device_code}, expected={code}")
+    (out / (stage + "-installed.json")).write_text(json.dumps({
+        "apk": apk.name, "package": "uz.tezjet.app", "versionCode": device_code
+    }, indent=2))
+    return device_code
+
+
+def open_demo():
+    adb("shell", "am", "force-stop", "uz.tezjet.app")
+    adb("shell", "monkey", "-p", "uz.tezjet.app", "-c", "android.intent.category.LAUNCHER", "1", timeout=40)
+    await_node("Посмотреть без SMS", timeout=90)
+    click("Посмотреть без SMS")
+    await_node("ДЕМО ONAY", timeout=60)
+
+
+def native_profile(out, stage):
+    open_demo()
+    click("onay-tab-profile", "id")
+    await_node("Личные данные")
+    screenshot(out, stage + "-passenger")
+    xml_snapshot(out, stage + "-passenger")
+    for caption in ("RU", "UZ", "KZ"):
+        await_node(caption)
+    click("KZ")
+    await_node("Тіл")
+    screenshot(out, stage + "-passenger-kz")
+    click("RU")
+    await_node("Язык")
+    click("onay-demo-role-driver", "id")
+    click("onay-driver-tab-profile", "id")
+    await_node("Автомобиль")
+    screenshot(out, stage + "-driver")
+    xml_snapshot(out, stage + "-driver")
+    for caption in ("RU", "UZ", "KZ"):
+        await_node(caption)
+
+
+def stage_check(out, stage, results):
+    try:
+        native_profile(out, stage)
+        results["checks"].append(stage + ": native passenger and driver RU/UZ/KZ controls visible")
+    except Exception as exc:
+        results["failures"].append(stage + ": " + repr(exc))
+        try:
+            screenshot(out, stage + "-failure")
+            xml_snapshot(out, stage + "-failure")
+        except Exception as secondary:
+            results["failures"].append(stage + " diagnostic capture: " + repr(secondary))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--apk", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--version-code", type=int, required=True)
+    parser.add_argument("--upgrade-apk", type=Path, required=True)
+    parser.add_argument("--upgrade-version-code", type=int, required=True)
+    parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    result = {"apk": args.apk.name, "versionCode": args.version_code, "checks": [], "status": "failed"}
+    output = args.output
+    results = {"status": "failed", "checks": [], "failures": [], "boot": None,
+               "apk113": args.apk.name, "apk114": args.upgrade_apk.name}
     try:
-        apk = args.apk.resolve()
-        if not apk.is_file():
-            raise RuntimeError(f"Missing APK: {apk}")
-        adb("wait-for-device", timeout=160)
-        adb("shell", "settings", "put", "global", "window_animation_scale", "0")
-        adb("shell", "settings", "put", "global", "transition_animation_scale", "0")
-        adb("shell", "settings", "put", "global", "animator_duration_scale", "0")
-        adb("install", "-r", str(apk), timeout=180)
-        pkg = adb("shell", "dumpsys", "package", "uz.tezjet.app", timeout=35)
-        match = re.search(r"versionCode=(\d+)", pkg)
-        if not match or int(match.group(1)) != args.version_code:
-            raise AssertionError(f"Device versionCode != {args.version_code}: {match.group(0) if match else '(absent)'}")
-        result["checks"].append("Android PackageManager versionCode matches checked APK")
-        adb("shell", "am", "force-stop", "uz.tezjet.app")
-        adb("shell", "monkey", "-p", "uz.tezjet.app", "-c", "android.intent.category.LAUNCHER", "1", timeout=35)
-        await_node("Посмотреть без SMS", timeout=90)
-        screenshot(args.output, "android-auth-entry")
-        click("Посмотреть без SMS")
-        await_node("ДЕМО ONAY", timeout=45)
-        # Bottom pill contains four tabs, of which inactive icons have accessible labels.
-        click("onay-tab-profile", "id")
-        await_node("Личные данные")
-        verify_languages(args.output, "android-passenger-profile")
-        result["checks"].append("Passenger demo renders RU/UZ/KZ controls in native Android")
-        click("KZ", "any")
-        await_node("Тіл")
-        screenshot(args.output, "android-passenger-kk")
-        click("RU", "any")
-        await_node("Язык")
-        result["checks"].append("Native locale switches immediately")
-        # Driver is an explicit demo role, not an API driver.
-        click("onay-demo-role-driver", "id")
-        click("onay-driver-tab-profile", "id")
-        await_node("Автомобиль")
-        verify_languages(args.output, "android-driver-profile")
-        result["checks"].append("Driver demo renders RU/UZ/KZ controls")
-        adb("shell", "am", "force-stop", "uz.tezjet.app")
-        adb("shell", "monkey", "-p", "uz.tezjet.app", "-c", "android.intent.category.LAUNCHER", "1")
-        await_node("Посмотреть без SMS", timeout=65)
-        click("Посмотреть без SMS")
-        click("onay-tab-profile", "id")
-        verify_languages(args.output, "android-cold-restart-profile")
-        result["checks"].append("No Metro required on cold restart")
-        result["status"] = "passed"
+        results["boot"] = wait_for_healthy_android()
+        results["checks"].append("ADB device; sys.boot_completed=1; PackageManager/input responsive")
+        install_exact(args.apk, args.version_code, output, "apk113")
+        results["checks"].append("APK113 installed, versionCode verified by Android PackageManager")
+        stage_check(output, "apk113", results)
+        # No uninstall or pm clear: upgrade the same installed application in place.
+        install_exact(args.upgrade_apk, args.upgrade_version_code, output, "apk114")
+        results["checks"].append("APK113 -> APK114 in-place update; versionCode verified by ADB")
+        stage_check(output, "apk114", results)
+        if not any(item.startswith("apk114:") for item in results["failures"]):
+            stage_check(output, "apk114-cold-restart", results)
+        results["status"] = "passed" if not results["failures"] else "failed"
     except Exception as exc:
-        result["error"] = repr(exc)
+        results["failures"].append("BLOCKER: " + repr(exc))
         try:
-            screenshot(args.output, "android-failure")
-            xml_snapshot(args.output, "android-failure")
-            (args.output / "logcat-tail.txt").write_text(adb("logcat", "-d", "-t", "350", timeout=30), encoding="utf-8")
-        except Exception as secondary:
-            result["diagnosticError"] = repr(secondary)
-        raise
+            screenshot(output, "android-blocker")
+        except Exception:
+            pass
     finally:
-        (args.output / "android-verification.json").write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        print(json.dumps(result, indent=2, ensure_ascii=False))
+        try:
+            (output / "adb-devices.txt").write_text(adb("devices", "-l", timeout=15))
+            (output / "logcat-tail.txt").write_text(adb("logcat", "-d", "-t", "350", timeout=25))
+        except Exception as exc:
+            results["failures"].append("ADB diagnostics not available: " + repr(exc))
+        (output / "android-verification.json").write_text(json.dumps(results, indent=2, ensure_ascii=False) + "\n")
+        print(json.dumps(results, indent=2, ensure_ascii=False))
+    if results["status"] != "passed":
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
