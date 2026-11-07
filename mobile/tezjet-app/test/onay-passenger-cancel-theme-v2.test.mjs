@@ -10,7 +10,7 @@ const cancelButton = '<Button title={busy ? "Отменяем…" : "Отмен�
 
 test("passenger active-trip cancellation uses contrast-appropriate secondary button on both themes", () => {
   assert.ok(from >= 0 && to > from, "Server-backed active-trip section must exist");
-  assert.ok(activeTrips.includes('passengerTheme === "dark" && s.darkPassengerTripCard'));
+  assert.ok(activeTrips.includes('<OnayPassengerRide key={passengerOrder.id} order={passengerOrder} theme={passengerTheme}>'));
   assert.ok(activeTrips.includes(cancelButton));
   assert.ok(app.includes("dark && secondary && s.legacyButtonSecondaryDark"));
   assert.ok(app.includes("dark && secondary && s.legacyButtonSecondaryDarkText"));
@@ -24,6 +24,8 @@ test("themed cancel button preserves real order identity and in-flight disabled 
   assert.ok(activeTrips.includes('onPress={() => cancelOrder(passengerOrder)} disabled={busy}'));
   assert.ok(activeTrips.includes('title={busy ? "Отменяем…" : "Отменить заказ"}'));
   assert.ok(activeTrips.includes('order={passengerOrder} theme={passengerTheme}'));
-  assert.ok(activeTrips.includes('statusLabels[passengerOrder.status]'));
+  const ride = readFileSync(new URL("../components/OnayPassengerRide.tsx", import.meta.url), "utf8");
+  assert.ok(ride.includes('statusLabels[order.status]'));
+  assert.ok(ride.includes('{children}'));
   assert.ok(app.includes('testID="driver-order-reject" onPress={rejectOrder} disabled={busy || !isLiveOffer(incomingOrder, profile.id, now)} secondary dark />'));
 });

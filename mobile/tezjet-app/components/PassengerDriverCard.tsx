@@ -1,3 +1,5 @@
+import OnayIcon from "./OnayIcon";
+import { onayPalette } from "./OnayScreenFrame";
 import { useEffect, useRef, useState } from "react";
 import { AppState, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { canReadDriverContact, createPassengerDriverClient, createPassengerDriverScope, type PassengerDriver } from "../lib/passenger-driver";
@@ -7,6 +9,7 @@ type Props = { endpoint: string; token: string; order: { id: string; status: str
 
 export default function PassengerDriverCard({ endpoint, token, order, theme = "light" }: Props) {
   const dark = theme === "dark";
+  const c = onayPalette(theme);
   const [driver, setDriver] = useState<PassengerDriver | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -42,14 +45,14 @@ export default function PassengerDriverCard({ endpoint, token, order, theme = "l
   }, []);
 
   if (!eligible) return null;
-  return <View style={s.card} testID="passenger-driver-card">
-    <Text style={[s.heading, dark && s.darkHeading]}>Твой водитель</Text>
+  return <View style={[s.card, { backgroundColor: c.card, padding: 16, borderRadius: 20, marginTop: 16 }]} testID="passenger-driver-card">
+    <View style={{ flexDirection: "row", gap: 12, alignItems: "center" }}><View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: c.cardRaised, alignItems: "center", justifyContent: "center" }}><OnayIcon name="user" color={c.muted}/></View><Text style={[s.heading, dark && s.darkHeading]}>Твой водитель</Text></View>
     {loading ? <Text style={[s.text, dark && s.darkText]}>Получаем данные водителя…</Text> : null}
-    {driver && !loading ? <><Text style={[s.text, dark && s.darkText]} testID="passenger-driver-name">{driver.fullName || "Имя водителя не указано"}</Text>
-      <Pressable accessibilityRole="link" testID="passenger-driver-phone" onPress={() => {
+    {driver && !loading ? <><Text style={[s.text, dark && s.darkText, { color: c.text, fontSize: 17, fontWeight: "700" }]} testID="passenger-driver-name">{driver.fullName || "Имя водителя не указано"}</Text>
+      <Pressable accessibilityRole="link" testID="passenger-driver-phone" style={{ backgroundColor: c.accent, borderRadius: 16, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 }} onPress={() => {
         void Linking.openURL(`tel:${driver.phoneNumber}`).catch(() => setError("Не удалось открыть звонок. Набери номер вручную."));
-      }}><Text style={[s.phone, dark && s.darkPhone]}>Позвонить: {driver.phoneNumber}</Text></Pressable>
-      {driver.vehicle ? <View testID="passenger-driver-vehicle"><Text style={[s.text, dark && s.darkText]}>{driver.vehicle.make} {driver.vehicle.model}</Text><Text style={[s.text, dark && s.darkText]}>Госномер: {driver.vehicle.plateNumber}</Text><Text style={[s.text, dark && s.darkText]}>Пассажирских мест: {driver.vehicle.seatCapacity}</Text></View> : <Text style={[s.text, dark && s.darkText]}>Данные автомобиля пока не указаны.</Text>}</> : null}
+      }}><OnayIcon name="phone" color={c.accentInk}/><Text style={[s.phone, dark && s.darkPhone, { color: c.accentInk }]}>Позвонить: {driver.phoneNumber}</Text></Pressable>
+      {driver.vehicle ? <View testID="passenger-driver-vehicle" style={{ backgroundColor: c.cardRaised, borderRadius: 16, padding: 14, gap: 6 }}><Text style={[s.text, dark && s.darkText]}>{driver.vehicle.make} {driver.vehicle.model}</Text><Text style={[s.text, dark && s.darkText]}>Госномер: {driver.vehicle.plateNumber}</Text><Text style={[s.text, dark && s.darkText]}>Пассажирских мест: {driver.vehicle.seatCapacity}</Text></View> : <Text style={[s.text, dark && s.darkText]}>Данные автомобиля пока не указаны.</Text>}</> : null}
     {error ? <><Text style={[s.text, dark && s.darkText]} testID="passenger-driver-error">{error}</Text><Pressable accessibilityRole="button" testID="passenger-driver-retry" onPress={() => setRetry(value => value + 1)}><Text style={[s.phone, dark && s.darkPhone]}>Повторить получение данных</Text></Pressable></> : null}
   </View>;
 }

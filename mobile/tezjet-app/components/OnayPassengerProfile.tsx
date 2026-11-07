@@ -1,6 +1,8 @@
+import OnayIcon from "./OnayIcon";
+import OnayScreenFrame from "./OnayScreenFrame";
 import { useEffect, useState } from "react";
 import Constants from "expo-constants";
-import { BackHandler, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { BackHandler, Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { onayDark } from "../lib/onay-auth-ui";
 import { onayProfileInitial } from "../lib/onay-profile-avatar";
 import OnayPassengerSupport from "./OnayPassengerSupport";
@@ -54,6 +56,23 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
   if (aboutOpen) {
     return <OnayPassengerAbout theme={theme} onBack={() => setAboutOpen(false)} />;
   }
+  if (personalOpen) return <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setPersonalOpen(false)}>
+    <OnayScreenFrame title="Личные данные" theme={theme} onBack={() => setPersonalOpen(false)}>
+      <View style={{ alignItems: "center", marginVertical: 24 }}><View style={[s.avatar, { backgroundColor: light ? "#e6f0ea" : onayDark.cardRaised }]}><OnayIcon name="user" color={muted} size={38}/></View></View>
+      {personalOpen ? <View testID="onay-profile-personal-details" style={[s.personalDetails, { backgroundColor: surface, padding: 16, borderRadius: 20 }]}>
+        <Text style={[s.detailCaption, { color: muted }]}>ФИО</Text>
+        <Text testID="onay-profile-personal-name" style={[s.detailValue, { color: foreground }]}>{fullName || "Не указано"}</Text>
+        {phoneNumber ? <>
+          <Text style={[s.detailCaption, { color: muted }]}>Номер телефона</Text>
+          <Text testID="onay-profile-personal-phone" style={[s.detailValue, { color: foreground }]}>{phoneNumber}</Text>
+        </> : null}
+        <Text style={[s.detailCaption, { color: muted }]}>Режим аккаунта</Text>
+        <Text style={[s.detailValue, { color: foreground }]}>Пассажир</Text>
+      </View> : null}
+      <Text style={{ color: muted, fontSize: 13, lineHeight: 20, marginTop: 20 }}>Данные сохранены при регистрации. Если их нужно изменить, обратитесь в поддержку.</Text>
+      <Pressable testID="onay-personal-support" accessibilityRole="button" onPress={() => { setPersonalOpen(false); setSupportOpen(true); }} style={{ backgroundColor: onayDark.accent, padding: 16, borderRadius: 18, alignItems: "center", marginTop: 20 }}><Text style={{ color: onayDark.accentInk, fontSize: 16, fontWeight: "700" }}>Поддержка</Text></Pressable>
+    </OnayScreenFrame>
+  </Modal>;
   return <View testID="onay-passenger-profile-panel" style={[s.root, { backgroundColor: light ? "#f1f7f3" : onayDark.background }]}>
     <View style={s.identity}>
       <View style={[s.avatar, { backgroundColor: light ? "#e3f7df" : onayDark.cardRaised }]}>
@@ -71,9 +90,7 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
             accessibilityState={{ selected: theme === value }}
             onPress={() => onThemeChange(value)}
             style={[s.themeButton, light && s.themeButtonLight, theme === value && s.themeSelected]}>
-            <Text style={{ color: theme === value ? onayDark.accentInk : (light ? "#194b34" : muted), fontWeight: "700" }}>
-              {value === "light" ? "☀" : "☾"}
-            </Text>
+            <OnayIcon name={value === "light" ? "sun" : "moon"} color={theme === value ? onayDark.accentInk : (light ? "#194b34" : muted)}/>
           </Pressable>)}
         </View>
       </View>
@@ -90,16 +107,6 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
         <Text style={{ color: foreground, fontWeight: "600" }}>Личные данные</Text>
         <Text style={{ color: muted }}>{personalOpen ? "⌃" : "›"}</Text>
       </Pressable>
-      {personalOpen ? <View testID="onay-profile-personal-details" style={s.personalDetails}>
-        <Text style={[s.detailCaption, { color: muted }]}>ФИО</Text>
-        <Text testID="onay-profile-personal-name" style={[s.detailValue, { color: foreground }]}>{fullName || "Не указано"}</Text>
-        {phoneNumber ? <>
-          <Text style={[s.detailCaption, { color: muted }]}>Номер телефона</Text>
-          <Text testID="onay-profile-personal-phone" style={[s.detailValue, { color: foreground }]}>{phoneNumber}</Text>
-        </> : null}
-        <Text style={[s.detailCaption, { color: muted }]}>Режим аккаунта</Text>
-        <Text style={[s.detailValue, { color: foreground }]}>Пассажир</Text>
-      </View> : null}
       {row("history", "История поездок", onHistory)}
     </View>
 

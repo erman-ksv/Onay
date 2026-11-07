@@ -106,9 +106,17 @@ def main():
                     for tab in ("trips", "chats", "profile"):
                         page.get_by_test_id("onay-tab-" + tab).click()
                         shot(page, "actual-passenger-" + tab)
+                    page.get_by_test_id("onay-tab-trips").click()
+                    page.get_by_test_id("onay-trips-open-history").click()
+                    expect(page.get_by_test_id("passenger-history-empty")).to_be_visible()
+                    expect(page.get_by_test_id("passenger-history-toggle")).to_have_count(0)
+                    shot(page, "actual-passenger-history")
+                    page.get_by_test_id("onay-trips-back-to-active").click()
+                    page.get_by_test_id("onay-tab-profile").click()
                     page.get_by_test_id("onay-profile-personal-data").click()
                     expect(page.get_by_test_id("onay-profile-personal-name")).to_have_text("Visual QA")
-                    page.get_by_test_id("onay-profile-personal-data").click()
+                    shot(page, "actual-passenger-personal-data")
+                    page.get_by_test_id("onay-screen-back").click()
                     for child in ("support", "about"):
                         page.get_by_test_id("onay-profile-" + child).click()
                         expect(page.get_by_test_id("onay-passenger-" + child + "-screen")).to_be_visible()
@@ -165,7 +173,7 @@ def main():
                 reference_page.evaluate("S.auth = false; reset('welcome')")
                 reference_page.wait_for_timeout(450)
                 reference_page.screenshot(path=str(args.output_dir / f"reference-{role}-auth.png"))
-                for state in (["home", "builder", "trips", "chats", "profile", "support"] if role == "passenger" else ["line", "queue", "history", "profile"]):
+                for state in (["home", "builder", "trips", "history", "chats", "profile", "support", "about", "pdata"] if role == "passenger" else ["line", "queue", "history", "profile"]):
                     reference_page.evaluate("state => { S.auth = true; if (state === 'builder') S.draft = newDraft('A'); reset(state); }", state)
                     reference_page.wait_for_timeout(450)
                     reference_page.screenshot(path=str(args.output_dir / f"reference-{role}-{state}.png"))
@@ -182,10 +190,14 @@ def main():
                  ("Главная пассажира", "reference-passenger-home", "actual-passenger-home"),
                  ("Оформление", "reference-passenger-builder", "actual-passenger-builder"),
                  ("Поездки", "reference-passenger-trips", "actual-passenger-trips"),
+                 ("История пассажира", "reference-passenger-history", "actual-passenger-history"),
+                 ("Личные данные", "reference-passenger-pdata", "actual-passenger-personal-data"),
+                 ("О приложении", "reference-passenger-about", "actual-passenger-about"),
                  ("Профиль пассажира", "reference-passenger-profile", "actual-passenger-profile"),
                  ("Поддержка", "reference-passenger-support", "actual-passenger-support"),
                  ("Линия водителя", "reference-driver-line", "actual-driver-line-390"),
                  ("Очередь", "reference-driver-queue", "actual-driver-queue-390"),
+                 ("История водителя", "reference-driver-history", "actual-driver-history-390"),
                  ("Профиль водителя", "reference-driver-profile", "actual-driver-profile-390")]
         gallery = '<!doctype html><meta charset="utf-8"><title>Onay: HTML / React Native</title><style>body{font:16px system-ui;background:#eee;color:#15271e;margin:24px}section{margin:32px 0}div{display:flex;gap:20px;flex-wrap:wrap}figure{margin:0}img{width:390px;max-width:100%;border:1px solid #999}figcaption{padding:10px 0}</style><h1>Onay: опубликованный HTML / настоящее приложение</h1><p>Разные реальные данные и состояния. Эта галерея помогает ручному сравнению и не доказывает попиксельное совпадение. Android не проверен.</p>'
         for title, reference_name, actual_name in pairs:

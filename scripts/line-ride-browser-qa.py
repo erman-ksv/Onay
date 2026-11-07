@@ -222,6 +222,7 @@ class LineRideQA(shared.DriverRouteQA):
             self.page.get_by_test_id("onay-driver-tab-history").click()
         require(pending.value.status == 200, "History must use an actual authorized order read")
         self.expect(self.control("driver-history-empty")).to_be_visible()
+        self.expect(self.page.get_by_test_id("driver-history-toggle")).to_have_count(0)
         self.expect(self.control("driver-history-totals")).to_contain_text("Завершено поездок: 0")
         self.expect(self.passenger_page.get_by_test_id("driver-history")).to_have_count(0)
         self.passed("Task4.14 real empty driver history stays separate from passenger UI")
@@ -233,8 +234,8 @@ class LineRideQA(shared.DriverRouteQA):
             self.passenger_page.get_by_test_id("onay-trips-open-history").click()
         require(pending.value.status == 200, "Passenger history must read the real authorized API")
         self.expect(self.passenger_page.get_by_test_id("passenger-history-empty")).to_be_visible()
+        self.expect(self.passenger_page.get_by_test_id("passenger-history-toggle")).to_have_count(0)
         self.expect(self.control("passenger-history")).to_have_count(0)
-        self.passenger_page.get_by_test_id("passenger-history-toggle").click()
         self.passenger_page.get_by_test_id("onay-trips-back-to-active").click()
         self.passenger_page.get_by_test_id("onay-tab-home").click()
         self.open_passenger_booking()
@@ -301,7 +302,10 @@ class LineRideQA(shared.DriverRouteQA):
     def book_and_offer(self):
         page = self.passenger_page
         self.gps(self.passenger_context, "A")
+        page.get_by_test_id("onay-booking-route-open").click()
         page.get_by_test_id("passenger-route-" + self.route["id"]).click()
+        page.get_by_test_id("onay-booking-route-done").click()
+        self.expect(page.get_by_test_id("onay-booking-route-picker")).to_have_count(0)
         self.expect(page.get_by_test_id("passenger-pickup-open")).to_contain_text(self.stop("A")["name"])
         self.expect(page.get_by_test_id("passenger-destination-open")).to_contain_text(self.stop("B")["name"])
         with self.response(page, "/orders/route/availability", "GET") as pending:
@@ -331,6 +335,10 @@ class LineRideQA(shared.DriverRouteQA):
 
     def passenger_status(self, label):
         self.expect(self.passenger_page.get_by_test_id("passenger-trip-" + self.order_id)).to_contain_text(label)
+        details = self.passenger_page.get_by_test_id("onay-ride-details-" + self.order_id)
+        if not (details.count() and details.is_visible()):
+            self.passenger_page.get_by_test_id("onay-ride-open-" + self.order_id).click()
+        self.expect(details).to_be_visible()
 
     def progress(self, status):
         with self.response_for("/orders/" + self.order_id + "/status", "PATCH") as pending:
@@ -430,6 +438,14 @@ class LineRideQA(shared.DriverRouteQA):
         row = self.control("driver-history-row-" + self.order_id)
         self.expect(row).to_contain_text("Поездка завершена")
         self.expect(row).to_contain_text("QA линия A → QA линия B")
+        row.click()
+        details = self.page.get_by_test_id("onay-driver-history-details-" + self.order_id)
+        self.expect(details).to_be_visible()
+        self.expect(details).to_contain_text(self.order_id)
+        self.expect(details).to_contain_text("Поездка завершена")
+        self.shot(self.page, "driver-history-order-details")
+        self.page.get_by_test_id("onay-screen-back").click()
+        self.expect(details).to_have_count(0)
         self.expect(self.control("driver-history-totals")).to_contain_text("Завершено поездок: 1")
         self.expect(self.control("driver-history-totals")).to_contain_text(re.compile(r"5\s000 сум"))
         self.expect(self.control("driver-history-empty")).to_have_count(0)
@@ -501,8 +517,7 @@ class LineRideQA(shared.DriverRouteQA):
         self.passed("Actual driver saves B-to-A and joins pitak B with fresh FIFO receipt/capacity and healthy desktop/mobile apps")
 
     def history_recovery(self):
-        if self.control("driver-history-toggle").inner_text() == "Показать историю":
-            self.control("driver-history-toggle").click()
+        self.page.get_by_test_id("onay-driver-tab-history").click()
         self.expect(self.control("driver-history-totals")).to_contain_text("Завершено поездок: 1")
         self.expect(self.control("driver-history-totals")).to_contain_text(re.compile(r"5\s000 сум"))
         self.passed("Task4.14 real completed earnings survive app reload and new enrollment without double counting")

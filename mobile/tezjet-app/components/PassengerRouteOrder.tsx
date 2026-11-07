@@ -1,6 +1,8 @@
+import OnayIcon from "./OnayIcon";
+import OnayScreenFrame, { onayPalette } from "./OnayScreenFrame";
 import { useEffect, useRef, useState } from "react";
 import { formatFareMoney } from "../lib/fare-money";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import * as Location from "expo-location";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { API, ApiError, errorMessage, request } from "../lib/api";
@@ -14,6 +16,7 @@ export type PassengerDirectionIntent = { direction: DriverDirection; revision: n
 type Props = { token: string; endpoint: string; userId: string; busy: boolean; activeOrder: boolean; directionIntent?: PassengerDirectionIntent | null; bookingGate: PassengerBookingGate; onCreated: () => Promise<void>; onBooked?: () => void; theme?: "light" | "dark" };
 const choices: DriverDirection[] = ["a_to_b", "b_to_a"];
 export default function PassengerRouteOrder({ token, endpoint, userId, busy, activeOrder, directionIntent, bookingGate, onCreated, onBooked, theme = "dark" }: Props) {
+  const [routePickerOpen, setRoutePickerOpen] = useState(false);
   const [routes, setRoutes] = useState<DriverRouteOption[]>([]);
   const [routeId, setRouteId] = useState("");
   const [direction, setDirection] = useState<DriverDirection>("a_to_b");
@@ -286,12 +289,13 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
     </Pressable>;
 
   return <View testID="configured-route-passenger" style={themeStyles.card}>
-    <Text style={themeStyles.title}>Маршрут и остановки</Text>
-    <Text style={themeStyles.subtitle}>Выберите линию и количество мест. Доступность водителей и цену проверит сервер.</Text>
+    <Text style={[themeStyles.subtitle, { fontSize: 15, lineHeight: 22 }]}>Покажем водителей, которые едут по выбранному маршруту. Стоимость и свободные места подтвердит сервер.</Text>
     {loading ? <ActivityIndicator color="#5bd62f" style={themeStyles.loader}/> : null}
     {catalogStatus === "empty" && token && endpoint ? <Text style={themeStyles.hint}>Настроенных маршрутов пока нет.</Text> : null}
     {catalogStatus === "error" ? <View><Text style={themeStyles.error}>Не удалось загрузить маршруты: {catalogError}</Text>
       {button("Повторить загрузку маршрутов", () => setCatalogRetry(value => value + 1), submitting || busy, false, "route-catalog-retry")}</View> : null}
+    <Modal visible={routePickerOpen} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setRoutePickerOpen(false)}>
+      <OnayScreenFrame title="Маршрут и направление" theme={theme} onBack={() => setRoutePickerOpen(false)} testID="onay-booking-route-picker" footer={<Pressable accessibilityRole="button" testID="onay-booking-route-done" onPress={() => setRoutePickerOpen(false)} style={[themeStyles.button, themeStyles.buttonPrimary]}><Text style={themeStyles.primaryText}>Выбрать маршрут</Text></Pressable>}>
     {routes.map(item => <Pressable key={item.id} testID={"passenger-route-" + item.id}
       onPress={() => { if (item.id !== routeId) { setSegmentDraft(null); setRouteId(item.id); } }} disabled={submitting}
       accessibilityRole="button" accessibilityState={{ selected: item.id === routeId }}
@@ -303,7 +307,6 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
       </View>
       <Text style={themeStyles.chevron}>›</Text>
     </Pressable>)}
-    {route ? <>
       <Text style={themeStyles.sectionHeading}>НАПРАВЛЕНИЕ</Text>
       <View style={themeStyles.directions}>
         {choices.map(value => <Pressable key={value} testID={"passenger-direction-" + value}
@@ -315,22 +318,17 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
           </Text>
         </Pressable>)}
       </View>
-      <View style={themeStyles.trip}>
-        <View style={themeStyles.tripDots}><View style={themeStyles.originDot}/><View style={themeStyles.tripLine}/><View style={themeStyles.destinationDot}/></View>
-        <View style={themeStyles.tripLabels}>
-          <Pressable testID="passenger-pickup-open" accessibilityRole="button" accessibilityState={{ disabled: submitting }}
-            accessibilityLabel={"Место посадки: " + stops[pickupIndex]?.name} disabled={submitting}
-            onPress={() => setStopPicker(stopPicker === "pickup" ? null : "pickup")} style={themeStyles.stopField}>
-            <Text style={themeStyles.tripName}>{stops[pickupIndex]?.name ?? "Выберите посадку"} ▾</Text>
-            <Text style={themeStyles.tripCaption}>Откуда · выбрать остановку</Text>
-          </Pressable>
-          <Pressable testID="passenger-destination-open" accessibilityRole="button" accessibilityState={{ disabled: submitting }}
-            accessibilityLabel={"Назначение: " + stops[destinationIndex]?.name} disabled={submitting}
-            onPress={() => setStopPicker(stopPicker === "destination" ? null : "destination")} style={themeStyles.stopField}>
-            <Text style={themeStyles.tripName}>{stops[destinationIndex]?.name ?? "Выберите назначение"} ▾</Text>
-            <Text style={themeStyles.tripCaption}>Куда · выбрать остановку</Text>
-          </Pressable>
-        </View>
+      </OnayScreenFrame>
+    </Modal>
+    {route ? <>
+      <Pressable testID="onay-booking-route-open" accessibilityRole="button" accessibilityLabel="Изменить маршрут и направление" onPress={() => setRoutePickerOpen(true)} disabled={submitting} style={[themeStyles.route, { marginBottom: 12 }]}><View style={themeStyles.routeContent}><Text style={themeStyles.routeInfo}>Маршрут · {direction === "a_to_b" ? "A → B" : "B → A"}</Text><Text style={themeStyles.routeName}>{route.name}</Text></View><OnayIcon name="chev" color={onayPalette(theme).muted}/></Pressable>
+      <View style={[themeStyles.trip, { backgroundColor: "transparent", padding: 0, marginTop: 0, flexDirection: "column", gap: 12 }]}>
+        <Pressable testID="passenger-pickup-open" accessibilityRole="button" accessibilityState={{ disabled: submitting }} accessibilityLabel={"Место посадки: " + stops[pickupIndex]?.name} disabled={submitting} onPress={() => setStopPicker(stopPicker === "pickup" ? null : "pickup")} style={[themeStyles.stopField, { backgroundColor: onayPalette(theme).card, borderRadius: 20, padding: 16, flexDirection: "row", alignItems: "center", gap: 14 }]}>
+          <OnayIcon name="pin" color={onayPalette(theme).accent}/><View style={{ flex: 1 }}><Text style={[themeStyles.tripCaption, { fontSize: 13 }]}>Откуда</Text><Text style={[themeStyles.tripName, { fontSize: 16, marginTop: 3 }]}>{stops[pickupIndex]?.name ?? "Выберите посадку"}</Text></View><OnayIcon name="chev" color={onayPalette(theme).muted}/>
+        </Pressable>
+        <Pressable testID="passenger-destination-open" accessibilityRole="button" accessibilityState={{ disabled: submitting }} accessibilityLabel={"Назначение: " + stops[destinationIndex]?.name} disabled={submitting} onPress={() => setStopPicker(stopPicker === "destination" ? null : "destination")} style={[themeStyles.stopField, { backgroundColor: onayPalette(theme).card, borderRadius: 20, padding: 16, flexDirection: "row", alignItems: "center", gap: 14 }]}>
+          <OnayIcon name="city" color={onayPalette(theme).accent}/><View style={{ flex: 1 }}><Text style={[themeStyles.tripCaption, { fontSize: 13 }]}>Куда</Text><Text style={[themeStyles.tripName, { fontSize: 16, marginTop: 3 }]}>{stops[destinationIndex]?.name ?? "Выберите назначение"}</Text></View><OnayIcon name="chev" color={onayPalette(theme).muted}/>
+        </Pressable>
       </View>
       {stopPicker ? <View testID="passenger-stop-picker" accessibilityRole="radiogroup" style={themeStyles.stopPicker}>
         <Text style={themeStyles.sectionHeading}>{stopPicker === "pickup" ? "ГДЕ САДИТЕСЬ?" : "КУДА ЕДЕТЕ?"}</Text>
@@ -346,21 +344,22 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
         })}
         <Text style={themeStyles.tripCaption}>Посадка должна быть раньше назначения по выбранному направлению.</Text>
       </View> : null}
-      <View style={themeStyles.seats}>
+      <View style={[themeStyles.seats, { backgroundColor: onayPalette(theme).card, borderRadius: 20, padding: 16, flexDirection: "column", alignItems: "stretch", gap: 12 }]}>
         <View><Text style={themeStyles.seatsTitle}>Пассажиры</Text><Text style={themeStyles.seatsDescription}>Места: от 1 до 8</Text></View>
-        <View style={themeStyles.stepper}>
+        <View style={[themeStyles.stepper, { justifyContent: "space-between" }]}>
           <Pressable testID="route-seats-minus" accessibilityRole="button" accessibilityLabel="Уменьшить количество мест"
             disabled={seats <= 1 || submitting} onPress={() => setSeats(Math.max(1, seats - 1))}
-            style={[themeStyles.step, (seats <= 1 || submitting) && themeStyles.disabled]}><Text style={themeStyles.stepText}>−</Text></Pressable>
+            style={[themeStyles.step, { width: 48, height: 48, borderRadius: 24, borderWidth: 1, borderColor: onayPalette(theme).border }, (seats <= 1 || submitting) && themeStyles.disabled]}><Text style={themeStyles.stepText}>−</Text></Pressable>
           <Text style={themeStyles.count}>{seats}</Text>
           <Pressable testID="route-seats-plus" accessibilityRole="button" accessibilityLabel="Увеличить количество мест"
             disabled={seats >= 8 || submitting} onPress={() => setSeats(Math.min(8, seats + 1))}
-            style={[themeStyles.step, (seats >= 8 || submitting) && themeStyles.disabled]}><Text style={themeStyles.stepText}>+</Text></Pressable>
+            style={[themeStyles.step, { width: 48, height: 48, borderRadius: 24, borderWidth: 1, borderColor: onayPalette(theme).border }, (seats >= 8 || submitting) && themeStyles.disabled]}><Text style={themeStyles.stepText}>+</Text></Pressable>
         </View>
       </View>
-      {button(checking ? "Проверяем…" : "Проверить цену и водителей",
-        () => { void check(); }, checking || submitting || busy, false, "route-check-availability")}
-      <View style={themeStyles.priceCard}>
+      <Text style={[themeStyles.seatsTitle, { marginTop: 20 }]}>Когда</Text><View style={{ alignSelf: "flex-start", marginTop: 10, padding: 12, borderRadius: 16, borderWidth: 1, borderColor: onayPalette(theme).accent }}><Text style={{ color: onayPalette(theme).accent, fontWeight: "700" }}>Сейчас</Text></View>
+      {button(checking ? "Проверяем…" : "Найти водителей",
+        () => { void check(); }, checking || submitting || busy, true, "route-check-availability")}
+      {availability ? <View style={themeStyles.priceCard}>
         <Text style={themeStyles.sectionHeading}>ПОДТВЕРЖДЁННАЯ СТОИМОСТЬ</Text>
         <Text style={themeStyles.price}>{fresh && availability ? formatFareMoney({ total: availability.value.price, currency: availability.value.currency }) : "—"}</Text>
         <Text style={[themeStyles.availability, fresh && availability?.value.available && themeStyles.availabilityPositive]}>
@@ -370,7 +369,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
               : "Свободных водителей сейчас нет"
             : "Обновите наличие и цену перед заказом"}
         </Text>
-      </View>
+      </View> : null}
       {button(submitting ? "Оформляем…" : "Заказать поездку",
         () => { void submit(); }, !canOrder, true, "route-book-trip")}
     </> : null}

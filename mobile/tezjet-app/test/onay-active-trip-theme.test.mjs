@@ -7,14 +7,17 @@ const driver = readFileSync(new URL("../components/PassengerDriverCard.tsx", imp
 test("Active trip uses real Onay V2 dark tokens, not light white-on-dark combinations", () => {
   const line = app.split("\n").find(value => value.includes("passengerOrders.filter(order => !isClosed(order)).map("));
   assert.ok(line, "Active passenger trip must be rendered from the existing server orders");
-  for (const style of ["darkPassengerTripCard", "darkPassengerTripTitle", "darkPassengerTripMuted", "darkPassengerTripNote"]) {
-    assert.ok(line.includes('passengerTheme === "dark" && s.' + style));
-  }
-  for (const style of ["card", "border", "text", "muted", "cardRaised"]) assert.ok(app.includes("onayDark." + style));
-  assert.match(line, /order=\{passengerOrder\} theme=\{passengerTheme\}/);
+  const ride = readFileSync(new URL("../components/OnayPassengerRide.tsx", import.meta.url), "utf8");
+  assert.match(line, /<OnayPassengerRide key=\{passengerOrder.id\} order=\{passengerOrder\} theme=\{passengerTheme\}/);
   assert.match(line, /cancelOrder\(passengerOrder\)/);
-  assert.match(line, /ridePickupLabel\(passengerOrder\)/);
-  assert.match(line, /rideDestinationLabel\(passengerOrder\)/);
+  assert.match(ride, /const c = onayPalette\(theme\)/);
+  for (const token of ["card", "accent", "text", "muted"]) assert.ok(ride.includes("c." + token));
+  assert.match(ride, /ridePickupLabel\(order\)/);
+  assert.match(ride, /rideDestinationLabel\(order\)/);
+  assert.match(ride, /<Modal visible=\{open\}/);
+  assert.match(ride, /<OnayScreenFrame title=\{label\} theme=\{theme\}/);
+  assert.match(ride, /parseServerFareMoney\(order.fare\)/);
+
 });
 
 test("Nested driver contact also follows theme without changing guarded contact loading", () => {

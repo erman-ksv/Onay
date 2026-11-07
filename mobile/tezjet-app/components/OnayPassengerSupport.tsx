@@ -55,7 +55,7 @@ export default function OnayPassengerSupport({ theme, onBack }: Props) {
 }
 
 const styles = StyleSheet.create({
-  root: { backgroundColor: onayDark.background, minHeight: 440, paddingHorizontal: 16, paddingTop: 14, paddingBottom: 24, borderRadius: 20 },
+  root: { backgroundColor: onayDark.background, minHeight: 440, paddingHorizontal: 0, paddingTop: 14, paddingBottom: 24, borderRadius: 20 },
   rootLight: { backgroundColor: "#f1f7f3" },
   header: { flexDirection: "row", alignItems: "center", gap: 14 },
   backButton: { height: 42, width: 42, alignItems: "center", justifyContent: "center", backgroundColor: onayDark.card, borderRadius: 14 },

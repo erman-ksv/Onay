@@ -35,15 +35,15 @@ the existing Gradle configuration; an active Metro is not required.
 | Entry / connection | Native V2 for missing API, invalid endpoint and lost profile; old auth renderer removed | Server setup is an operational app screen absent from the prototype |
 | Phone / roles / OTP | Original transparent logo, native role controls, six OTP cells, loading/error guards, Android OTP Back handler | Required registration name/surname and real six-digit API challenge differ from demo-only sign-in |
 | Passenger home / tabs | 430dp viewport, source icons and light/dark tokens, isolated booking page; no forms below home | Schematic is explicitly not GPS; existing settings access and API error states add controls |
-| Route / stops / booking | Native full-screen entry, real route/direction/stop selection, themed cards and seat controls | API-required route/version/fare confirmation differs from the demo builder; deferred booking, whole-car booking and negotiated prices are unavailable |
-| Active ride / driver details | Existing real order state, cancellation, driver API and status guards retained in V2 presentation | Prototype vehicle tracking map, animation and complete track/detail/rating flows are not implemented pixel for pixel |
-| Trips / history | Separate native trips tab and actual API history; successful creation opens Trips | Final visual acceptance of all populated history/status cards remains open |
+| Route / stops / booking | Native full-screen builder, separate route/direction picker, independent origin/destination cards, reference seat card and actual availability confirmation | API-required route/version/fare confirmation differs from the demo builder; deferred booking, whole-car booking and negotiated prices are unavailable |
+| Active ride / driver details | Compact native Trips card opens a full-page ride view with actual status, route, fare and guarded driver/contact data; original cancellation and API scopes retained | Live vehicle tracking/ETA and rating are unsupported by the current API; the route schematic is explicitly not GPS |
+| Trips / history | Separate native Trips/history pages; reference-style status/date/route/fare cards open read-only native order details; no old embedded heading/toggle in screen mode | Final visual acceptance of all populated history/status cards remains open |
 | Chats | Consistent native V2 tab and truthful unavailable state | No chat transport or messages API; demo conversations are not real functionality |
-| Passenger profile / support / about | Original logo, actual version, themes, real identity and support email preserved | Personal data expands within profile; prototype support chat, legal pages and some settings are not implemented |
+| Passenger profile / support / about | Original logo, actual version, source theme icons, native personal-data page, real identity and support email preserved | Personal data is read-only because the existing account contract has no edit/photo API; prototype support chat, legal pages and some settings remain unavailable |
 | Driver line | Native shell, schematic, actual car/seat summary, existing offers and trip controls | Real shift/queue/permission controls differ from the prototype; manual phone passengers are not supported |
 | Driver queue / route | Independent queue tab, validated real API queue, separate route editor; approval guards retained | API exposes position/seats rather than all demo names, photos or vehicle metadata |
 | Driver profile / vehicle | Native profile rows and separate vehicle editor, real approval and save behavior | Language and sound/vibration prototype settings have not been implemented |
-| Driver history / navigation | Independent history tab, focus load, five responsive native tabs; logout clears navigation | Android hardware and populated history visual acceptance remain open |
+| Driver history / navigation | Independent history page, reference total/ride cards, actual frozen amounts, order-details modal, focus load, five responsive native tabs; logout clears navigation | Android hardware and populated history visual acceptance remain open |
 
 These are **open acceptance differences**, not claims of 1:1 completion. Do
 not label this APK a completed exact reproduction of every prototype screen.
@@ -79,3 +79,13 @@ this work does not deploy a server or send a real SMS.
 PR110 stays Draft. No merge into main is authorized. The confirmed project
 implementation count remains 96/151 (63.6%); redesign, tests and APK builds
 do not add completed product tasks.
+
+## 2026-11-07 continuation
+
+The 0d36d89 APK and all four CI runs completed while the previous session
+was interrupted. That APK is an intermediate preview: the retained local
+changes additionally replace the old embedded history and active-ride
+layout, move route/direction selection into its own native page, and open
+personal data as a separate native page. Publish an APK only from the new
+verified head containing these changes. History details do not expose
+closed driver contacts; no API or backend rules were changed.

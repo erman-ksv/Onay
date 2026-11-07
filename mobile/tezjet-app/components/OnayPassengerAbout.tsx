@@ -55,7 +55,7 @@ export default function OnayPassengerAbout({ theme, onBack, backLabel = "Наз�
 }
 
 const styles = StyleSheet.create({
-  root: { minHeight: 440, backgroundColor: onayDark.background, padding: 16, borderRadius: 20, marginBottom: 18 },
+  root: { minHeight: 440, backgroundColor: onayDark.background, padding: 0, borderRadius: 0, marginBottom: 18 },
   rootLight: { backgroundColor: "#f1f7f3" },
   header: { flexDirection: "row", alignItems: "center", gap: 14 },
   back: { height: 42, width: 42, borderRadius: 14, backgroundColor: onayDark.card, alignItems: "center", justifyContent: "center" },

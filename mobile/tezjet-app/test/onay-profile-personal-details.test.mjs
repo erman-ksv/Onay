@@ -5,8 +5,10 @@ import { readFileSync } from "node:fs";
 const profile = readFileSync(new URL("../components/OnayPassengerProfile.tsx", import.meta.url), "utf8");
 const app = readFileSync(new URL("../app/index.tsx", import.meta.url), "utf8");
 
-test("the passenger personal information section opens as an accessible expandable control", () => {
+test("passenger personal information opens a native full page with a working Back handler", () => {
   assert.match(profile, /testID="onay-profile-personal-data"/);
+  assert.match(profile, /if \(personalOpen\) return <Modal visible/);
+  assert.match(profile, /title="Личные данные" theme=\{theme\} onBack=\{\(\) => setPersonalOpen\(false\)\}/);
   assert.match(profile, /accessibilityState=\{\{ expanded: personalOpen \}\}/);
   assert.match(profile, /onPress=\{\(\) => setPersonalOpen\(previous => !previous\)\}/);
   assert.match(profile, /\{personalOpen \? <View testID="onay-profile-personal-details"/);

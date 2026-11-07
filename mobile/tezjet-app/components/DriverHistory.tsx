@@ -1,3 +1,6 @@
+import OnayHistoryRow from "./OnayHistoryRow";
+import OnayIcon from "./OnayIcon";
+import { onayPalette } from "./OnayScreenFrame";
 import { onayThemedStyles } from "../lib/onay-themed-styles";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -9,9 +12,9 @@ import { ridePickupLabel, rideDestinationLabel, statusLabels } from "../lib/orde
 
 // Parent keys this component by endpoint/session/user and unmounts it on role
 // change. Generation + abort also discard superseded responses and teardown.
-export default function DriverHistory({ endpoint, token, driverId, theme = "dark", active: visible = false }: { endpoint: string; token: string; driverId: string; theme?: "light" | "dark"; active?: boolean }) {
+export default function DriverHistory({ endpoint, token, driverId, theme = "dark", active: visible = false, screen = false }: { endpoint: string; token: string; driverId: string; theme?: "light" | "dark"; active?: boolean; screen?: boolean }) {
   const s = onayThemedStyles(baseStyles, theme);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(screen);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -38,6 +41,19 @@ export default function DriverHistory({ endpoint, token, driverId, theme = "dark
     return () => { generation.current++; active.current?.abort(); };
   }, [open, load]);
   useEffect(() => { if (visible) { setOpen(true); void load(); } }, [visible, load]);
+  const c = onayPalette(theme);
+  if (screen) return <View testID="driver-history" style={{ gap: 12 }}>
+    {loading ? <Text style={s.note} testID="driver-history-loading">Загружаем историю…</Text> : null}
+    {error ? <Text style={s.error} testID="driver-history-error" accessibilityRole="alert">{error}</Text> : null}
+    {snapshot ? <>
+      <View testID="driver-history-totals" style={{ backgroundColor: c.card, padding: 20, borderRadius: 20, gap: 8, alignItems: "center" }}><Text style={s.note}>Завершённые поездки</Text>{snapshot.totals === null ? <Text style={s.note}>Стоимость недоступна</Text> : snapshot.totals.length ? snapshot.totals.map(money => <Text key={money.currency} style={{ color: c.accent, fontSize: 30, fontWeight: "700" }}>{formatFareMoney(money)}</Text>) : <Text style={s.note}>Нет завершённых поездок с заработком</Text>}<Text style={s.note}>Завершено поездок: {snapshot.completed}</Text></View>
+      <Text style={{ color: c.muted, fontSize: 12, lineHeight: 18 }}>Сумма тарифов завершённых поездок — без подтверждения оплаты и вычета расходов.</Text>
+      {!snapshot.rows.length ? <View testID="driver-history-empty" style={{ paddingTop: 50, alignItems: "center", gap: 12 }}><View style={{ width: 64, height: 64, borderRadius: 32, alignItems: "center", justifyContent: "center", backgroundColor: c.cardRaised }}><OnayIcon name="clock" size={28} color={c.muted}/></View><Text style={{ color: c.text, fontSize: 18, fontWeight: "700" }}>Поездок пока нет</Text><Text style={{ color: c.muted, textAlign: "center" }}>Здесь появятся завершённые поездки</Text></View> : null}
+      {snapshot.rows.slice(0, limit).map(({ order, money }) => <OnayHistoryRow key={order.id} order={order} amount={money ? formatFareMoney(money) : "Стоимость недоступна"} theme={theme} driver testID={`driver-history-row-${order.id}`}/>)}
+      {snapshot.rows.length > limit ? <Pressable accessibilityRole="button" onPress={() => setLimit(value => value + 20)} style={s.button}><Text style={s.buttonText}>Показать ещё</Text></Pressable> : null}
+    </> : null}
+    <Pressable accessibilityRole="button" accessibilityState={{ disabled: loading }} testID="driver-history-refresh" disabled={loading} onPress={() => { void load(); }} style={s.button}><Text style={s.buttonText}>{loading ? "Обновляем…" : "Обновить историю"}</Text></Pressable>
+  </View>;
   return <View style={s.card} testID="driver-history">
     <Text style={s.heading}>История и заработок</Text>
     <Pressable accessibilityRole="button" testID="driver-history-toggle" onPress={() => setOpen(value => !value)} style={s.button}><Text style={s.buttonText}>{open ? "Скрыть историю" : "Показать историю"}</Text></Pressable>

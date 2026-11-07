@@ -101,6 +101,14 @@ class PassengerStopsQA:
     def control(self, test_id):
         if test_id.startswith(("configured-route", "passenger-route-", "passenger-direction-", "passenger-pickup-", "passenger-destination-", "passenger-stop-", "route-")):
             self.open_booking()
+        selector = self.page.get_by_test_id("onay-booking-route-picker")
+        if test_id.startswith(("passenger-route-", "passenger-direction-")):
+            target = self.page.get_by_test_id(test_id)
+            if not (target.count() and target.is_visible()):
+                self.page.get_by_test_id("onay-booking-route-open").click()
+        elif selector.count() and selector.is_visible():
+            self.page.get_by_test_id("onay-booking-route-done").click()
+            self.expect(selector).to_have_count(0)
         return self.page.get_by_test_id(test_id)
 
     def response_for(self, path, method):
@@ -304,6 +312,9 @@ class PassengerStopsQA:
         # The booking form is Home-only; real active rides belong to Trips V2.
         self.page.get_by_test_id("onay-tab-trips").click()
         ride = self.page.get_by_test_id("passenger-trip-" + self.order_id)
+        self.expect(ride).to_be_visible()
+        self.page.get_by_test_id("onay-ride-open-" + self.order_id).click()
+        ride = self.page.get_by_test_id("onay-ride-details-" + self.order_id)
         self.expect(ride).to_be_visible()
         self.expect(ride.get_by_text("Точка подачи: " + self.stop("D")["name"], exact=True)).to_be_visible()
         self.expect(ride.get_by_text("Куда: " + self.stop("C")["name"], exact=True)).to_be_visible()

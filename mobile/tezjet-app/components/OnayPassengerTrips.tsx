@@ -1,3 +1,4 @@
+import OnayIcon from "./OnayIcon";
 import type { ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { onayDark } from "../lib/onay-auth-ui";
@@ -23,16 +24,16 @@ export default function OnayPassengerTrips({
 }: Props) {
   const light = theme === "light";
   return <View testID="onay-passenger-trips-screen" style={[s.page, light && s.lightPage]}>
+    <View style={s.header}>
     {historyOpen ?
       <Pressable
         testID="onay-trips-back-to-active"
         accessibilityRole="button"
         accessibilityLabel="Назад к активным поездкам"
         onPress={onShowActive}
-        style={s.back}
-      ><Text style={[s.backText, light && s.lightMuted]}>‹  Назад к поездкам</Text></Pressable> : null}
-    <View style={s.header}>
-      <Text testID="onay-passenger-trips-title" accessibilityRole="header" style={[s.heading, light && s.lightText]}>
+        style={[s.back, { backgroundColor: light ? "#ffffff" : onayDark.card }]}
+      ><OnayIcon name="back" color={light ? "#0a1d15" : onayDark.text}/></Pressable> : null}
+      <Text testID="onay-passenger-trips-title" accessibilityRole="header" style={[s.heading, light && s.lightText, historyOpen && { fontSize: 21, flex: 1 }]}>
         {historyOpen ? "История поездок" : "Поездки"}
       </Text>
       {!historyOpen ? <Pressable
@@ -74,7 +75,7 @@ const s = StyleSheet.create({
   historyButtonLight: { backgroundColor: "#e7f1e9" },
   historyLink: { color: onayDark.accent, fontWeight: "700", fontSize: 14 },
   historyLinkLight: { color: "#135e39" },
-  back: { minHeight: 44, justifyContent: "center", alignSelf: "flex-start" },
+  back: { height: 46, width: 46, borderRadius: 23, justifyContent: "center", alignItems: "center" },
   backText: { fontSize: 14, color: onayDark.muted },
   empty: { paddingTop: 58, paddingHorizontal: 24, alignItems: "center", gap: 10 },
   emptyIcon: { height: 72, width: 72, borderRadius: 36, backgroundColor: onayDark.cardRaised, alignItems: "center", justifyContent: "center" },
