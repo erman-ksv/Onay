@@ -33,7 +33,7 @@ test("both themes work while profile history, support, driver mode and logout st
   assert.match(about, /light && styles\.rootLight/);
   assert.match(about, /light && styles\.companyCardLight/);
   assert.match(profile, /row\("history", "История поездок", onHistory\)/);
-  assert.match(profile, /row\("driver", "Режим водителя", onDriver\)/);
+  assert.match(profile, /row\("driver", "Режим водителя", \(\) => setDriverModeOpen\(true\)\)/);
   assert.match(profile, /row\("support", "Поддержка", \(\) => setSupportOpen\(true\)\)/);
   assert.match(profile, /testID="onay-profile-logout"/);
 });

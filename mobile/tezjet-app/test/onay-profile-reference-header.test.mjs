@@ -24,7 +24,7 @@ test("reference-based geometry keeps real account data, navigation, and original
   assert.ok(profile.includes('onayProfileInitial(fullName)'));
   for (const action of [
     'row("history", "История поездок", onHistory)',
-    'row("driver", "Режим водителя", onDriver)',
+    'row("driver", "Режим водителя", () => setDriverModeOpen(true))',
     'row("support", "Поддержка", () => setSupportOpen(true))',
     'row("about", "О приложении", () => setAboutOpen(true))',
     'testID="onay-profile-logout" onPress={onLogout}'
