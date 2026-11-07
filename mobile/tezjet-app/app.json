@@ -25,10 +25,12 @@
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION"
-      ]
+      ],
+      "versionCode": 115
     },
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "icon": "./assets/onay-original-logo.png"
   }
 }

@@ -1,0 +1,42 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+const booking = readFileSync(new URL("../components/PassengerRouteOrder.tsx", import.meta.url), "utf8");
+const app = readFileSync(new URL("../app/index.tsx", import.meta.url), "utf8");
+
+test("booking form receives Onay passenger theme and preserves original dark mode", () => {
+  assert.ok(app.includes('onCreated={refreshOrders} onBooked={() => { setBookingPage(null); setPassengerTab("trips"); }} theme={passengerTheme} />'));
+  assert.ok(app.includes('<Modal visible={bookingPage !== null}'));
+  assert.ok(booking.includes('theme?: "light" | "dark"'));
+  assert.ok(booking.includes('theme = "dark"'));
+  assert.ok(booking.includes('theme === "light" ? { ...v, ...vLight } : v'));
+  assert.ok(booking.includes('style={themeStyles.card}'));
+  assert.ok(booking.includes('style={themeStyles.priceCard}'));
+  assert.ok(booking.includes('primary ? themeStyles.buttonPrimary : themeStyles.buttonSecondary'));
+});
+test("light palette covers booking surfaces, buttons, disabled and fare states", () => {
+  const lightBlock = booking.slice(booking.indexOf("const vLight = StyleSheet.create({"));
+  for (const name of ["card","eyebrow","title","subtitle","hint","route","routeActive","indicator","indicatorActive","routeName","routeInfo","chevron","sectionHeading","direction","directionActive","directionText","directionTextActive","trip","originDot","tripLine","destinationDot","tripName","stopPicker","stopOption","stopOptionSelected","stopOptionName","tripCaption","seatsTitle","seatsDescription","step","stepText","count","buttonPrimary","buttonSecondary","primaryText","secondaryText","priceCard","price","availability","availabilityPositive","notice","error"]) {
+    assert.ok(lightBlock.includes("  " + name + ": {"), name + " missing in light palette");
+  }
+  assert.ok(booking.includes("bookingGate.canSubmit()"));
+  assert.ok(booking.includes("saveRouteBookingRecovery(AsyncStorage, recoveryKey"));
+  assert.ok(booking.includes("isFreshPassengerRouteQuote(availability, key, now)"));
+  assert.ok(booking.includes('style={[themeStyles.button, primary ? themeStyles.buttonPrimary : themeStyles.buttonSecondary, disabled && themeStyles.disabled]}'));
+});
+
+test("route actions forward stable test IDs through the real Pressable, without weakening booking admission", () => {
+  assert.match(booking, /const button = \(title: string, onPress: \(\) => void, disabled = false, primary = false, testID\?: string\) =>\s*<Pressable testID=\{testID\} accessibilityRole="button" accessibilityState=\{\{ disabled \}\}\s*onPress=\{onPress\} disabled=\{disabled\}/);
+  assert.match(booking, /button\(checking \? "Проверяем…" : "Найти водителей",\s*\(\) => \{ void check\(\); \}, checking \|\| submitting \|\| busy, true, "route-check-availability"\)/);
+  assert.match(booking, /button\(submitting \? "Оформляем…" : "Заказать поездку",\s*\(\) => \{ void submit\(\); \}, !canOrder, true, "route-book-trip"\)/);
+  assert.match(booking, /if \(!selection \|\| !canOrder \|\| !bookingGate\.tryStart\("configured"\)\) return;/);
+  assert.match(booking, /isFreshPassengerRouteQuote\(availability, key, now\)/);
+});
+
+// A closed/absent interrupted request is not a newly created ride.
+test("recovery refresh keeps the builder open when the server fences an absent order", () => {
+  const recovery = booking.slice(booking.indexOf("async function retrySync()"), booking.indexOf("async function submit()"));
+  assert.match(recovery, /syncConfirmedRouteBooking\(onCreated\)/);
+  assert.match(recovery, /if \(closedRequestKey === null\) onBooked\?\.\(\);/);
+  assert.ok(!app.includes('onCreated={async () => { setBookingPage(null)'));
+});

@@ -1,12 +1,13 @@
+import { OnayLanguageProvider } from "../lib/onay-language-context";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 export default function RootLayout() {
   return (
-    <SafeAreaProvider>
+    <SafeAreaProvider><OnayLanguageProvider>
       <StatusBar style="dark" />
       <Stack screenOptions={{ headerShown: false }} />
-    </SafeAreaProvider>
+    </OnayLanguageProvider></SafeAreaProvider>
   );
 }

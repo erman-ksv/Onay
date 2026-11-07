@@ -20,9 +20,15 @@ on:
         type: boolean
         required: false
         default: false
+      demo_preview:
+        description: "Include the isolated offline demo for UI preview (debug APK only)"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: mobile-ci-${{ github.workflow }}-${{ github.ref }}
@@ -33,12 +39,15 @@ jobs:
     runs-on: ubuntu-latest
     env:
       EXPO_PUBLIC_API_URL: ${{ vars.TEZJET_API_URL }}
+      ONAY_DEMO_PREVIEW: ${{ ((github.event_name == 'workflow_dispatch' && inputs.build_apk && inputs.demo_preview) || (github.event_name == 'pull_request' && github.event.pull_request.number == 110)) && 'true' || 'false' }}
     defaults:
       run:
         working-directory: mobile/tezjet-app
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -47,14 +56,32 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Keep offline preview independent of a configured server
+        if: env.ONAY_DEMO_PREVIEW == 'true'
+        run: echo 'EXPO_PUBLIC_API_URL=' >> "$GITHUB_ENV"
       - name: Install mobile dependencies
         run: pnpm install
+      - name: Record checked-out source identity
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { execFileSync } = require('node:child_process');
+          const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error('Invalid checked-out SHA');
+          if (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' && sha !== process.env.GITHUB_SHA) throw new Error('Manual APK checkout differs from requested SHA');
+          const config = JSON.parse(fs.readFileSync('app.json', 'utf8')).expo;
+          const branch = process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME;
+          const receipt = { sourceSha: sha, sourceBranch: branch, runId: process.env.GITHUB_RUN_ID, applicationId: config.android.package, versionCode: config.android.versionCode, displayName: config.name, artifactType: 'Android debug preview', embeddedJavaScript: true, offlineDemoPreview: process.env.ONAY_DEMO_PREVIEW === 'true' };
+          fs.writeFileSync('build-provenance.json', JSON.stringify(receipt, null, 2) + '\n');
+          fs.appendFileSync(process.env.GITHUB_ENV, `ONAY_BUILD_SHA=${sha}\nONAY_BUILD_BRANCH=${branch}\n`);
+          console.log(JSON.stringify(receipt));
+          NODE
       - name: Typecheck
         run: pnpm typecheck
       - name: Offer lifecycle and API error regressions
         run: pnpm test
       - name: Export Android and iOS bundles
-        run: pnpm exec expo export --platform android --platform ios
+        run: pnpm exec expo export --clear --platform android --platform ios
       - name: Set up Java for Android
         if: github.event_name == 'workflow_dispatch' && inputs.build_apk
         uses: actions/setup-java@v4
@@ -77,10 +104,148 @@ jobs:
       - name: Assemble Android debug APK
         if: github.event_name == 'workflow_dispatch' && inputs.build_apk
         run: cd android && ./gradlew assembleDebug
+      - name: Prepare distinctly named APK for diagnostics
+        id: apk-meta
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk
+        run: |
+          version_code="$(node -p "require('./app.json').expo.android.versionCode")"
+          echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
+          if [ "$ONAY_DEMO_PREVIEW" = "true" ]; then
+            cp android/app/build/outputs/apk/debug/app-debug.apk "Onay-offline-demo-APK${version_code}.apk"
+          fi
+      - name: Verify final artifact matches the checked-out source
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk
+        run: |
+          python3 - <<'PY'
+          import json, zipfile
+          from pathlib import Path
+          data=json.loads(Path("build-provenance.json").read_text())
+          name=f"Onay-offline-demo-APK{data['versionCode']}.apk" if data['offlineDemoPreview'] else "android/app/build/outputs/apk/debug/app-debug.apk"
+          path=Path(name)
+          assert path.is_file(),name
+          with zipfile.ZipFile(path) as z:
+              bundle=z.read("assets/index.android.bundle")
+              assert bundle.startswith(bytes.fromhex("c61fbc03")), "Hermes bundle missing from APK"
+              assert b"onay-profile-language-row" in bundle, "Passenger language not in native asset"
+              assert b"onay-driver-language" in bundle, "Driver language not in native asset"
+              assert b"onay-profile-build-identity" in bundle, "Build identity UI missing"
+          assert data['applicationId'] == 'uz.tezjet.app'
+          assert data['sourceSha'] == __import__('os').environ['ONAY_BUILD_SHA']
+          print(f"Verified APK identity: {name}, SHA={data['sourceSha']}, versionCode={data['versionCode']}")
+          PY
       - name: Upload Android debug APK
         if: github.event_name == 'workflow_dispatch' && inputs.build_apk
         uses: actions/upload-artifact@v4
         with:
-          name: tezjet-android-debug-apk
-          path: mobile/tezjet-app/android/app/build/outputs/apk/debug/app-debug.apk
+          name: ${{ env.ONAY_DEMO_PREVIEW == 'true' && format('onay-android-demo-apk-{0}', steps.apk-meta.outputs.version_code) || 'tezjet-android-debug-apk' }}
+          path: |
+            ${{ env.ONAY_DEMO_PREVIEW == 'true' && 'mobile/tezjet-app/Onay-offline-demo-APK*.apk' || 'mobile/tezjet-app/android/app/build/outputs/apk/debug/app-debug.apk' }}
+            mobile/tezjet-app/build-provenance.json
           if-no-files-found: error
+
+  android-apk-acceptance:
+    name: Android E2E - driver overview and honest driver chats
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 110
+    needs: verify-mobile
+    runs-on: ubuntu-22.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Download existing APK114 (no rebuild)
+        uses: actions/download-artifact@v4
+        with:
+          name: onay-android-demo-apk-114
+          run-id: 42395049951
+          repository: erman-ksv/Onay
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: apk114
+      - name: Download already published final APK115 (no rebuild)
+        uses: actions/download-artifact@v4
+        with:
+          name: onay-android-demo-apk-115
+          run-id: 42406229478
+          repository: erman-ksv/Onay
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: apk-current
+      - name: Verify both original APKs, same signing certificate and source receipt
+        run: |
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          old=Path("apk114/Onay-offline-demo-APK114.apk")
+          current=list(Path("apk-current").rglob("Onay-offline-demo-APK*.apk"))
+          assert old.is_file() and len(current)==1, current
+          oldreceipt=json.loads(Path("apk114/build-provenance.json").read_text())
+          currentreceipt=json.loads(next(Path("apk-current").rglob("build-provenance.json")).read_text())
+          assert oldreceipt["versionCode"] == 114
+          assert currentreceipt["versionCode"] == 115
+          assert currentreceipt["sourceSha"] == '5c9f94044608f762c8f382a1e23afaa7a3d4c569'
+          assert oldreceipt["applicationId"] == currentreceipt["applicationId"] == "uz.tezjet.app"
+          assert oldreceipt["offlineDemoPreview"] and currentreceipt["offlineDemoPreview"]
+          print("Old and new APK provenance verified",currentreceipt)
+          PY
+          signer="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)"
+          "$signer" verify --print-certs apk114/Onay-offline-demo-APK114.apk | grep 'certificate SHA-256 digest' >/tmp/oldcert
+          "$signer" verify --print-certs "$(find apk-current -name 'Onay-offline-demo-APK*.apk' -print -quit)" | grep 'certificate SHA-256 digest' >/tmp/newcert
+          diff -u /tmp/oldcert /tmp/newcert
+      - name: Install Android SDK Emulator and runtime library before checking KVM
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          sdkmanager_bin="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$sdkmanager_bin"
+          "$sdkmanager_bin" --sdk_root="$sdk_root" --install "emulator"
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libpulse0
+          test -x "$sdk_root/emulator/emulator"
+          test -x "$sdk_root/emulator/qemu/linux-x86_64/qemu-system-x86_64"
+          if ldd "$sdk_root/emulator/qemu/linux-x86_64/qemu-system-x86_64" | grep 'not found'; then
+            echo "::error::ANDROID_SDK_BLOCKER: QEMU shared libraries missing"
+            exit 1
+          fi
+          "$sdk_root/emulator/emulator" -version
+      - name: Prove current runner KVM O_RDWR and usable acceleration
+        shell: bash
+        run: |
+          set -euo pipefail
+          id
+          groups
+          stat -c '%n %a %U %G' /dev/kvm
+          if command -v setfacl >/dev/null 2>&1; then
+            sudo setfacl -m "u:$(id -u):rw" /dev/kvm
+          else
+            old_gid="$(stat -c %g /dev/kvm)"
+            sudo chown "$(id -u):$old_gid" /dev/kvm
+            sudo chmod u+rw /dev/kvm
+          fi
+          if command -v getfacl >/dev/null 2>&1; then getfacl /dev/kvm; fi
+          python3 - <<'PY'
+          import os
+          fd=os.open("/dev/kvm",os.O_RDWR|os.O_CLOEXEC)
+          print("KVM O_RDWR passed",fd)
+          os.close(fd)
+          PY
+          "$ANDROID_HOME/emulator/emulator" -accel-check | tee /tmp/onay-accel.log
+          grep -Eiq 'KVM.*(installed and usable|is usable|is enabled)' /tmp/onay-accel.log
+      - name: One Android emulator session - update APK114 and take native screenshots
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: google_apis
+          profile: pixel_2
+          emulator-boot-timeout: 900
+          disable-animations: false
+          disable-linux-hw-accel: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: python3 scripts/onay-driver-mode-chats-android-qa.py --old-apk apk114/Onay-offline-demo-APK114.apk --new-apk apk-current/Onay-offline-demo-APK115.apk --version-code 115 --output artifacts/driver-mode-chats-android
+      - name: Publish native screenshots, UI XML and the verification receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onay-driver-mode-chats-android-qa
+          path: artifacts/driver-mode-chats-android/
+          if-no-files-found: warn
