@@ -20,11 +20,12 @@ type Props = {
   onHistory: () => void;
   onDriver: () => void;
   onLogout: () => void;
+  onSupportPreview?: () => void;
 };
 
 const APP_VERSION = Constants.expoConfig?.version ?? "0.1.0";
 
-export default function OnayPassengerProfile({ fullName, phoneNumber, busy, theme, active, onBackToHome, onThemeChange, onHistory, onDriver, onLogout }: Props) {
+export default function OnayPassengerProfile({ fullName, phoneNumber, busy, theme, active, onBackToHome, onThemeChange, onHistory, onDriver, onLogout, onSupportPreview }: Props) {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [personalOpen, setPersonalOpen] = useState(false);
   const [supportOpen, setSupportOpen] = useState(false);
@@ -45,7 +46,7 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
   const muted = light ? "#6a7b72" : onayDark.muted;
   const row = (id: string, label: string, action: () => void, trailing = "") => (
     <Pressable testID={"onay-profile-" + id} accessibilityRole="button" disabled={busy}
-      onPress={action} style={[s.linkRow, { borderColor: light ? "#d3e3d9" : onayDark.border }]}>
+      onPress={id === "support" && onSupportPreview ? onSupportPreview : action} style={[s.linkRow, { borderColor: light ? "#d3e3d9" : onayDark.border }]}>
       <Text style={{ color: foreground, fontWeight: "600" }}>{label}</Text>
       <Text style={{ color: muted }}>{trailing ? trailing + "  ›" : "›"}</Text>
     </Pressable>
@@ -70,7 +71,7 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
         <Text style={[s.detailValue, { color: foreground }]}>Пассажир</Text>
       </View> : null}
       <Text style={{ color: muted, fontSize: 13, lineHeight: 20, marginTop: 20 }}>Данные сохранены при регистрации. Если их нужно изменить, обратитесь в поддержку.</Text>
-      <Pressable testID="onay-personal-support" accessibilityRole="button" onPress={() => { setPersonalOpen(false); setSupportOpen(true); }} style={{ backgroundColor: onayDark.accent, padding: 16, borderRadius: 18, alignItems: "center", marginTop: 20 }}><Text style={{ color: onayDark.accentInk, fontSize: 16, fontWeight: "700" }}>Поддержка</Text></Pressable>
+      <Pressable testID="onay-personal-support" accessibilityRole="button" onPress={() => { setPersonalOpen(false); if (onSupportPreview) onSupportPreview(); else setSupportOpen(true); }} style={{ backgroundColor: onayDark.accent, padding: 16, borderRadius: 18, alignItems: "center", marginTop: 20 }}><Text style={{ color: onayDark.accentInk, fontSize: 16, fontWeight: "700" }}>Поддержка</Text></Pressable>
     </OnayScreenFrame>
   </Modal>;
   return <View testID="onay-passenger-profile-panel" style={[s.root, { backgroundColor: light ? "#f1f7f3" : onayDark.background }]}>

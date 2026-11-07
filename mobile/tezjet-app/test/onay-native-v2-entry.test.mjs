@@ -19,3 +19,9 @@ test("logout resets driver navigation before revocation can finish", () => {
   assert.ok(reset < clear.indexOf("await AsyncStorage.removeItem(TOKEN)"));
   assert.ok(logout.indexOf("await clearSession()") < logout.indexOf('await request<void>("/api/auth/logout"'));
 });
+
+test("fresh unconfigured startup opens auth, with endpoint setup still required for real OTP", () => {
+  const app = read("../app/index.tsx");
+  assert.ok(app.includes('const [showEndpointSettings, setShowEndpointSettings] = useState(false);'));
+  assert.ok(app.includes('if (!apiBase) setShowEndpointSettings(true); else void login(verify);'));
+});

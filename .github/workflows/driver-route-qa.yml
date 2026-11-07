@@ -10,6 +10,7 @@ on:
       - "scripts/passenger-route-stops-browser-qa.py"
       - "scripts/line-ride-browser-qa.py"
       - "scripts/onay-v2-browser-qa.py"
+      - "scripts/onay-demo-browser-qa.py"
       - "design/onay/**"
       - ".github/workflows/driver-route-qa.yml"
       - "package.json"
@@ -28,6 +29,7 @@ on:
       - "scripts/passenger-route-stops-browser-qa.py"
       - "scripts/line-ride-browser-qa.py"
       - "scripts/onay-v2-browser-qa.py"
+      - "scripts/onay-demo-browser-qa.py"
       - "design/onay/**"
       - ".github/workflows/driver-route-qa.yml"
       - "package.json"
@@ -123,7 +125,7 @@ jobs:
 
       - name: Export actual Expo app for web
         working-directory: mobile/tezjet-app
-        run: pnpm exec expo export --platform web --output-dir dist
+        run: pnpm exec expo export --clear --platform web --output-dir dist
 
       - name: Install pinned browser tooling
         run: |
@@ -134,7 +136,14 @@ jobs:
         working-directory: mobile/tezjet-app
         env:
           EXPO_PUBLIC_API_URL: ""
-        run: pnpm exec expo export --platform web --output-dir dist-unconfigured
+        run: pnpm exec expo export --clear --platform web --output-dir dist-unconfigured
+
+      - name: Export isolated offline demo preview
+        working-directory: mobile/tezjet-app
+        env:
+          EXPO_PUBLIC_API_URL: ""
+          ONAY_DEMO_PREVIEW: "true"
+        run: pnpm exec expo export --clear --platform web --output-dir dist-demo
 
       - name: Start API
         working-directory: artifacts/api-server
@@ -153,6 +162,8 @@ jobs:
           echo "$!" > artifacts/driver-route-qa/frontend.pid
           setsid python -m http.server 4175 --bind 127.0.0.1 --directory mobile/tezjet-app/dist-unconfigured > artifacts/driver-route-qa/unconfigured.log 2>&1 &
           echo "$!" > artifacts/driver-route-qa/unconfigured.pid
+          setsid python -m http.server 4176 --bind 127.0.0.1 --directory mobile/tezjet-app/dist-demo > artifacts/driver-route-qa/demo.log 2>&1 &
+          echo "$!" > artifacts/driver-route-qa/demo.pid
 
       - name: Wait for API and exported Expo app
         run: |
@@ -166,6 +177,7 @@ jobs:
               ("API", "http://127.0.0.1:5000/api/healthz", True),
               ("Expo app", "http://127.0.0.1:4174/", False),
               ("Unconfigured Expo app", "http://127.0.0.1:4175/", False),
+              ("Offline demo Expo app", "http://127.0.0.1:4176/", False),
           ):
               last_error = "No response"
               while time.monotonic() < deadline:
@@ -220,6 +232,14 @@ jobs:
             --output-dir artifacts/driver-route-qa/onay-v2 \
             2>&1 | tee artifacts/driver-route-qa/onay-v2.log
 
+      - name: Verify offline preview sends no API requests or sockets
+        run: |
+          python scripts/onay-demo-browser-qa.py \
+            --base-url http://127.0.0.1:4176 \
+            --live-url http://127.0.0.1:4175 \
+            --output-dir artifacts/driver-route-qa/offline-demo \
+            2>&1 | tee artifacts/driver-route-qa/offline-demo.log
+
       - name: Stop saved server processes
         if: always()
         run: |
@@ -228,7 +248,7 @@ jobs:
           from pathlib import Path
           import signal
 
-          for name in ("frontend", "unconfigured", "api"):
+          for name in ("frontend", "unconfigured", "demo", "api"):
               pid_file = Path("artifacts/driver-route-qa") / f"{name}.pid"
               if not pid_file.exists():
                   continue

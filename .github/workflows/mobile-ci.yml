@@ -20,6 +20,11 @@ on:
         type: boolean
         required: false
         default: false
+      demo_preview:
+        description: "Include the isolated offline demo for UI preview (debug APK only)"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -33,6 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       EXPO_PUBLIC_API_URL: ${{ vars.TEZJET_API_URL }}
+      ONAY_DEMO_PREVIEW: ${{ github.event_name == 'workflow_dispatch' && inputs.build_apk && inputs.demo_preview && 'true' || 'false' }}
     defaults:
       run:
         working-directory: mobile/tezjet-app
@@ -47,6 +53,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Keep offline preview independent of a configured server
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk && inputs.demo_preview
+        run: echo 'EXPO_PUBLIC_API_URL=' >> "$GITHUB_ENV"
       - name: Install mobile dependencies
         run: pnpm install
       - name: Record checked-out source identity
@@ -59,7 +68,7 @@ jobs:
           if (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' && sha !== process.env.GITHUB_SHA) throw new Error('Manual APK checkout differs from requested SHA');
           const config = JSON.parse(fs.readFileSync('app.json', 'utf8')).expo;
           const branch = process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME;
-          const receipt = { sourceSha: sha, sourceBranch: branch, runId: process.env.GITHUB_RUN_ID, applicationId: config.android.package, versionCode: config.android.versionCode, displayName: config.name, artifactType: 'Android debug preview', embeddedJavaScript: true };
+          const receipt = { sourceSha: sha, sourceBranch: branch, runId: process.env.GITHUB_RUN_ID, applicationId: config.android.package, versionCode: config.android.versionCode, displayName: config.name, artifactType: 'Android debug preview', embeddedJavaScript: true, offlineDemoPreview: process.env.ONAY_DEMO_PREVIEW === 'true' };
           fs.writeFileSync('build-provenance.json', JSON.stringify(receipt, null, 2) + '\n');
           fs.appendFileSync(process.env.GITHUB_ENV, `ONAY_BUILD_SHA=${sha}\nONAY_BUILD_BRANCH=${branch}\n`);
           console.log(JSON.stringify(receipt));
@@ -69,7 +78,7 @@ jobs:
       - name: Offer lifecycle and API error regressions
         run: pnpm test
       - name: Export Android and iOS bundles
-        run: pnpm exec expo export --platform android --platform ios
+        run: pnpm exec expo export --clear --platform android --platform ios
       - name: Set up Java for Android
         if: github.event_name == 'workflow_dispatch' && inputs.build_apk
         uses: actions/setup-java@v4
@@ -92,12 +101,15 @@ jobs:
       - name: Assemble Android debug APK
         if: github.event_name == 'workflow_dispatch' && inputs.build_apk
         run: cd android && ./gradlew assembleDebug
+      - name: Prepare offline demo APK filename
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk && inputs.demo_preview
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk Onay-offline-demo.apk
       - name: Upload Android debug APK
         if: github.event_name == 'workflow_dispatch' && inputs.build_apk
         uses: actions/upload-artifact@v4
         with:
-          name: tezjet-android-debug-apk
+          name: ${{ inputs.demo_preview && 'onay-android-demo-apk' || 'tezjet-android-debug-apk' }}
           path: |
-            mobile/tezjet-app/android/app/build/outputs/apk/debug/app-debug.apk
+            ${{ inputs.demo_preview && 'mobile/tezjet-app/Onay-offline-demo.apk' || 'mobile/tezjet-app/android/app/build/outputs/apk/debug/app-debug.apk' }}
             mobile/tezjet-app/build-provenance.json
           if-no-files-found: error

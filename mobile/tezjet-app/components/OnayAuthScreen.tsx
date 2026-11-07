@@ -13,6 +13,7 @@ type Mode = "passenger" | "driver";
 
 type Props = {
   mode: Mode;
+  onDemo?: (role: Mode) => void;
   registering: boolean;
   requested: boolean;
   busy: boolean;
@@ -182,6 +183,8 @@ export default function OnayAuthScreen(props: Props) {
               props.mode === "driver" ? "Профиль водителя требует одобрения администратора" :
               "Код отправляется через настроенный SMS-сервис"}
           </Text>
+
+          {props.onDemo && !props.requested ? <Pressable testID="onay-auth-demo" accessibilityRole="button" disabled={props.busy} onPress={() => props.onDemo?.(props.mode)} style={{ borderWidth: 1, borderColor: onayDark.accent, borderRadius: 16, padding: 14, marginTop: 14, alignItems: "center", opacity: props.busy ? .45 : 1 }}><Text style={{ color: onayDark.accent, fontWeight: "700", fontSize: 16 }}>Посмотреть без SMS</Text><Text style={{ color: onayDark.muted, fontSize: 12, marginTop: 4 }}>Демо · Без сервера и настоящих заказов</Text></Pressable> : null}
 
           {!props.requested ? <View style={s.links}>
             <Pressable

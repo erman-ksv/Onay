@@ -1,3 +1,6 @@
+import Constants from "expo-constants";
+import OnayDemoApp from "../components/OnayDemoApp";
+import { onayDemoPreviewEnabled } from "../lib/onay-demo";
 import OnayPassengerRide from "../components/OnayPassengerRide";
 import { useOnaySystemUi } from "../lib/use-onay-system-ui";
 import OnayDriverQueue from "../components/OnayDriverQueue";
@@ -67,6 +70,14 @@ function Stepper({ value, onChange, min = 1, max = 8, disabled = false, dark = f
 }
 
 export default function Home() {
+  const [demoRole, setDemoRole] = useState<Mode | null>(null);
+  const enabled = onayDemoPreviewEnabled(Constants.expoConfig?.extra);
+  return demoRole && enabled
+    ? <OnayDemoApp initialRole={demoRole} onExit={() => setDemoRole(null)}/>
+    : <LiveOnayApp onDemo={enabled ? setDemoRole : undefined}/>;
+}
+
+function LiveOnayApp({ onDemo }: { onDemo?: (role: Mode) => void }) {
   const [routeEditorOpen, setRouteEditorOpen] = useState(false);
   const [driverSubpage, setDriverSubpage] = useState<"support" | "about" | "vehicle" | null>(null);
   const [driverTab, setDriverTab] = useState<OnayDriverTab>("line");
@@ -108,7 +119,7 @@ export default function Home() {
   const [apiBase, setApiBase] = useState(API);
   const [endpointInput, setEndpointInput] = useState(API);
   const [endpointError, setEndpointError] = useState("");
-  const [showEndpointSettings, setShowEndpointSettings] = useState(!API);
+  const [showEndpointSettings, setShowEndpointSettings] = useState(false);
   const [token, setToken] = useState("");
   const [profile, setProfile] = useState<Profile | null>(null);
   const [name, setName] = useState("");
@@ -895,6 +906,7 @@ export default function Home() {
   if (entryScreen === "auth") {
     return <OnayAuthScreen
       mode={mode}
+      onDemo={onDemo}
       registering={registering}
       requested={requested}
       busy={busy || sessionLoading}
