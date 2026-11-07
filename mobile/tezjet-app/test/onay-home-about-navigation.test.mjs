@@ -9,7 +9,7 @@ const profile = readFileSync(new URL("../components/OnayPassengerProfile.tsx", i
 test("About is available from profile after removing the Home hamburger", () => {
   assert.doesNotMatch(home, /onay-home-menu-open|onay-home-about|menuOpen|aboutOpen/);
   assert.match(profile, /row\("about", "О приложении", \(\) => setAboutOpen\(true\)\)/);
-  assert.ok(profile.includes('<OnayPassengerAbout theme={theme} onBack={() => setAboutOpen(false)} />'));
+  assert.ok(profile.includes('<OnayPassengerAbout theme={theme} mode={demoMode ? "demo" : "live"} onBack={() => setAboutOpen(false)} />'));
   assert.ok(about.includes('backLabel = "Назад в профиль"'));
   assert.ok(about.includes('accessibilityLabel={backLabel}'));
   assert.match(about, /testID="onay-about-real-version"/);
