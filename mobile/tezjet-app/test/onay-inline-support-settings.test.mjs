@@ -30,7 +30,9 @@ test("support copies project email without sending messages in preview; legal li
 test("driver sound setting is marked unavailable rather than a fake toggle; actual queue methods stay connected", () => {
  const profile = read("../components/OnayDriverProfile.tsx");
  assert.match(profile, /onay-driver-sound-unavailable/);
+ assert.match(profile, /approval === "pending" \? "На проверке" : "Статус недоступен"/);
  assert.doesNotMatch(profile, /onay-driver-sound-switch/);
+ assert.match(read("../../../scripts/onay-demo-browser-qa.py"), /page.get_by_test_id\("onay-support-back"\)\.click\(\)/);
  const app = read("../app/index.tsx");
  assert.match(app, /onOnline=\{\(\) => \{ if \(queueMembership === "enrolled"\) void leaveQueue\(\); else if \(canJoinQueue\) void joinQueue\(\);/);
 });

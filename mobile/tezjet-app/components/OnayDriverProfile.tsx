@@ -20,7 +20,7 @@ export default function OnayDriverProfile({ fullName, phoneNumber, vehicle, appr
    {row("Автомобиль", vehicle ? [vehicle.make,vehicle.model].filter(Boolean).join(" ") : "Добавить",onVehicle)}
    {row("Номер",vehicle?.plate_number || "Не указан",onVehicle)}
    {row("Мест в салоне",vehicle?.seat_capacity ? String(vehicle.seat_capacity) : "Не указано",onVehicle)}
-   {row("Анкета",approval === "approved" ? "Подтверждена" : approval === "blocked" ? "Заблокирована" : approval === "rejected" ? "Отклонена" : "На проверке")}
+   {row("Анкета",approval === "approved" ? "Подтверждена" : approval === "blocked" ? "Заблокирована" : approval === "rejected" ? "Отклонена" : approval === "pending" ? "На проверке" : "Статус недоступен")}
   </View>
   <View style={[s.list, { backgroundColor: c.card }]}>
     <View style={[s.row, { borderColor: c.border, flexWrap: "wrap" }]}>

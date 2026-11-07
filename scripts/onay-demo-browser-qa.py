@@ -83,7 +83,7 @@ def main():
             page.get_by_test_id("onay-screen-back").click()
             page.get_by_test_id("onay-profile-support").click()
             expect(page.get_by_test_id("onay-demo-page")).to_contain_text("сообщения не отправляются")
-            page.get_by_test_id("onay-screen-back").click()
+            page.get_by_test_id("onay-support-back").click()
             expect(page.get_by_test_id("onay-demo-page")).to_have_count(0)
             page.get_by_test_id("onay-profile-theme-light").click()
             for width in (320, 390):

@@ -1,6 +1,7 @@
 export type OnayLanguage = "ru" | "kk" | "uz";
 export const ONAY_LANGUAGES = [{ code: "kk", name: "Қазақша" }, { code: "ru", name: "Русский" }, { code: "uz", name: "O‘zbekcha" }] as const;
 const messages: Record<string, readonly [string, string]> = {
+  "Статус недоступен": ["Мәртебе қолжетімсіз", "Holat mavjud emas"],
   "Язык": ["Тіл","Til"],
   "Телефон не указан": ["Телефон көрсетілмеген","Telefon ko‘rsatilmagan"],
   "Звук и вибрация": ["Дыбыс және діріл","Ovoz va tebranish"],
