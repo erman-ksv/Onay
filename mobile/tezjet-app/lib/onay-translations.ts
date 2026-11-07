@@ -1,6 +1,20 @@
 export type OnayLanguage = "ru" | "kk" | "uz";
 export const ONAY_LANGUAGES = [{ code: "kk", name: "Қазақша" }, { code: "ru", name: "Русский" }, { code: "uz", name: "O‘zbekcha" }] as const;
 const messages: Record<string, readonly [string, string]> = {
+  "Язык": ["Тіл","Til"],
+  "Телефон не указан": ["Телефон көрсетілмеген","Telefon ko‘rsatilmagan"],
+  "Звук и вибрация": ["Дыбыс және діріл","Ovoz va tebranish"],
+  "Пока недоступно": ["Әзірге қолжетімсіз","Hozircha mavjud emas"],
+  "Документ не опубликован": ["Құжат жарияланбаған","Hujjat eʼlon qilinmagan"],
+  "Политика конфиденциальности": ["Құпиялылық саясаты","Maxfiylik siyosati"],
+  "Условия использования": ["Пайдалану шарттары","Foydalanish shartlari"],
+  "Скопировать email": ["Email мекенжайын көшіру","Email manzilini nusxalash"],
+  "Email скопирован": ["Email көшірілді","Email nusxalandi"],
+  "Не удалось скопировать email": ["Email-ды көшіру мүмкін болмады","Emailni nusxalab bo‘lmadi"],
+  "В деморежиме сообщения не отправляются.": ["Демода хабарламалар жіберілмейді.","Demo rejimida xabarlar yuborilmaydi."],
+  "Принимать заказы": ["Тапсырыстарды қабылдау","Buyurtmalarni qabul qilish"],
+  "Проверка водителя": ["Жүргізушіні тексеру","Haydovchini tekshirish"],
+  "Ваш маршрут": ["Сіздің бағытыңыз","Sizning yo‘nalishingiz"],
   "Главная": [
     "Басты бет",
     "Bosh sahifa"

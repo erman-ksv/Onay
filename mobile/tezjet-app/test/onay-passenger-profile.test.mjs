@@ -10,7 +10,7 @@ test("home has no hamburger; profile retains theme, about, version and language"
   assert.doesNotMatch(home, /onay-home-menu-open|onay-home-settings-menu/);
   assert.match(profile, /onay-profile-theme-/);
   assert.match(profile, /row\("about", "О приложении"/);
-  assert.match(profile, /row\("language", "Язык приложения"/);
+  assert.match(profile, /testID="onay-profile-language"/);
   assert.match(profile, /Constants\.expoConfig\?\.version/);
 });
 

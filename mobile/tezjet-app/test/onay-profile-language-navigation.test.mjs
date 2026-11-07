@@ -32,5 +32,12 @@ test("language survives restart independently of auth, stale hydration cannot ov
  assert.match(source,/active && !changed.current/);
  assert.match(source,/value === "ru" \|\| value === "kk" \|\| value === "uz"/);
  assert.doesNotMatch(source,/fetch\(|TOKEN|socket|\/api\//);
- for (const file of ["../components/OnayPassengerProfile.tsx", "../components/OnayDriverProfile.tsx"]) assert.match(read(file),/OnayLanguageSettings/);
+ for (const file of ["../components/OnayPassengerProfile.tsx", "../components/OnayDriverProfile.tsx"]) {
+  assert.match(read(file),/OnayInlineLanguage/);
+  assert.doesNotMatch(read(file),/OnayLanguageSettings/);
+ }
+ const inline = read("../components/OnayInlineLanguage.tsx");
+ assert.match(inline, /code: "kk", caption: "KZ"/);
+ assert.match(inline, /changeLanguage/);
+ assert.match(inline, /accessibilityRole="radiogroup"/);
 });

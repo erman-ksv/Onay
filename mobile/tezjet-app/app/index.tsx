@@ -1104,7 +1104,7 @@ function LiveOnayApp({ onDemo }: { onDemo?: (role: Mode) => void }) {
       </>,
       chats: <OnayPassengerChatsEmpty theme={passengerTheme}/>,
       profile: <>
-        <OnayDriverProfile fullName={profile.full_name || ""} vehicle={profile.driver_vehicle} approval={profile.driver_approval_status}
+        <OnayDriverProfile fullName={profile.full_name || ""} phoneNumber={profile.phone_number} vehicle={profile.driver_vehicle} approval={profile.driver_approval_status}
           theme={passengerTheme} onTheme={changePassengerTheme} busy={busy || profileLoading}
           onVehicle={() => setDriverSubpage("vehicle")} onSupport={() => setDriverSubpage("support")} onAbout={() => setDriverSubpage("about")}
           onPassenger={() => { void switchMode("passenger"); }} onServer={() => setShowEndpointSettings(true)} onLogout={logout}/>

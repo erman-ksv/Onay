@@ -1,6 +1,4 @@
-import OnayLanguageSettings from "./OnayLanguageSettings";
-import { useOnayLanguage } from "../lib/onay-language-context";
-import { ONAY_LANGUAGES } from "../lib/onay-translations";
+import OnayInlineLanguage from "./OnayInlineLanguage";
 import Text from "./OnayText";
 import OnayIcon from "./OnayIcon";
 import OnayScreenFrame from "./OnayScreenFrame";
@@ -30,15 +28,12 @@ type Props = {
 const APP_VERSION = Constants.expoConfig?.version ?? "0.1.0";
 
 export default function OnayPassengerProfile({ fullName, phoneNumber, busy, theme, active, onBackToHome, onThemeChange, onHistory, onDriver, onLogout, onSupportPreview }: Props) {
-  const { language } = useOnayLanguage();
-  const [languageOpen, setLanguageOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [personalOpen, setPersonalOpen] = useState(false);
   const [supportOpen, setSupportOpen] = useState(false);
   useEffect(() => {
     if (!active || Platform.OS === "web") return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (languageOpen) { setLanguageOpen(false); return true; }
       if (supportOpen) { setSupportOpen(false); return true; }
       if (aboutOpen) { setAboutOpen(false); return true; }
       if (personalOpen) { setPersonalOpen(false); return true; }
@@ -46,7 +41,7 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
       return true;
     });
     return () => subscription.remove();
-  }, [active, languageOpen, supportOpen, aboutOpen, personalOpen, onBackToHome]);
+  }, [active, supportOpen, aboutOpen, personalOpen, onBackToHome]);
   const light = theme === "light";
   const surface = light ? "#ffffff" : onayDark.card;
   const foreground = light ? "#0a1d15" : onayDark.text;
@@ -58,7 +53,6 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
       <Text style={{ color: muted }}>{trailing ? trailing + "  ›" : "›"}</Text>
     </Pressable>
   );
-  if (languageOpen) return <OnayLanguageSettings theme={theme} onBack={() => setLanguageOpen(false)}/>;
   if (supportOpen) {
     return <OnayPassengerSupport theme={theme} onBack={() => setSupportOpen(false)} />;
   }
@@ -116,8 +110,11 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
         <Text style={{ color: foreground, fontWeight: "600" }}>Личные данные</Text>
         <Text style={{ color: muted }}>{personalOpen ? "⌃" : "›"}</Text>
       </Pressable>
-      {row("language", "Язык приложения", () => setLanguageOpen(true), ONAY_LANGUAGES.find(item => item.code === language)?.name)}
       {row("history", "История поездок", onHistory)}
+      <View testID="onay-profile-language-row" style={[s.linkRow, { borderBottomWidth: 0, gap: 8, flexWrap: "wrap", paddingVertical: 9 }]}>
+        <Text style={{ color: foreground, fontWeight: "600", flexShrink: 1 }}>Язык</Text>
+        <OnayInlineLanguage theme={theme} testID="onay-profile-language"/>
+      </View>
     </View>
 
     <View style={[s.group, { backgroundColor: surface }]}>
