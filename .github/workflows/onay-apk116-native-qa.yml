@@ -1,0 +1,119 @@
+name: Onay APK116 native QA - already published artifact only
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/onay-apk116-native-qa.yml"
+permissions:
+  contents: read
+  actions: read
+jobs:
+  android-native-acceptance:
+    name: APK115 to APK116 on Android - both new screens
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 110
+    runs-on: ubuntu-22.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Download original published APK115
+        uses: actions/download-artifact@v4
+        with:
+          name: onay-android-demo-apk-115
+          repository: erman-ksv/Onay
+          run-id: 42406229478
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: apk115
+      - name: Download this run's single final APK116
+        uses: actions/download-artifact@v4
+        with:
+          name: onay-android-demo-apk-116
+          run-id: 42443018950
+          repository: erman-ksv/Onay
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: apk116
+      - name: Verify both APK receipts, embedded JavaScript and certificate continuity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/onay-driver-mode-chats-android-qa.py
+          python3 - <<'PY'
+          import json, zipfile, hashlib
+          from pathlib import Path
+          a=Path("apk115/Onay-offline-demo-APK115.apk")
+          b=Path("apk116/Onay-offline-demo-APK116.apk")
+          assert a.is_file() and b.is_file(), "Published and newly-built APK both required"
+          old=json.loads(Path("apk115/build-provenance.json").read_text())
+          new=json.loads(Path("apk116/build-provenance.json").read_text())
+          assert old["versionCode"] == 115 and new["versionCode"] == 116
+          assert new["sourceSha"] == "5421afb1f3caad8f86c9f9612f6b9c79af176f3b"
+          assert old["applicationId"]==new["applicationId"]=="uz.tezjet.app"
+          assert new["offlineDemoPreview"] and old["offlineDemoPreview"]
+          with zipfile.ZipFile(b) as z:
+              script=z.read("assets/index.android.bundle")
+              assert script.startswith(bytes.fromhex("c61fbc03"))
+              for marker in (b"onay-personal-details-screen",b"onay-profile-personal-email",
+                             b"onay-driver-mode-overview",b"onay-driver-mode-retry"):
+                  assert marker in script, marker
+          print("APK116 SHA256",hashlib.sha256(b.read_bytes()).hexdigest())
+          print("Manifest receipt",new)
+          PY
+          signer="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)"
+          "$signer" verify --print-certs apk115/Onay-offline-demo-APK115.apk | grep 'certificate SHA-256 digest' >/tmp/apk115cert
+          "$signer" verify --print-certs apk116/Onay-offline-demo-APK116.apk | grep 'certificate SHA-256 digest' >/tmp/apk116cert
+          diff -u /tmp/apk115cert /tmp/apk116cert
+      - name: Install Android SDK emulator and required headless libraries before KVM checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$sdkmanager"
+          "$sdkmanager" --sdk_root="$sdk_root" --install "emulator"
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libpulse0
+          test -x "$sdk_root/emulator/emulator"
+          test -x "$sdk_root/emulator/qemu/linux-x86_64/qemu-system-x86_64"
+          missing="$(ldd "$sdk_root/emulator/qemu/linux-x86_64/qemu-system-x86_64" | grep 'not found' || true)"
+          test -z "$missing" || { echo "$missing"; exit 1; }
+          "$sdk_root/emulator/emulator" -version
+      - name: Verify runner ACL, KVM O_RDWR and emulator hardware acceleration
+        shell: bash
+        run: |
+          set -euo pipefail
+          id
+          groups
+          stat -c '%n %a %U %G' /dev/kvm
+          if command -v setfacl >/dev/null 2>&1; then
+            sudo setfacl -m "u:$(id -u):rw" /dev/kvm
+          else
+            sudo chown "$(id -u):$(stat -c '%g' /dev/kvm)" /dev/kvm
+            sudo chmod u+rw /dev/kvm
+          fi
+          python3 - <<'PY'
+          import os
+          fd=os.open("/dev/kvm",os.O_RDWR|os.O_CLOEXEC)
+          print("KVM O_RDWR verified",fd)
+          os.close(fd)
+          PY
+          "$ANDROID_HOME/emulator/emulator" -accel-check | tee /tmp/onay-accel-check
+          grep -Eiq 'KVM.*(installed and usable|is usable|is enabled)' /tmp/onay-accel-check
+      - name: Install APK115 then upgrade APK116, capture actual Android screens
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: google_apis
+          profile: pixel_2
+          emulator-boot-timeout: 900
+          disable-animations: false
+          disable-linux-hw-accel: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: python3 scripts/onay-driver-mode-chats-android-qa.py --old-apk apk115/Onay-offline-demo-APK115.apk --old-version-code 115 --new-apk apk116/Onay-offline-demo-APK116.apk --version-code 116 --output artifacts/apk116-native
+      - name: Publish native screenshots and ADB verification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onay-apk116-personal-driver-android-qa
+          path: artifacts/apk116-native/
+          if-no-files-found: warn
