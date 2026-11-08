@@ -1,0 +1,54 @@
+name: Deliver existing APK118 as a direct Android download
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/onay-deliver-apk118.yml'
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: onay-deliver-existing-apk118
+  cancel-in-progress: false
+jobs:
+  publish-verified-demo:
+    if: github.repository == 'erman-ksv/Onay' && github.event.pull_request.number == 110 && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Download the already published APK118, without rebuilding
+        uses: actions/download-artifact@v4
+        with:
+          name: onay-android-demo-apk-118
+          run-id: 42472262883
+          repository: erman-ksv/Onay
+          github-token: ${{ github.token }}
+          path: original
+      - name: Verify exact APK bytes and immutable source receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path('original')
+          apk=root/'Onay-offline-demo-APK118.apk'
+          digest='0d818408156ea36efeaf7bc8b6ed795f1844e6edba2d3b5c1b62fd72682b66f3'
+          assert apk.stat().st_size==135991212, 'Unexpected APK length'
+          assert hashlib.sha256(apk.read_bytes()).hexdigest()==digest, 'Unexpected APK hash'
+          receipt=json.loads((root/'build-provenance.json').read_text())
+          assert receipt['sourceSha']=='516e73a553e65291b95142c7ea80b1259d4e1603'
+          assert receipt['applicationId']=='uz.tezjet.app' and receipt['versionCode']==118
+          assert receipt['offlineDemoPreview'] is True
+          Path('SHA256SUMS.txt').write_text(digest+'  '+apk.name+'\n')
+          Path('release-notes.md').write_text('Offline Android demo for manual UI testing. Debug preview, not a production release.\n\nUnchanged APK118 from Actions run 42472262883 / artifact 13613883839. No rebuild, resigning or merge.\n\nSource: 516e73a553e65291b95142c7ea80b1259d4e1603\nPackage: uz.tezjet.app\nVersion code: 118\nAPK bytes: 135991212\nSHA256: '+digest+'\n\nDirect APK download provided because the phone file manager failed to extract the Actions ZIP. Install as an update; uninstalling Onay is not required. Sample data, no SMS or server.\n')
+          print('Original APK118 and source identity verified; no build performed.')
+          PY
+      - name: Publish direct APK as a test prerelease, never as latest production
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create onay-demo-apk118 original/Onay-offline-demo-APK118.apk SHA256SUMS.txt --repo erman-ksv/Onay --target 516e73a553e65291b95142c7ea80b1259d4e1603 --prerelease --latest=false --title 'Onay APK118 - offline Android demo' --notes-file release-notes.md
