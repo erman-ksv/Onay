@@ -249,7 +249,7 @@ function LiveOnayApp({ onDemo }: { onDemo?: (role: Mode) => void }) {
           }
         }
         const savedToken = values[1][1];
-        if (savedToken) { currentToken.current = savedToken; setToken(savedToken); }
+        if (savedToken) { setProfileLoading(true); currentToken.current = savedToken; setToken(savedToken); }
         setSessionRestoreError(false);
       })
       .catch(() => { if (active) setSessionRestoreError(true); })
