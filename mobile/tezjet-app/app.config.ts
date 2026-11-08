@@ -4,7 +4,7 @@ import type { ConfigContext, ExpoConfig } from "expo/config";
 
 /** The CI receipt is the source of truth. Never hardcode a commit into this file. */
 export function resolveOnayBuildMetadata(
-  config: ExpoConfig,
+  config: Partial<ExpoConfig>,
   rawReceipt: unknown,
   env: Record<string, string | undefined>,
 ) {
