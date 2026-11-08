@@ -72,6 +72,8 @@ def selected_language(lang):
         raise AssertionError(f"Language {lang} not selected in installed Android: {node.attrib}")
 
 def check_language(out,lang,report):
+    h.adb("shell","am","force-stop","uz.tezjet.app")
+    h.adb("shell","monkey","-p","uz.tezjet.app","-c","android.intent.category.LAUNCHER","1",timeout=40)
     tap_demo()
     h.click("onay-tab-profile","id")
     h.await_node("onay-passenger-profile-panel","id")
