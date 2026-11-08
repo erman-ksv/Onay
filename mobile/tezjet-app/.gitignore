@@ -8,3 +8,7 @@ dist/
 build-provenance.json
 
 Onay-offline-demo.apk
+
+# Deterministic generated launcher art (source: onay-original-logo.png)
+assets/onay-launcher-icon.png
+assets/onay-adaptive-foreground.png

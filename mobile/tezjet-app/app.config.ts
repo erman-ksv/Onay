@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import type { ConfigContext, ExpoConfig } from "expo/config";
 
@@ -49,6 +50,8 @@ function readBuildReceipt(): unknown {
 
 /** Public build identity becomes part of the actual Expo config during export AND prebuild. */
 export default function ({ config }: ConfigContext): ExpoConfig {
+  // Deterministic padded Android icon artwork, generated from the committed transparent Onay logo.
+  execFileSync(process.execPath, [resolve(process.cwd(), "scripts/prepare-onay-icons.cjs")], { stdio: "pipe" });
   return {
     ...config,
     name: config.name || "Onay",

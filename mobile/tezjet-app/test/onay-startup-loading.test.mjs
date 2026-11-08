@@ -5,7 +5,7 @@ import { onayEntryScreen, onayDark } from "../lib/onay-auth-ui.ts";
 import { hydrateOnayStartupLanguage, parseOnayStartupLanguage } from "../lib/onay-startup-language.ts";
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8");
 
-test("native Onay splash and Android adaptive icon share the real logo and dark background", () => {
+test("native splash stays dark while launcher has padded white adaptive artwork", () => {
  const config=JSON.parse(read("../app.json")).expo;
  const plugin=config.plugins.find(p=>Array.isArray(p) && p[0]==="expo-splash-screen");
  assert.ok(plugin, "Expo prebuild must generate a native splash");
@@ -13,8 +13,11 @@ test("native Onay splash and Android adaptive icon share the real logo and dark 
  assert.equal(props.image,"./assets/onay-original-logo.png");
  assert.equal(props.backgroundColor,onayDark.background);
  assert.equal(props.dark.backgroundColor,onayDark.background);
- assert.equal(config.android.adaptiveIcon.foregroundImage,"./assets/onay-original-logo.png");
- assert.equal(config.android.adaptiveIcon.backgroundColor,onayDark.background);
+ assert.equal(config.android.adaptiveIcon.foregroundImage,"./assets/onay-adaptive-foreground.png");
+ assert.equal(config.android.adaptiveIcon.backgroundColor,"#ffffff");
+ assert.equal(config.icon,"./assets/onay-launcher-icon.png");
+ assert.equal(props.imageWidth,160);
+ assert.equal(config.android.versionCode,119);
  assert.equal(config.android.package,"uz.tezjet.app");
 });
 test("brand startup uses saved language, not a speculative first Russian frame", () => {
@@ -28,6 +31,8 @@ test("brand startup uses saved language, not a speculative first Russian frame",
  assert.match(context,/setHydration\("error"\)/);
  assert.match(layout,/SplashScreen\.preventAutoHideAsync\(\)/);
  assert.match(layout,/SplashScreen\.hideAsync\(\)/);
+ assert.match(layout,/requestAnimationFrame\(/);
+ assert.doesNotMatch(layout,/setTimeout\(/);
  assert.match(layout,/hydration === "loading"/);
  assert.match(layout,/hydration === "error"/);
  assert.match(startup,/ru: "Загрузка"/);
@@ -36,6 +41,7 @@ test("brand startup uses saved language, not a speculative first Russian frame",
  assert.match(startup,/onay-startup-label/);
  assert.match(startup,/onay-startup-squares/);
  assert.match(startup,/onay-original-logo\.png/);
+ assert.match(startup,/width:160,height:160/);
  assert.doesNotMatch(startup,/setTimeout\(|setInterval\(/);
 });
 test("animation stops on unmount, honors reduce motion, initialization errors can retry", () => {
