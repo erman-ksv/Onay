@@ -26,7 +26,7 @@ test("history returns to its origin in both real and offline trees, including An
 });
 test("language survives restart independently of auth, stale hydration cannot overwrite a new selection", () => {
  const source=read("../lib/onay-language-context.tsx");
- assert.match(source,/onay_language_v1/);
+ assert.match(read("../lib/onay-startup-language.ts"),/onay_language_v1/);
  assert.match(source,/AsyncStorage.getItem\(LANGUAGE_KEY\)/);
  assert.match(source,/AsyncStorage.setItem\(LANGUAGE_KEY, value\)/);
  assert.match(source,/!changed.current &&/);
