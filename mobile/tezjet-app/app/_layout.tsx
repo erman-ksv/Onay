@@ -19,7 +19,7 @@ function StartupRouter() {
   if (laidOut && hydration !== "loading") void SplashScreen.hideAsync().catch(() => {});
  }, [laidOut, hydration]);
  return <View style={{ flex: 1, backgroundColor: onayDark.background }} onLayout={() => setLaidOut(true)}>
-  <StatusBar style={hydration === "ready" ? "dark" : "light"} backgroundColor={onayDark.background}/>
+  <StatusBar style="light" backgroundColor={onayDark.background}/>
   {hydration === "loading" ? <View testID="onay-language-hydrating" style={{ flex: 1, backgroundColor: onayDark.background }}/> :
    hydration === "error" ? <OnayStartupLoading error onRetry={retryLanguage} onContinue={continueWithDefaultLanguage}/> :
    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: onayDark.background } }}/>}
