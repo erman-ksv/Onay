@@ -3,7 +3,8 @@ export type DriverModeVehicle = {
   make?: string; model?: string; plate_number?: string; seat_capacity?: number;
 };
 export function driverModeStatus(approval: unknown, vehicle: DriverModeVehicle | null | undefined): DriverModeStatus {
-  if (approval === "pending" || approval === "approved" || approval === "rejected" || approval === "blocked") return approval;
+  if (approval === "blocked" || approval === "rejected" || approval === "approved") return approval;
+  if (approval === "pending") return vehicle == null ? "unfilled" : "pending";
   return vehicle == null ? "unfilled" : "unknown";
 }
 export function hasCompleteDriverVehicle(vehicle: DriverModeVehicle | null | undefined): boolean {

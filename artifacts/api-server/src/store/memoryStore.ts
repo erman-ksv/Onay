@@ -135,7 +135,7 @@ class MemoryStore implements Store {
     return userId ? this.getUser(userId) : undefined;
   }
 
-  updateUser(userId: string, patch: Partial<Pick<User, "locale" | "lastLocation">>): User {
+  updateUser(userId: string, patch: Partial<Pick<User, "locale" | "lastLocation" | "email">>): User {
     const user = this.users.get(userId);
     if (!user) {
       throw new Error(`User ${userId} not found`);

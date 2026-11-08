@@ -11,6 +11,7 @@ import { onayProfileInitial } from "../lib/onay-profile-avatar";
 import OnayPassengerSupport from "./OnayPassengerSupport";
 import OnayPassengerAbout from "./OnayPassengerAbout";
 import OnayDriverModeOverview from "./OnayDriverModeOverview";
+import OnayPersonalDetails from "./OnayPersonalDetails";
 import type { DriverModeVehicle } from "../lib/onay-driver-mode-status";
 
 type Theme = "light" | "dark";
@@ -27,6 +28,10 @@ type Props = {
   onLogout: () => void;
   onSupportPreview?: () => void;
   demoMode?: boolean;
+  email?: string | null;
+  onSaveEmail?: (email: string | null) => Promise<string | null>;
+  onLoadDriverVehicle?: () => Promise<{ driver_vehicle: DriverModeVehicle | null; approval_status: "pending" | "approved" | "rejected" | "blocked" | null; route_name?: string | null; review_reason?: string | null }>;
+  onOpenDriverVehicle?: () => void;
   driverApprovalStatus?: "pending" | "approved" | "rejected" | "blocked" | null;
   driverVehicle?: DriverModeVehicle | null;
   driverRouteName?: string | null;
@@ -36,7 +41,7 @@ type Props = {
 
 const APP_VERSION = Constants.expoConfig?.version ?? "0.1.0";
 
-export default function OnayPassengerProfile({ fullName, phoneNumber, busy, theme, active, onBackToHome, onThemeChange, onHistory, onDriver, onLogout, onSupportPreview, demoMode = false, driverApprovalStatus, driverVehicle,
+export default function OnayPassengerProfile({ fullName, phoneNumber, busy, theme, active, onBackToHome, onThemeChange, onHistory, onDriver, onLogout, onSupportPreview, demoMode = false, email, onSaveEmail, onLoadDriverVehicle, onOpenDriverVehicle, driverApprovalStatus, driverVehicle,
   driverRouteName, driverQueueReady = false, driverEnrolled = false }: Props) {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [personalOpen, setPersonalOpen] = useState(false);
@@ -69,7 +74,8 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
     onRequestClose={() => setDriverModeOpen(false)}>
     <OnayDriverModeOverview theme={theme} demoMode={demoMode} approval={driverApprovalStatus}
       vehicle={driverVehicle} routeName={driverRouteName} queueReady={driverQueueReady}
-      enrolled={driverEnrolled} busy={busy} onBack={() => setDriverModeOpen(false)}
+      enrolled={driverEnrolled} busy={busy} onLoadVehicle={onLoadDriverVehicle} onOpenVehicle={onOpenDriverVehicle}
+      onBack={() => setDriverModeOpen(false)}
       onOpenDriver={() => { setDriverModeOpen(false); onDriver(); }}
       onSupport={() => { setDriverModeOpen(false); if (onSupportPreview) onSupportPreview(); else setSupportOpen(true); }}/>
   </Modal>;
@@ -80,21 +86,8 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
     return <OnayPassengerAbout theme={theme} mode={demoMode ? "demo" : "live"} onBack={() => setAboutOpen(false)} />;
   }
   if (personalOpen) return <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setPersonalOpen(false)}>
-    <OnayScreenFrame title="Личные данные" theme={theme} onBack={() => setPersonalOpen(false)}>
-      <View style={{ alignItems: "center", marginVertical: 24 }}><View style={[s.avatar, { backgroundColor: light ? "#e6f0ea" : onayDark.cardRaised }]}><OnayIcon name="user" color={muted} size={38}/></View></View>
-      {personalOpen ? <View testID="onay-profile-personal-details" style={[s.personalDetails, { backgroundColor: surface, padding: 16, borderRadius: 20 }]}>
-        <Text style={[s.detailCaption, { color: muted }]}>ФИО</Text>
-        <Text testID="onay-profile-personal-name" style={[s.detailValue, { color: foreground }]}>{fullName || "Не указано"}</Text>
-        {phoneNumber ? <>
-          <Text style={[s.detailCaption, { color: muted }]}>Номер телефона</Text>
-          <Text testID="onay-profile-personal-phone" style={[s.detailValue, { color: foreground }]}>{phoneNumber}</Text>
-        </> : null}
-        <Text style={[s.detailCaption, { color: muted }]}>Режим аккаунта</Text>
-        <Text style={[s.detailValue, { color: foreground }]}>Пассажир</Text>
-      </View> : null}
-      <Text style={{ color: muted, fontSize: 13, lineHeight: 20, marginTop: 20 }}>Данные сохранены при регистрации. Если их нужно изменить, обратитесь в поддержку.</Text>
-      <Pressable testID="onay-personal-support" accessibilityRole="button" onPress={() => { setPersonalOpen(false); if (onSupportPreview) onSupportPreview(); else setSupportOpen(true); }} style={{ backgroundColor: onayDark.accent, padding: 16, borderRadius: 18, alignItems: "center", marginTop: 20 }}><Text style={{ color: onayDark.accentInk, fontSize: 16, fontWeight: "700" }}>Поддержка</Text></Pressable>
-    </OnayScreenFrame>
+    <OnayPersonalDetails theme={theme} fullName={fullName} phoneNumber={phoneNumber} email={email}
+      demoMode={demoMode} onSaveEmail={onSaveEmail} onBack={() => setPersonalOpen(false)}/>
   </Modal>;
   return <View testID="onay-passenger-profile-panel" style={[s.root, { backgroundColor: light ? "#f1f7f3" : onayDark.background }]}>
     <View style={s.identity}>

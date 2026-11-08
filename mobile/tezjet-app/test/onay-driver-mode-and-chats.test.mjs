@@ -50,9 +50,9 @@ test("demo status selector and top role-switcher stay separate and never grant a
  const overview = read("../components/OnayDriverModeOverview.tsx");
  assert.match(demo, /onDriver=\{\(\) => role\("driver"\)\}/);
  assert.match(demo, /testID=\{"onay-demo-role-" \+ value\}/);
- assert.match(overview, /demoMode \? demoStatus : driverModeStatus\(approval, vehicle\)/);
- assert.match(overview, /const ready = !demoMode && driverModeReadyForQueue/);
- assert.match(overview, /const onLine = !demoMode && approval === "approved" && enrolled/);
+ assert.match(overview, /demoMode \? demoStatus :/);
+ assert.match(overview, /const ready = !demoMode && !!snapshot && driverModeReadyForQueue/);
+ assert.match(overview, /const onLine = !demoMode && !!snapshot && liveApproval === "approved" && enrolled/);
  assert.match(overview, /testID=\{"onay-driver-mode-demo-" \+ value\}/);
  assert.match(overview, /demoMode\s*\?\s*<Text/);
  const idx=overview.indexOf('testID="onay-driver-mode-enter"');

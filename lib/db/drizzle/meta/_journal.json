@@ -120,6 +120,13 @@
       "when": 1793404800000,
       "tag": "0016_offer_timeout_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1794200000000,
+      "tag": "0017_profile_email",
+      "breakpoints": true
     }
   ]
 }

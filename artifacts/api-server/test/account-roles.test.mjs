@@ -908,3 +908,70 @@ test("HTTP logout revokes its current JWT while an old JWT cannot log out a newe
   assert.equal((await request("/auth/me", { token: newLogin.body.access_token })).status, 401);
   assert.equal((await store.getUser(user.id)).sessionVersion, current.sessionVersion + 1);
 });
+
+
+test("POSTGRES authenticated email contact persists across login and never unlocks identity", async t => {
+  const f = await fixture(t);
+  const user = await f.createUser("passenger");
+  const initial = await login(user.phoneNumber, "passenger");
+  assert.equal(initial.status, 200);
+  let token = initial.body.access_token;
+
+  const first = await request("/auth/me", { token });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.user.email, null);
+  const before = await snapshot(store, user.id);
+
+  for (const invalid of ["not-an-email", "a@@example.com", 12, { address: "x@y.com" }]) {
+    const answer = await request("/auth/profile", { token, method: "PATCH", body: { email: invalid } });
+    assert.equal(answer.status, 400, JSON.stringify(answer.body));
+    assert.equal(answer.body.error.code, "INVALID_EMAIL");
+    assert.equal((await store.getUser(user.id)).email ?? null, null);
+  }
+  const locked = await request("/auth/profile", { token, method: "PATCH", body: {
+    full_name: "Injected change", phone_number: user.phoneNumber, email: "bad@example.com"
+  } });
+  assert.equal(locked.status, 409);
+  assert.equal(locked.body.error.code, "PROFILE_LOCKED");
+  assert.equal((await store.getUser(user.id)).email ?? null, null);
+
+  const saved = await request("/auth/profile", { token, method: "PATCH", body: { email: "  NEW.Contact@Example.COM " } });
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  assert.equal(saved.body.user.email, "new.contact@example.com");
+  for (const field of ["fullName", "phoneNumber", "profileLocked", "sessionVersion"]) {
+    assert.equal((await snapshot(store, user.id))[field], before[field], field + " must stay unchanged");
+  }
+  assert.equal((await otherStore.getUser(user.id)).email, "new.contact@example.com");
+  assert.equal((await request("/auth/me", { token })).body.user.email, "new.contact@example.com");
+
+  const reLogin = await login(user.phoneNumber, "passenger");
+  assert.equal(reLogin.status, 200);
+  token = reLogin.body.access_token;
+  assert.equal((await request("/auth/me", { token })).body.user.email, "new.contact@example.com");
+
+  const localeOnly = await request("/auth/profile", { token, method: "PATCH", body: { locale: "kk" } });
+  assert.equal(localeOnly.status, 200);
+  assert.equal(localeOnly.body.user.email, "new.contact@example.com");
+  const cleared = await request("/auth/profile", { token, method: "PATCH", body: { email: "" } });
+  assert.equal(cleared.status, 200);
+  assert.equal(cleared.body.user.email, null);
+  assert.equal((await otherStore.getUser(user.id)).email, null);
+});
+
+test("Own driver vehicle GET works in passenger mode without switching role or allowing writes", async t => {
+  const f = await fixture(t);
+  const user = await f.createUser("passenger");
+  const current = await login(user.phoneNumber, "passenger");
+  assert.equal(current.status, 200);
+  const token = current.body.access_token;
+  const before = await snapshot(store, user.id);
+  const own = await request("/driver/vehicle", { token });
+  assert.equal(own.status, 200, JSON.stringify(own.body));
+  assert.deepEqual(own.body.driver_vehicle, null);
+  assert.equal(own.body.approval_status, null);
+  assert.equal(own.body.route_name, null);
+  const forbidden = await request("/driver/vehicle", { token, method: "PUT", body: { make:"Fictional", model:"X" } });
+  assert.equal(forbidden.status, 403);
+  const after = await snapshot(store, user.id);
+  assert.deepEqual(after, before);
+});

@@ -57,7 +57,7 @@ const API_ENDPOINT = "tezjet_api_endpoint";
 type Mode = "passenger" | "driver";
 type Stop = { id: string; code: string; name: string; sequence: number; position: number };
 type Fare = FareMoney;
-type Profile = { id: string; phone_number?: string; role: string; active_role?: string; roles?: string[]; driver_approval_status?: "pending" | "approved" | "rejected" | "blocked"; full_name?: string; driver_vehicle?: { seat_capacity: number; make?: string; model?: string; plate_number?: string } };
+type Profile = { id: string; phone_number?: string; role: string; active_role?: string; roles?: string[]; driver_approval_status?: "pending" | "approved" | "rejected" | "blocked"; full_name?: string; email?: string | null; driver_vehicle?: { seat_capacity: number; make?: string; model?: string; plate_number?: string } };
 
 function Button({ title, onPress, disabled = false, secondary = false, testID, dark = false }: { title: string; onPress: () => void; disabled?: boolean; secondary?: boolean; testID?: string; dark?: boolean }) {
   const theme = useContext(OnayThemeContext);
@@ -518,17 +518,18 @@ function LiveOnayApp({ onDemo }: { onDemo?: (role: Mode) => void }) {
     finally { setBusy(false); }
   }
 
-  async function switchMode(next: Mode) {
+  async function switchMode(next: Mode, openVehicle = false) {
     if (!token) {
       setMode(next); setDriverTab("line"); setDriverSubpage(null); setBookingPage(null); setRequested(false); setOtp(""); setDemoCode(""); setMessage("");
       return;
     }
-    if (activeRole === next) { setMode(next); return; }
+    if (activeRole === next) { setMode(next); if (openVehicle) setDriverSubpage("vehicle"); return; }
     setBusy(true);
     try {
       const result = await request<{ access_token: string; user: Profile }>("/api/auth/switch-role", token, { method: "POST", body: JSON.stringify({ role: next }) });
       currentToken.current = result.access_token;
       setToken(result.access_token); setProfile(result.user); setMode(next);
+      if (openVehicle) setDriverSubpage("vehicle");
       trackedOrders.current = []; orderChanges.current.clear(); orderRevision.current += 1; queueRevision.current += 1;
       updateQueueSnapshot(null, true); setDepartureConfirmation(null);
       setOrders([]); setIncomingOrder(null); setQueuePosition(null); setDriverInQueue(false); setDriverQueueContext(null); setLineState(null); setAvailability(null); setFare(null);
@@ -1029,6 +1030,31 @@ function LiveOnayApp({ onDemo }: { onDemo?: (role: Mode) => void }) {
       <OnayPassengerProfile
         fullName={profile.full_name || ""}
         phoneNumber={profile.phone_number}
+        email={profile.email}
+        onSaveEmail={async nextEmail => {
+          const requestToken = token, profileId = profile.id;
+          if (!requestToken) throw new Error("Сессия не найдена. Войдите снова.");
+          const result = await request<{ user: Profile }>("/api/auth/profile", requestToken, {
+            method: "PATCH", body: JSON.stringify({ email: nextEmail }),
+          });
+          if (currentToken.current !== requestToken || result.user?.id !== profileId ||
+              (result.user.email ?? null) !== nextEmail) {
+            throw new Error("Сервер не подтвердил обновление email для текущего аккаунта.");
+          }
+          setProfile(old => old?.id === profileId ? { ...old, email: result.user.email } : old);
+          return result.user.email ?? null;
+        }}
+        onLoadDriverVehicle={async () => {
+          const result = await request<{
+            driver_vehicle: Profile["driver_vehicle"] | null;
+            approval_status: Profile["driver_approval_status"] | null;
+            route_name?: string | null;
+            review_reason?: string | null;
+          }>("/api/driver/vehicle", token);
+          return { ...result, driver_vehicle: result.driver_vehicle ?? null,
+            approval_status: result.approval_status ?? null };
+        }}
+        onOpenDriverVehicle={() => { void switchMode("driver", true); }}
         busy={busy}
         theme={passengerTheme}
         active={passengerTab === "profile"}

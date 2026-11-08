@@ -59,7 +59,12 @@ export async function getDriverVehicle(request: Request, response: Response): Pr
   response.setHeader("Cache-Control", "no-store");
   const user = await store.getUser(request.auth!.userId);
   if (!user || user.sessionVersion !== request.auth!.user.sessionVersion) throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
-  response.json({ driver_vehicle: serializeUser(user).driver_vehicle ?? null, approval_status: user.driverApprovalStatus });
+  const route = user.driverRouteChoice ? await store.getRoute(user.driverRouteChoice.routeId) : undefined;
+  response.json({
+    driver_vehicle: serializeUser(user).driver_vehicle ?? null,
+    approval_status: user.driverApprovalStatus ?? null,
+    route_name: route?.active ? route.name : null,
+  });
 }
 
 export async function setDriverVehicle(request: Request, response: Response): Promise<void> {
