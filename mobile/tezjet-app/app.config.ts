@@ -17,10 +17,10 @@ export function resolveOnayBuildMetadata(
     if (typeof data.sourceSha !== "string" || !/^[0-9a-f]{40}$/.test(data.sourceSha)) {
       throw new Error("Invalid build-provenance.json: sourceSha must be a full commit SHA");
     }
-    if (data.versionCode !== config.android?.versionCode) {
+    if (config.android?.versionCode !== undefined && data.versionCode !== config.android.versionCode) {
       throw new Error("Build provenance versionCode does not match Expo Android config");
     }
-    if (data.applicationId !== config.android?.package) {
+    if (config.android?.package !== undefined && data.applicationId !== config.android.package) {
       throw new Error("Build provenance applicationId does not match Expo Android config");
     }
     if (env.ONAY_BUILD_SHA && env.ONAY_BUILD_SHA !== data.sourceSha) {
