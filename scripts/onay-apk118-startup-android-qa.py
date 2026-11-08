@@ -133,6 +133,11 @@ def main():
             tap_demo()
             dump(args.output,"offline-demo-available")
             report["checks"].append("Cold offline start without SMS/Metro reaches native demo")
+            # Restore a deterministic RU auth label so the independent SHA-vs-receipt
+            # validator can launch its own native About flow after this script.
+            h.click("onay-tab-profile","id")
+            h.click("onay-language-ru","id")
+            selected_language("ru")
         finally:
             h.adb("shell","svc","wifi","enable")
             h.adb("shell","svc","data","enable")
