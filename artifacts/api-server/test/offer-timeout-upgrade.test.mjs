@@ -48,8 +48,13 @@ test('actual upgrade through0015 adds policy without changing live deadlines or 
   await migrate(db, options(migrationsFolder));
   const history = (await pool.query('SELECT * FROM __drizzle_migrations ORDER BY id')).rows;
   assert.deepEqual(history.slice(0, beforeHistory.length), beforeHistory);
-  assert.equal(history.length, beforeHistory.length + 1);
-  assert.equal(Number(history.at(-1).created_at), addition.when);
+  assert.equal(history.length, beforeHistory.length + 2);
+  assert.equal(Number(history.at(-2).created_at), addition.when);
+  const emailMigration = journal.entries.find(entry => entry.tag === "0017_profile_email");
+  assert.ok(emailMigration);
+  assert.equal(Number(history.at(-1).created_at), emailMigration.when);
+  const column = (await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema=$1 AND table_name='tezjet_users' AND column_name='email'", [schema])).rows;
+  assert.equal(column.length, 1);
   assert.deepEqual((await pool.query('SELECT * FROM tezjet_orders WHERE id=$1', [orderId])).rows[0], beforeOrder);
   assert.deepEqual((await pool.query('SELECT * FROM tezjet_admin_audit_events WHERE id=$1', [eventId])).rows[0],
     { ...beforeAudit, setting_key: null, previous_value: null, next_value: null });

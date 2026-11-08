@@ -118,7 +118,7 @@ export interface Store {
   getUserByPhone(phoneNumber: string): MaybePromise<User | undefined>;
   updateUser(
     userId: string,
-    patch: Partial<Pick<User, "locale" | "lastLocation">>,
+    patch: Partial<Pick<User, "locale" | "lastLocation" | "email">>,
   ): MaybePromise<User>;
   /** With an expected version, revoke only that still-current session atomically. */
   invalidateSessions(userId: string, expectedSessionVersion?: number): MaybePromise<User>;

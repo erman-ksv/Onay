@@ -112,19 +112,45 @@ class DriverRouteQA:
         )
 
     def screenshot(self, name):
+        self.page.wait_for_timeout(400)  # V2 page transition duration; capture settled UI.
         self.page.screenshot(path=str(self.args.output_dir / (name + ".png")), full_page=True)
 
+    def close_driver_overlay(self):
+        back = self.page.get_by_test_id("onay-screen-back")
+        if back.count() and back.first.is_visible():
+            back.first.click()
+
+    def logout_driver(self):
+        self.close_driver_overlay()
+        self.page.get_by_test_id("onay-driver-tab-profile").click()
+        self.page.get_by_test_id("onay-driver-logout").click()
+
     def control(self, test_id):
-        return self.page.get_by_test_id(test_id)
+        target = self.page.get_by_test_id(test_id)
+        if self.page.get_by_test_id("onay-driver-v2").count() and not (target.count() and target.first.is_visible()):
+            self.close_driver_overlay()
+            if test_id.startswith("driver-vehicle") or test_id == "driver-blocked-status":
+                self.page.get_by_test_id("onay-driver-tab-profile").click()
+                self.page.get_by_test_id("onay-driver-car-edit").click()
+            elif test_id.startswith("driver-route"):
+                self.page.get_by_test_id("onay-driver-tab-queue").click()
+                editor = self.page.get_by_test_id("onay-driver-route-editor")
+                if editor.count() and not editor.is_visible():
+                    self.page.get_by_test_id("onay-driver-route-editor-toggle").click()
+            elif test_id.startswith("driver-history"):
+                self.page.get_by_test_id("onay-driver-tab-history").click()
+            elif test_id.startswith(("driver-queue", "driver-line", "driver-free", "driver-order", "driver-trip", "onay-driver-review")):
+                self.page.get_by_test_id("onay-driver-tab-line").click()
+        return target
 
     def identity(self):
         require(self.page.url.rstrip("/") == self.args.base_url.rstrip("/"), "Browser must show the actual Expo home page")
         self.expect(self.page.locator("#root")).not_to_be_empty()
-        self.expect(self.page.get_by_text("Onay Driver", exact=True)).to_be_visible()
-        self.expect(self.page.get_by_role("button", name="Водитель", exact=True)).to_be_visible()
+        self.expect(self.page.get_by_test_id("onay-driver-v2")).to_be_visible()
+        self.expect(self.page.get_by_test_id("onay-driver-tab-line")).to_be_visible()
         require(self.page.locator("vite-error-overlay, nextjs-portal, [data-nextjs-dialog-overlay]").count() == 0, "Framework error overlay is visible")
         require(self.page.get_by_text(re.compile(r"Uncaught Error|Something went wrong|LogBox"), exact=False).count() == 0, "Expo runtime error overlay is visible")
-        self.page_identity = {"url": self.page.url, "title": self.page.title(), "content": "Onay Driver"}
+        self.page_identity = {"url": self.page.url, "title": self.page.title(), "content": "Onay Driver V2"}
 
     def admin_login_and_routes(self):
         challenge = expect_status(api_request(self.args.api_url, "/auth/request-otp", method="POST", body={
@@ -156,12 +182,27 @@ class DriverRouteQA:
 
     def driver_login_and_approval(self):
         self.page.goto(self.args.base_url, wait_until="domcontentloaded")
-        self.page.get_by_role("button", name="Водитель", exact=True).click()
+        try:
+            self.page.get_by_role("button", name="Водитель", exact=True).click()
+        except Exception:
+            # Diagnostics only: preserve the original strict Playwright assertion
+            # and failure. Do not log auth inputs, requests, headers or tokens.
+            try:
+                print("QA ENTRY DIAGNOSTIC:", json.dumps({
+                    "url": self.page.url,
+                    "title": self.page.title(),
+                    "root_excerpt": self.page.locator("#root").inner_text(timeout=2000)[:450],
+                    "buttons": self.page.get_by_role("button").all_text_contents()[:12],
+                    "runtime_errors": self.page_errors[:3],
+                }, ensure_ascii=False), flush=True)
+            except Exception as diagnostic_error:
+                print("QA ENTRY DIAGNOSTIC unavailable:", type(diagnostic_error).__name__, flush=True)
+            raise
         self.control("auth-signup-mode").click()
         self.expect(self.page.get_by_text("Регистрация водителя", exact=True)).to_be_visible()
         self.page.get_by_placeholder("Имя", exact=True).fill("CI route")
         phone = "+77779" + str(uuid.uuid4().int % 1_000_000).zfill(6)
-        self.page.get_by_placeholder("+998 90 123 45 67", exact=True).fill(phone)
+        self.page.get_by_test_id("onay-auth-phone").fill(phone)
         self.expect(self.page.get_by_role("button", name="Получить код", exact=True)).to_be_disabled()
         self.page.get_by_placeholder("Фамилия", exact=True).fill("driver")
         self.expect(self.page.get_by_role("button", name="Получить код", exact=True)).to_be_enabled()
@@ -173,18 +214,18 @@ class DriverRouteQA:
         require(bool(re.fullmatch(r"\d{6}", code)), "Existing nonproduction OTP response must supply the driver code")
         self.page.get_by_placeholder("Код подтверждения", exact=True).fill(code)
         with self.response_for("/auth/verify-otp", "POST") as pending:
-            self.page.get_by_role("button", name="Продолжить как водитель", exact=True).click()
+            self.page.get_by_test_id("onay-auth-submit").click()
         response = pending.value
         require(response.status == 200, "Actual app must verify the driver OTP")
         session = response.json()
         user = session.get("user", {})
         require(user.get("active_role", user.get("role")) == "driver" and user.get("driver_approval_status") == "pending", "New driver must await actual administrator approval")
         require(user.get("full_name") == "CI route driver", "Registration must persist both name fields in the existing full_name contract")
-        self.page.get_by_text("Выйти", exact=True).click()
+        self.logout_driver()
         self.control("auth-signin-mode").click()
         self.expect(self.control("registration-given-name")).to_have_count(0)
         self.expect(self.control("registration-family-name")).to_have_count(0)
-        self.page.get_by_placeholder("+998 90 123 45 67", exact=True).fill(phone)
+        self.page.get_by_test_id("onay-auth-phone").fill(phone)
         # The previous successful request started the real 60s resend cooldown.
         # Wait before sending so a deliberate 429 cannot pollute console QA.
         # Do not shorten the server limit or allowlist authentication errors.
@@ -203,7 +244,7 @@ class DriverRouteQA:
         require("full_name" not in pending.value.request.post_data_json, "Sign-in retry must omit registration names")
         self.page.get_by_placeholder("Код подтверждения", exact=True).fill(pending.value.json()["demo_code"])
         with self.response_for("/auth/verify-otp", "POST") as pending:
-            self.page.get_by_role("button", name="Продолжить как водитель", exact=True).click()
+            self.page.get_by_test_id("onay-auth-submit").click()
         require(pending.value.status == 200, "Existing driver must sign in without re-registering")
         session = pending.value.json()
         require(session["user"]["id"] == user["id"] and session["user"]["full_name"] == user["full_name"], "Sign-in must preserve the original account and locked name")
@@ -253,6 +294,8 @@ class DriverRouteQA:
         unblocked = expect_status(api_request(self.args.api_url, path, "PATCH", {"blocked": False, "expected_vehicle_revision": revision}, self.admin_token), 200, "Explicitly unblock actual driver")
         require(unblocked["driver"]["driver_approval_status"] == "pending", "Unblock requires separate approval")
         expect_status(api_request(self.args.api_url, "/admin/drivers/" + self.driver_id + "/approval", "PATCH", {"status": "approved", "expected_vehicle_revision": revision}, self.admin_token), 200, "Explicit current-car approval after unblock")
+        self.close_driver_overlay()
+        self.page.get_by_test_id("onay-driver-tab-line").click()
         with self.response_for("/auth/me", "GET"):
             self.page.get_by_role("button", name="Проверить статус", exact=True).click()
         with self.response_for("/driver/vehicle", "GET"):
@@ -444,7 +487,7 @@ class DriverRouteQA:
         self.configured_queue_roundtrip(self.routes[0], "a_to_b")
         # A fresh real driver avoids pretending an instant A→B teleport passes
         # the existing GPS speed guard. The first driver's enrollment is gone.
-        self.page.get_by_text("Выйти", exact=True).click()
+        self.logout_driver()
         self.driver_login_and_approval()
         self.select_draft(self.routes[0], "b_to_a")
         self.save(self.routes[0], "b_to_a")

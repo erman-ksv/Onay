@@ -62,6 +62,7 @@ function asUser(row: Record<string, unknown>): User {
     roles: (row.roles ?? [row.role]) as UserRole[],
     fullName: String(row.fullName),
     phoneNumber: String(row.phoneNumber),
+    email: typeof row.email === "string" ? row.email : null,
     locale: row.locale as Locale,
     profileLocked: Boolean(row.profileLocked),
     sessionVersion: Number(row.sessionVersion),
@@ -310,11 +311,12 @@ export class PostgresStore implements Store {
 
   async updateUser(
     userId: string,
-    patch: Partial<Pick<User, "locale" | "lastLocation">>,
+    patch: Partial<Pick<User, "locale" | "lastLocation" | "email">>,
   ): Promise<User> {
     const { db, usersTable } = await this.database();
-    const values: { locale?: Locale; lastLocation?: Record<string, unknown> | null } = {};
+    const values: { locale?: Locale; email?: string | null; lastLocation?: Record<string, unknown> | null } = {};
     if (patch.locale !== undefined) values.locale = patch.locale;
+    if (patch.email !== undefined) values.email = patch.email;
     if (patch.lastLocation !== undefined) values.lastLocation = patch.lastLocation as unknown as Record<string, unknown>;
     const [row] = await db.update(usersTable).set(values).where(eq(usersTable.id, userId)).returning();
     if (!row) throw new Error(`User ${userId} not found`);

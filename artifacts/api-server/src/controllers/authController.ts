@@ -11,6 +11,7 @@ import { AppError } from "../utils/errors";
 import { ADMIN_PHONE, OTP_TTL_MS } from "../utils/config";
 import { optionalString, pickEnum, requiredString } from "../utils/validation";
 import { getSmsConfiguration, OtpSmsError, sendOtpSms } from "../services/otpSms";
+import { normalizeProfileEmail } from "../utils/profileEmail";
 
 const roles = ["passenger", "driver", "admin"] as const;
 const locales = ["kk", "uz", "ru"] as const;
@@ -184,7 +185,12 @@ export async function updateProfile(request: Request, response: Response): Promi
   const locale = request.body?.locale
     ? getLocale(request, request.body.locale)
     : request.auth.user.locale;
-  const user = await store.updateUser(request.auth.userId, { locale });
+  // Identity and telephone are immutable. A missing email key preserves its value.
+  const email = request.body?.email === undefined ? undefined : normalizeProfileEmail(request.body.email);
+  const user = await store.updateUser(request.auth.userId, {
+    locale,
+    ...(email === undefined ? {} : { email }),
+  });
   response.json({ user: serializeUser(user) });
 }
 

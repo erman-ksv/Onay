@@ -1,6 +1,9 @@
+import Text from "./OnayText";
+import OnayIcon from "./OnayIcon";
+import OnayScreenFrame, { onayPalette } from "./OnayScreenFrame";
 import { useEffect, useRef, useState } from "react";
 import { formatFareMoney } from "../lib/fare-money";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Modal, Pressable, StyleSheet, View } from "react-native";
 import * as Location from "expo-location";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { API, ApiError, errorMessage, request } from "../lib/api";
@@ -10,9 +13,11 @@ import { orderedDriverStops, parseDriverRouteCatalog, type DriverDirection, type
 import { createPassengerRouteRequestScope, passengerRouteSelection, passengerRouteSelectionKey, passengerRouteAvailabilityPath,
   parsePassengerRouteAvailability, passengerRouteOrderBody, passengerRouteCatalogStatus, routeBookingRecoveryKey, routeBookingRequestKey, resolveRouteBookingRequest, readRouteBookingRecovery, saveRouteBookingRecovery, clearRouteBookingRecovery, clearClosedRouteBookingRecovery, discardUnsentRouteBooking, confirmedRouteBookingPresent, isFreshPassengerRouteQuote, routeBookingDefinitivelyRejected, routeBookingOutcomeUncertain, syncConfirmedRouteBooking, type PassengerRouteAvailability, type PassengerRouteSegment } from "../lib/passenger-route-orders";
 
-type Props = { token: string; endpoint: string; userId: string; busy: boolean; activeOrder: boolean; bookingGate: PassengerBookingGate; onCreated: () => Promise<void> };
+export type PassengerDirectionIntent = { direction: DriverDirection; revision: number };
+type Props = { token: string; endpoint: string; userId: string; busy: boolean; activeOrder: boolean; directionIntent?: PassengerDirectionIntent | null; bookingGate: PassengerBookingGate; onCreated: () => Promise<void>; onBooked?: () => void; theme?: "light" | "dark" };
 const choices: DriverDirection[] = ["a_to_b", "b_to_a"];
-export default function PassengerRouteOrder({ token, endpoint, userId, busy, activeOrder, bookingGate, onCreated }: Props) {
+export default function PassengerRouteOrder({ token, endpoint, userId, busy, activeOrder, directionIntent, bookingGate, onCreated, onBooked, theme = "dark" }: Props) {
+  const [routePickerOpen, setRoutePickerOpen] = useState(false);
   const [routes, setRoutes] = useState<DriverRouteOption[]>([]);
   const [routeId, setRouteId] = useState("");
   const [direction, setDirection] = useState<DriverDirection>("a_to_b");
@@ -33,6 +38,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
   const [message, setMessage] = useState("");
   const [availability, setAvailability] = useState<{ key: string; checkedAt: number; value: PassengerRouteAvailability } | null>(null);
   const requestScope = useRef(createPassengerRouteRequestScope());
+  const appliedDirectionIntent = useRef(0);
   const recoveryRevision = bookingGate.recoveryRevision();
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -109,6 +115,18 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
 
   useEffect(() => { setAvailability(null); setChecking(false); setMessage(""); setStopPicker(null); requestScope.current.cancelAvailability(); }, [key]);
 
+  useEffect(() => {
+    if (!directionIntent || directionIntent.revision <= appliedDirectionIntent.current || submitting || busy) return;
+    // Never carry a quote or stop segment across a change in direction.
+    appliedDirectionIntent.current = directionIntent.revision;
+    requestScope.current.cancelAvailability();
+    setChecking(false);
+    setAvailability(null);
+    setStopPicker(null);
+    setSegmentDraft(null);
+    setDirection(directionIntent.direction);
+  }, [directionIntent?.revision, submitting, busy]);
+
   function chooseStop(field: "pickup" | "destination", stopId: string) {
     if (!route || !segment || submitting) return;
     const next = { ...segment, ...(field === "pickup" ? { pickupStopId: stopId } : { destinationStopId: stopId }) };
@@ -178,6 +196,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
         setMessage(closedRequestKey !== null
           ? "Сервер подтвердил: заказ не был создан. Можно проверить водителей снова."
           : "Заказы обновлены. Проверь состояние поездки.");
+        if (closedRequestKey === null) onBooked?.();
       } else if (synced) setMessage("Проверка завершена, но конкретный заказ не подтверждён. Повторная отправка заблокирована; обратись в поддержку.");
       else setError("Не удалось обновить заказы. Повтори проверку; не создавай ещё один заказ.");
     } catch (cause) {
@@ -234,6 +253,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
         // successfully without containing the just-created order.
         // The explicit reconciliation button verifies the exact order ID.
         setMessage("Заказ создан. Ожидаем подтверждения водителя.");
+        if (inScope()) onBooked?.();
       } else {
         setMessage("Заказ создан, но список поездок не обновился. Проверь статус; повторно заказывать не нужно.");
       }
@@ -261,155 +281,197 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
       } else setError(errorMessage(cause, "Не удалось оформить заказ."));
     } finally { bookingGate.finish("configured"); if (mounted.current) setSubmitting(false); }
   }
+  const themeStyles = theme === "light" ? { ...v, ...vLight } : v;
   const button = (title: string, onPress: () => void, disabled = false, primary = false, testID?: string) =>
     <Pressable testID={testID} accessibilityRole="button" accessibilityState={{ disabled }}
       onPress={onPress} disabled={disabled}
-      style={[v.button, primary ? v.buttonPrimary : v.buttonSecondary, disabled && v.disabled]}>
-      <Text style={[v.buttonLabel, primary ? v.primaryText : v.secondaryText]}>{title}</Text>
+      style={[themeStyles.button, primary ? themeStyles.buttonPrimary : themeStyles.buttonSecondary, disabled && themeStyles.disabled]}>
+      <Text style={[themeStyles.buttonLabel, primary ? themeStyles.primaryText : themeStyles.secondaryText]}>{title}</Text>
     </Pressable>;
 
-  return <View testID="configured-route-passenger" style={v.card}>
-    <Text style={v.eyebrow}>ONAY · МАРШРУТНОЕ ТАКСИ</Text>
-    <Text style={v.title}>Куда едем?</Text>
-    <Text style={v.subtitle}>Выберите линию и количество мест. Доступность водителей и цену проверит сервер.</Text>
-    {loading ? <ActivityIndicator color="#33DB9C" style={v.loader}/> : null}
-    {catalogStatus === "empty" && token && endpoint ? <Text style={v.hint}>Настроенных маршрутов пока нет.</Text> : null}
-    {catalogStatus === "error" ? <View><Text style={v.error}>Не удалось загрузить маршруты: {catalogError}</Text>
+  return <View testID="configured-route-passenger" style={themeStyles.card}>
+    <Text style={[themeStyles.subtitle, { fontSize: 15, lineHeight: 22 }]}>Покажем водителей, которые едут по выбранному маршруту. Стоимость и свободные места подтвердит сервер.</Text>
+    {loading ? <ActivityIndicator color="#5bd62f" style={themeStyles.loader}/> : null}
+    {catalogStatus === "empty" && token && endpoint ? <Text style={themeStyles.hint}>Настроенных маршрутов пока нет.</Text> : null}
+    {catalogStatus === "error" ? <View><Text style={themeStyles.error}>Не удалось загрузить маршруты: {catalogError}</Text>
       {button("Повторить загрузку маршрутов", () => setCatalogRetry(value => value + 1), submitting || busy, false, "route-catalog-retry")}</View> : null}
+    <Modal visible={routePickerOpen} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setRoutePickerOpen(false)}>
+      <OnayScreenFrame title="Маршрут и направление" theme={theme} onBack={() => setRoutePickerOpen(false)} testID="onay-booking-route-picker" footer={<Pressable accessibilityRole="button" testID="onay-booking-route-done" onPress={() => setRoutePickerOpen(false)} style={[themeStyles.button, themeStyles.buttonPrimary]}><Text style={themeStyles.primaryText}>Выбрать маршрут</Text></Pressable>}>
     {routes.map(item => <Pressable key={item.id} testID={"passenger-route-" + item.id}
       onPress={() => { if (item.id !== routeId) { setSegmentDraft(null); setRouteId(item.id); } }} disabled={submitting}
       accessibilityRole="button" accessibilityState={{ selected: item.id === routeId }}
-      style={[v.route, item.id === routeId && v.routeActive]}>
-      <View style={[v.indicator, item.id === routeId && v.indicatorActive]}/>
-      <View style={v.routeContent}>
-        <Text style={v.routeName}>{item.name}</Text>
-        <Text style={v.routeInfo}>Выбрать маршрут</Text>
+      style={[themeStyles.route, item.id === routeId && themeStyles.routeActive]}>
+      <View style={[themeStyles.indicator, item.id === routeId && themeStyles.indicatorActive]}/>
+      <View style={themeStyles.routeContent}>
+        <Text style={themeStyles.routeName}>{item.name}</Text>
+        <Text style={themeStyles.routeInfo}>Выбрать маршрут</Text>
       </View>
-      <Text style={v.chevron}>›</Text>
+      <Text style={themeStyles.chevron}>›</Text>
     </Pressable>)}
-    {route ? <>
-      <Text style={v.sectionHeading}>НАПРАВЛЕНИЕ</Text>
-      <View style={v.directions}>
+      <Text style={themeStyles.sectionHeading}>НАПРАВЛЕНИЕ</Text>
+      <View style={themeStyles.directions}>
         {choices.map(value => <Pressable key={value} testID={"passenger-direction-" + value}
           onPress={() => { if (value !== direction) { setSegmentDraft(null); setDirection(value); } }} disabled={submitting}
           accessibilityRole="button" accessibilityState={{ selected: direction === value }}
-          style={[v.direction, direction === value && v.directionActive]}>
-          <Text style={[v.directionText, direction === value && v.directionTextActive]}>
+          style={[themeStyles.direction, direction === value && themeStyles.directionActive]}>
+          <Text style={[themeStyles.directionText, direction === value && themeStyles.directionTextActive]}>
             {value === "a_to_b" ? "A → B" : "B → A"}
           </Text>
         </Pressable>)}
       </View>
-      <View style={v.trip}>
-        <View style={v.tripDots}><View style={v.originDot}/><View style={v.tripLine}/><View style={v.destinationDot}/></View>
-        <View style={v.tripLabels}>
-          <Pressable testID="passenger-pickup-open" accessibilityRole="button" accessibilityState={{ disabled: submitting }}
-            accessibilityLabel={"Место посадки: " + stops[pickupIndex]?.name} disabled={submitting}
-            onPress={() => setStopPicker(stopPicker === "pickup" ? null : "pickup")} style={v.stopField}>
-            <Text style={v.tripName}>{stops[pickupIndex]?.name ?? "Выберите посадку"} ▾</Text>
-            <Text style={v.tripCaption}>Откуда · выбрать остановку</Text>
-          </Pressable>
-          <Pressable testID="passenger-destination-open" accessibilityRole="button" accessibilityState={{ disabled: submitting }}
-            accessibilityLabel={"Назначение: " + stops[destinationIndex]?.name} disabled={submitting}
-            onPress={() => setStopPicker(stopPicker === "destination" ? null : "destination")} style={v.stopField}>
-            <Text style={v.tripName}>{stops[destinationIndex]?.name ?? "Выберите назначение"} ▾</Text>
-            <Text style={v.tripCaption}>Куда · выбрать остановку</Text>
-          </Pressable>
-        </View>
+      </OnayScreenFrame>
+    </Modal>
+    {route ? <>
+      <Pressable testID="onay-booking-route-open" accessibilityRole="button" accessibilityLabel="Изменить маршрут и направление" onPress={() => setRoutePickerOpen(true)} disabled={submitting} style={[themeStyles.route, { marginBottom: 12 }]}><View style={themeStyles.routeContent}><Text style={themeStyles.routeInfo}>Маршрут · {direction === "a_to_b" ? "A → B" : "B → A"}</Text><Text style={themeStyles.routeName}>{route.name}</Text></View><OnayIcon name="chev" color={onayPalette(theme).muted}/></Pressable>
+      <View style={[themeStyles.trip, { backgroundColor: "transparent", padding: 0, marginTop: 0, flexDirection: "column", gap: 12 }]}>
+        <Pressable testID="passenger-pickup-open" accessibilityRole="button" accessibilityState={{ disabled: submitting }} accessibilityLabel={"Место посадки: " + stops[pickupIndex]?.name} disabled={submitting} onPress={() => setStopPicker(stopPicker === "pickup" ? null : "pickup")} style={[themeStyles.stopField, { backgroundColor: onayPalette(theme).card, borderRadius: 20, padding: 16, flexDirection: "row", alignItems: "center", gap: 14 }]}>
+          <OnayIcon name="pin" color={onayPalette(theme).accent}/><View style={{ flex: 1 }}><Text style={[themeStyles.tripCaption, { fontSize: 13 }]}>Откуда</Text><Text style={[themeStyles.tripName, { fontSize: 16, marginTop: 3 }]}>{stops[pickupIndex]?.name ?? "Выберите посадку"}</Text></View><OnayIcon name="chev" color={onayPalette(theme).muted}/>
+        </Pressable>
+        <Pressable testID="passenger-destination-open" accessibilityRole="button" accessibilityState={{ disabled: submitting }} accessibilityLabel={"Назначение: " + stops[destinationIndex]?.name} disabled={submitting} onPress={() => setStopPicker(stopPicker === "destination" ? null : "destination")} style={[themeStyles.stopField, { backgroundColor: onayPalette(theme).card, borderRadius: 20, padding: 16, flexDirection: "row", alignItems: "center", gap: 14 }]}>
+          <OnayIcon name="city" color={onayPalette(theme).accent}/><View style={{ flex: 1 }}><Text style={[themeStyles.tripCaption, { fontSize: 13 }]}>Куда</Text><Text style={[themeStyles.tripName, { fontSize: 16, marginTop: 3 }]}>{stops[destinationIndex]?.name ?? "Выберите назначение"}</Text></View><OnayIcon name="chev" color={onayPalette(theme).muted}/>
+        </Pressable>
       </View>
-      {stopPicker ? <View testID="passenger-stop-picker" accessibilityRole="radiogroup" style={v.stopPicker}>
-        <Text style={v.sectionHeading}>{stopPicker === "pickup" ? "ГДЕ САДИТЕСЬ?" : "КУДА ЕДЕТЕ?"}</Text>
+      {stopPicker ? <View testID="passenger-stop-picker" accessibilityRole="radiogroup" style={themeStyles.stopPicker}>
+        <Text style={themeStyles.sectionHeading}>{stopPicker === "pickup" ? "ГДЕ САДИТЕСЬ?" : "КУДА ЕДЕТЕ?"}</Text>
         {stops.map((stop, index) => {
           const disabled = submitting || (stopPicker === "pickup" ? index >= destinationIndex : index <= pickupIndex);
           const selected = stop.id === (stopPicker === "pickup" ? segment?.pickupStopId : segment?.destinationStopId);
           return <Pressable key={stop.id} testID={"passenger-" + stopPicker + "-" + stop.id}
             accessibilityRole="radio" accessibilityLabel={stop.name} accessibilityState={{ checked: selected, disabled }} aria-checked={selected}
             disabled={disabled} onPress={() => chooseStop(stopPicker, stop.id)}
-            style={[v.stopOption, selected && v.stopOptionSelected, disabled && v.disabled]}>
-            <Text style={v.stopOptionName}>{stop.name}{selected ? " ✓" : ""}</Text>
+            style={[themeStyles.stopOption, selected && themeStyles.stopOptionSelected, disabled && themeStyles.disabled]}>
+            <Text style={themeStyles.stopOptionName}>{stop.name}{selected ? " ✓" : ""}</Text>
           </Pressable>;
         })}
-        <Text style={v.tripCaption}>Посадка должна быть раньше назначения по выбранному направлению.</Text>
+        <Text style={themeStyles.tripCaption}>Посадка должна быть раньше назначения по выбранному направлению.</Text>
       </View> : null}
-      <View style={v.seats}>
-        <View><Text style={v.seatsTitle}>Пассажиры</Text><Text style={v.seatsDescription}>Места: от 1 до 8</Text></View>
-        <View style={v.stepper}>
+      <View style={[themeStyles.seats, { backgroundColor: onayPalette(theme).card, borderRadius: 20, padding: 16, flexDirection: "column", alignItems: "stretch", gap: 12 }]}>
+        <View><Text style={themeStyles.seatsTitle}>Пассажиры</Text><Text style={themeStyles.seatsDescription}>Места: от 1 до 8</Text></View>
+        <View style={[themeStyles.stepper, { justifyContent: "space-between" }]}>
           <Pressable testID="route-seats-minus" accessibilityRole="button" accessibilityLabel="Уменьшить количество мест"
             disabled={seats <= 1 || submitting} onPress={() => setSeats(Math.max(1, seats - 1))}
-            style={[v.step, (seats <= 1 || submitting) && v.disabled]}><Text style={v.stepText}>−</Text></Pressable>
-          <Text style={v.count}>{seats}</Text>
+            style={[themeStyles.step, { width: 48, height: 48, borderRadius: 24, borderWidth: 1, borderColor: onayPalette(theme).border }, (seats <= 1 || submitting) && themeStyles.disabled]}><Text style={themeStyles.stepText}>−</Text></Pressable>
+          <Text style={themeStyles.count}>{seats}</Text>
           <Pressable testID="route-seats-plus" accessibilityRole="button" accessibilityLabel="Увеличить количество мест"
             disabled={seats >= 8 || submitting} onPress={() => setSeats(Math.min(8, seats + 1))}
-            style={[v.step, (seats >= 8 || submitting) && v.disabled]}><Text style={v.stepText}>+</Text></Pressable>
+            style={[themeStyles.step, { width: 48, height: 48, borderRadius: 24, borderWidth: 1, borderColor: onayPalette(theme).border }, (seats >= 8 || submitting) && themeStyles.disabled]}><Text style={themeStyles.stepText}>+</Text></Pressable>
         </View>
       </View>
-      {button(checking ? "Проверяем…" : "Проверить цену и водителей",
-        () => { void check(); }, checking || submitting || busy, false, "route-check-availability")}
-      <View style={v.priceCard}>
-        <Text style={v.sectionHeading}>ПОДТВЕРЖДЁННАЯ СТОИМОСТЬ</Text>
-        <Text style={v.price}>{fresh && availability ? formatFareMoney({ total: availability.value.price, currency: availability.value.currency }) : "—"}</Text>
-        <Text style={[v.availability, fresh && availability?.value.available && v.availabilityPositive]}>
+      <Text style={[themeStyles.seatsTitle, { marginTop: 20 }]}>Когда</Text><View style={{ alignSelf: "flex-start", marginTop: 10, padding: 12, borderRadius: 16, borderWidth: 1, borderColor: onayPalette(theme).accent }}><Text style={{ color: onayPalette(theme).accent, fontWeight: "700" }}>Сейчас</Text></View>
+      {button(checking ? "Проверяем…" : "Найти водителей",
+        () => { void check(); }, checking || submitting || busy, true, "route-check-availability")}
+      {availability ? <View style={themeStyles.priceCard}>
+        <Text style={themeStyles.sectionHeading}>ПОДТВЕРЖДЁННАЯ СТОИМОСТЬ</Text>
+        <Text style={themeStyles.price}>{fresh && availability ? formatFareMoney({ total: availability.value.price, currency: availability.value.currency }) : "—"}</Text>
+        <Text style={[themeStyles.availability, fresh && availability?.value.available && themeStyles.availabilityPositive]}>
           {fresh && availability
             ? availability.value.available
               ? "Свободных водителей: " + availability.value.eligibleDriverCount
               : "Свободных водителей сейчас нет"
             : "Обновите наличие и цену перед заказом"}
         </Text>
-      </View>
+      </View> : null}
       {button(submitting ? "Оформляем…" : "Заказать поездку",
         () => { void submit(); }, !canOrder, true, "route-book-trip")}
     </> : null}
     {pendingSync ? button(submitting ? "Проверяем…" : "Проверить статус заказа",
       () => { void retrySync(); }, submitting || busy, false, "route-refresh-after-submit") : null}
-    {activeOrder ? <Text style={v.notice}>Сначала заверши или отмени текущую поездку.</Text> : null}
-    {recoveryError ? <Text style={v.error}>{recoveryError}</Text> : null}
-    {message ? <Text style={v.notice}>{message}</Text> : null}
-    {error ? <Text style={v.error}>{error}</Text> : null}
+    {activeOrder ? <Text style={themeStyles.notice}>Сначала заверши или отмени текущую поездку.</Text> : null}
+    {recoveryError ? <Text style={themeStyles.error}>{recoveryError}</Text> : null}
+    {message ? <Text style={themeStyles.notice}>{message}</Text> : null}
+    {error ? <Text style={themeStyles.error}>{error}</Text> : null}
   </View>;
 }
 
 const v = StyleSheet.create({
-  card:{padding:20,borderRadius:24,backgroundColor:"#0B271A",marginBottom:16,borderWidth:1,borderColor:"#1F4B32"},
-  eyebrow:{color:"#31DE9C",fontSize:10,fontWeight:"800",letterSpacing:1.5,marginBottom:10},
-  title:{color:"#F2FFF6",fontSize:30,fontWeight:"900"},
-  subtitle:{color:"#ADCCB9",fontSize:13,lineHeight:20,marginTop:6,marginBottom:18},
-  loader:{marginVertical:12},hint:{color:"#C6DECE",marginBottom:10,fontSize:13},
-  route:{flexDirection:"row",alignItems:"center",backgroundColor:"#153624",borderWidth:1,borderColor:"#315540",borderRadius:16,padding:13,marginBottom:8,gap:10},
-  routeActive:{backgroundColor:"#195338",borderColor:"#35D99B"},
-  indicator:{height:12,width:12,borderRadius:6,borderWidth:2,borderColor:"#83AA95"},
-  indicatorActive:{backgroundColor:"#35DF9D",borderColor:"#35DF9D"},
-  routeContent:{flex:1},routeName:{color:"#EFFFF1",fontSize:15,fontWeight:"800"},
-  routeInfo:{color:"#97B8A2",fontSize:11,marginTop:3},chevron:{color:"#36DD9B",fontSize:26},
-  sectionHeading:{color:"#A2C4AD",fontSize:10,fontWeight:"800",letterSpacing:1.2,marginTop:14,marginBottom:10},
+  card:{padding:0,borderRadius:0,backgroundColor:"#0a1d15",marginBottom:16},
+  eyebrow:{color:"#5bd62f",fontSize:10,fontWeight:"800",letterSpacing:1.5,marginBottom:10},
+  title:{color:"#f2faf6",fontSize:20,fontWeight:"700"},
+  subtitle:{color:"#9bb3a6",fontSize:13,lineHeight:20,marginTop:6,marginBottom:18},
+  loader:{marginVertical:12},hint:{color:"#9bb3a6",marginBottom:10,fontSize:13},
+  route:{flexDirection:"row",alignItems:"center",backgroundColor:"#12291f",borderWidth:1,borderColor:"#1f3d2f",borderRadius:16,padding:13,marginBottom:8,gap:10},
+  routeActive:{backgroundColor:"#17332a",borderColor:"#5bd62f"},
+  indicator:{height:12,width:12,borderRadius:6,borderWidth:2,borderColor:"#9bb3a6"},
+  indicatorActive:{backgroundColor:"#5bd62f",borderColor:"#5bd62f"},
+  routeContent:{flex:1},routeName:{color:"#f2faf6",fontSize:15,fontWeight:"800"},
+  routeInfo:{color:"#9bb3a6",fontSize:11,marginTop:3},chevron:{color:"#5bd62f",fontSize:26},
+  sectionHeading:{color:"#9bb3a6",fontSize:10,fontWeight:"800",letterSpacing:1.2,marginTop:14,marginBottom:10},
   directions:{flexDirection:"row",gap:9},
-  direction:{flex:1,alignItems:"center",paddingVertical:12,borderWidth:1,borderRadius:13,backgroundColor:"#153624",borderColor:"#315540"},
-  directionActive:{backgroundColor:"#236C49",borderColor:"#33DC9B"},
-  directionText:{color:"#ACC9B7",fontSize:15,fontWeight:"700"},directionTextActive:{color:"#F5FFF7"},
-  trip:{backgroundColor:"#153624",borderRadius:16,marginTop:16,padding:15,flexDirection:"row",gap:14},
+  direction:{flex:1,alignItems:"center",paddingVertical:12,borderWidth:1,borderRadius:13,backgroundColor:"#12291f",borderColor:"#1f3d2f"},
+  directionActive:{backgroundColor:"#17332a",borderColor:"#5bd62f"},
+  directionText:{color:"#9bb3a6",fontSize:15,fontWeight:"700"},directionTextActive:{color:"#f2faf6"},
+  trip:{backgroundColor:"#12291f",borderRadius:16,marginTop:16,padding:15,flexDirection:"row",gap:14},
   tripDots:{alignItems:"center",width:15,paddingTop:4},
-  originDot:{width:11,height:11,borderRadius:6,backgroundColor:"#37DAA1"},
-  tripLine:{height:40,width:2,backgroundColor:"#3F7754"},
-  destinationDot:{width:11,height:11,borderRadius:6,borderWidth:2,borderColor:"#37DAA1"},
-  tripLabels:{flex:1},tripName:{color:"#F0FFF5",fontWeight:"700",fontSize:14},
+  originDot:{width:11,height:11,borderRadius:6,backgroundColor:"#5bd62f"},
+  tripLine:{height:40,width:2,backgroundColor:"#1f3d2f"},
+  destinationDot:{width:11,height:11,borderRadius:6,borderWidth:2,borderColor:"#5bd62f"},
+  tripLabels:{flex:1},tripName:{color:"#f2faf6",fontWeight:"700",fontSize:14},
   stopField:{minHeight:48,justifyContent:"center",paddingVertical:5},
-  stopPicker:{marginTop:8,padding:12,borderRadius:14,backgroundColor:"#153624"},
-  stopOption:{minHeight:44,justifyContent:"center",paddingHorizontal:10,paddingVertical:10,borderRadius:10,marginBottom:5,borderWidth:1,borderColor:"#315540"},
-  stopOptionSelected:{backgroundColor:"#236C49",borderColor:"#33DC9B"},
-  stopOptionName:{color:"#EFFFF1",fontSize:14},
-  destinationName:{marginTop:16},tripCaption:{color:"#8CAD98",fontSize:11,marginTop:2},
+  stopPicker:{marginTop:8,padding:12,borderRadius:14,backgroundColor:"#12291f"},
+  stopOption:{minHeight:44,justifyContent:"center",paddingHorizontal:10,paddingVertical:10,borderRadius:10,marginBottom:5,borderWidth:1,borderColor:"#1f3d2f"},
+  stopOptionSelected:{backgroundColor:"#17332a",borderColor:"#5bd62f"},
+  stopOptionName:{color:"#f2faf6",fontSize:14},
+  destinationName:{marginTop:16},tripCaption:{color:"#9bb3a6",fontSize:11,marginTop:2},
   seats:{flexDirection:"row",alignItems:"center",justifyContent:"space-between",marginTop:18},
-  seatsTitle:{color:"#F3FFF7",fontSize:14,fontWeight:"800"},seatsDescription:{color:"#91B29D",fontSize:11,marginTop:3},
+  seatsTitle:{color:"#f2faf6",fontSize:14,fontWeight:"800"},seatsDescription:{color:"#9bb3a6",fontSize:11,marginTop:3},
   stepper:{flexDirection:"row",gap:12,alignItems:"center"},
-  step:{height:34,width:34,alignItems:"center",justifyContent:"center",borderRadius:17,backgroundColor:"#22583A"},
-  stepText:{color:"#45E7A7",fontSize:22,fontWeight:"700"},
-  count:{color:"#F5FFF7",fontWeight:"800",fontSize:17,minWidth:18,textAlign:"center"},
-  button:{minHeight:49,borderRadius:14,padding:13,alignItems:"center",justifyContent:"center",marginTop:12},
-  buttonPrimary:{backgroundColor:"#31DA9C"},buttonSecondary:{backgroundColor:"#1B4C32",borderWidth:1,borderColor:"#36A978"},
-  buttonLabel:{fontSize:14,fontWeight:"800"},
-  primaryText:{color:"#062718"},secondaryText:{color:"#E8FFF0"},disabled:{opacity:0.43},
-  priceCard:{marginTop:14,padding:14,borderRadius:16,backgroundColor:"#153624"},
-  price:{fontSize:26,color:"#F2FFF7",fontWeight:"900"},
+  step:{height:34,width:34,alignItems:"center",justifyContent:"center",borderRadius:17,backgroundColor:"#12291f"},
+  stepText:{color:"#5bd62f",fontSize:22,fontWeight:"700"},
+  count:{color:"#f2faf6",fontWeight:"800",fontSize:17,minWidth:18,textAlign:"center"},
+  button:{minHeight:54,borderRadius:18,padding:13,alignItems:"center",justifyContent:"center",marginTop:12},
+  buttonPrimary:{backgroundColor:"#5bd62f"},buttonSecondary:{backgroundColor:"#0a1d15",borderWidth:1,borderColor:"#1f3d2f"},
+  buttonLabel:{fontSize:17,fontWeight:"600"},
+  primaryText:{color:"#08261a"},secondaryText:{color:"#f2faf6"},disabled:{opacity:0.43},
+  priceCard:{marginTop:14,padding:14,borderRadius:16,backgroundColor:"#12291f"},
+  price:{fontSize:26,color:"#f2faf6",fontWeight:"700"},
   availability:{fontSize:12,color:"#B3CDBA",marginTop:6,lineHeight:19},
   availabilityPositive:{color:"#42ECA9"},
   notice:{fontSize:12,color:"#C8FAE0",backgroundColor:"#19543A",padding:11,borderRadius:12,marginTop:12},
   error:{fontSize:12,color:"#FFD8D8",backgroundColor:"#562A2A",padding:11,borderRadius:12,marginTop:12},
+});
+
+/** Light palette changes presentation only; API and booking guards remain unchanged. */
+const vLight = StyleSheet.create({
+  card: { backgroundColor: "#f1f7f3", borderColor: "#dce8e1" },
+  eyebrow: { color: "#176347" },
+  title: { color: "#0e1a14" },
+  subtitle: { color: "#5a7366" },
+  hint: { color: "#5a7366" },
+  route: { backgroundColor: "#f4f7f5", borderColor: "#dce8e1" },
+  routeActive: { backgroundColor: "#e3f7df", borderColor: "#3d9c62" },
+  indicator: { borderColor: "#759c82" },
+  indicatorActive: { backgroundColor: "#1f8c5b", borderColor: "#1f8c5b" },
+  routeName: { color: "#0e1a14" },
+  routeInfo: { color: "#5a7366" },
+  chevron: { color: "#176347" },
+  sectionHeading: { color: "#5a7366" },
+  direction: { backgroundColor: "#f4f7f5", borderColor: "#dce8e1" },
+  directionActive: { backgroundColor: "#e3f7df", borderColor: "#3d9c62" },
+  directionText: { color: "#194b34" },
+  directionTextActive: { color: "#0e1a14" },
+  trip: { backgroundColor: "#f4f7f5" },
+  originDot: { backgroundColor: "#1f8c5b" },
+  tripLine: { backgroundColor: "#94bca3" },
+  destinationDot: { borderColor: "#1f8c5b" },
+  tripName: { color: "#0e1a14" },
+  stopPicker: { backgroundColor: "#f4f7f5" },
+  stopOption: { backgroundColor: "#ffffff", borderColor: "#dce8e1" },
+  stopOptionSelected: { backgroundColor: "#e3f7df", borderColor: "#3d9c62" },
+  stopOptionName: { color: "#0e1a14" },
+  tripCaption: { color: "#5a7366" },
+  seatsTitle: { color: "#0e1a14" },
+  seatsDescription: { color: "#5a7366" },
+  step: { backgroundColor: "#e5f0e9" },
+  stepText: { color: "#175444" },
+  count: { color: "#0e1a14" },
+  buttonPrimary: { backgroundColor: "#5bd62f" },
+  buttonSecondary: { backgroundColor: "#edf8f2", borderColor: "#dce8e1" },
+  primaryText: { color: "#08261a" },
+  secondaryText: { color: "#175444" },
+  priceCard: { backgroundColor: "#f4f7f5" },
+  price: { color: "#0d735c" },
+  availability: { color: "#5a7366" },
+  availabilityPositive: { color: "#176347" },
+  notice: { color: "#175444", backgroundColor: "#e9f8ef" },
+  error: { color: "#962b20", backgroundColor: "#fff0ec" },
 });

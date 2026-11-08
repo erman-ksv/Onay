@@ -27,6 +27,7 @@ export const usersTable = pgTable(
     roles: jsonb("roles").$type<string[]>().notNull().default(["passenger"]),
     fullName: text("full_name").notNull(),
     phoneNumber: text("phone_number").notNull(),
+    email: text("email"),
     locale: text("locale").notNull(),
     profileLocked: boolean("profile_locked").notNull().default(true),
     sessionVersion: integer("session_version").notNull().default(0),
