@@ -153,7 +153,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - name: Download existing APK114 (no rebuild)
+      - name: Download original APK114 (no rebuild)
         uses: actions/download-artifact@v4
         with:
           name: onay-android-demo-apk-114
@@ -161,11 +161,11 @@ jobs:
           repository: erman-ksv/Onay
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: apk114
-      - name: Download already published final APK115 (no rebuild)
+      - name: Download already published APK116 (no rebuild)
         uses: actions/download-artifact@v4
         with:
-          name: onay-android-demo-apk-115
-          run-id: 42406229478
+          name: onay-android-demo-apk-116
+          run-id: 42443018950
           repository: erman-ksv/Onay
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: apk-current
@@ -180,8 +180,8 @@ jobs:
           oldreceipt=json.loads(Path("apk114/build-provenance.json").read_text())
           currentreceipt=json.loads(next(Path("apk-current").rglob("build-provenance.json")).read_text())
           assert oldreceipt["versionCode"] == 114
-          assert currentreceipt["versionCode"] == 115
-          assert currentreceipt["sourceSha"] == '5c9f94044608f762c8f382a1e23afaa7a3d4c569'
+          assert currentreceipt["versionCode"] == 116
+          assert currentreceipt["sourceSha"] == '5421afb1f3caad8f86c9f9612f6b9c79af176f3b'
           assert oldreceipt["applicationId"] == currentreceipt["applicationId"] == "uz.tezjet.app"
           assert oldreceipt["offlineDemoPreview"] and currentreceipt["offlineDemoPreview"]
           print("Old and new APK provenance verified",currentreceipt)
@@ -230,7 +230,7 @@ jobs:
           PY
           "$ANDROID_HOME/emulator/emulator" -accel-check | tee /tmp/onay-accel.log
           grep -Eiq 'KVM.*(installed and usable|is usable|is enabled)' /tmp/onay-accel.log
-      - name: One Android emulator session - update APK114 and take native screenshots
+      - name: One Android emulator session - baseline APK114 then upgrade APK116
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
@@ -241,7 +241,7 @@ jobs:
           disable-animations: false
           disable-linux-hw-accel: false
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: python3 scripts/onay-driver-mode-chats-android-qa.py --old-apk apk114/Onay-offline-demo-APK114.apk --new-apk apk-current/Onay-offline-demo-APK115.apk --version-code 115 --output artifacts/driver-mode-chats-android
+          script: python3 scripts/onay-driver-mode-chats-android-qa.py --old-apk apk114/Onay-offline-demo-APK114.apk --new-apk apk-current/Onay-offline-demo-APK116.apk --old-version-code 114 --version-code 116 --output artifacts/driver-mode-chats-android
       - name: Publish native screenshots, UI XML and the verification receipt
         if: always()
         uses: actions/upload-artifact@v4
