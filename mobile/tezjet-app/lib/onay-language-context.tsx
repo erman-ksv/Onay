@@ -24,9 +24,9 @@ export function OnayLanguageProvider({ children }: { children: ReactNode }) {
  useEffect(() => {
   let active = true;
   // Keep the translated startup label hidden until this read has completed.
-  void AsyncStorage.getItem(LANGUAGE_KEY).then(value => {
+  void hydrateOnayStartupLanguage(() => AsyncStorage.getItem(LANGUAGE_KEY)).then(value => {
    if (!active) return;
-   if (!changed.current && (value === "ru" || value === "kk" || value === "uz")) setLanguage(value);
+   if (!changed.current) setLanguage(value);
    setHydration("ready");
   }).catch(() => { if (active) setHydration("error"); });
   return () => { active = false; };
