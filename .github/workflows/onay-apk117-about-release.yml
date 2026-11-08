@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: onay-apk117-one-build-${{ github.event.pull_request.number }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build-apk117:
