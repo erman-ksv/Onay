@@ -1,0 +1,91 @@
+name: Onay APK119 — publish verified original APK (no build)
+on:
+  push:
+    branches:
+      - feat/artifact-auth-ui-v1
+    paths:
+      - .github/workflows/onay-apk119-publish-only.yml
+
+# This is a separate delivery-only workflow. A PR event could display
+# Contents:write yet still receive HTTP 403 from the Releases endpoint.
+# Do not elevate pull_request_target or introduce personal credentials.
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish-verified-apk:
+    name: Publish original SHA256-pinned APK119 after successful Android QA
+    if: github.repository == 'erman-ksv/Onay' && github.ref == 'refs/heads/feat/artifact-auth-ui-v1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Check Android acceptance actually passed without rerunning tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          result="$(gh api repos/erman-ksv/Onay/actions/runs/42488949212/jobs \
+            --jq '.jobs[] | select(.name == "Verify saved APK119, Android QA and native screenshots without rebuilding") | .conclusion')"
+          echo "Existing QA job result: $result"
+          test "$result" = "success"
+      - name: Download unchanged APK119 created by the original Gradle build
+        uses: actions/download-artifact@v4
+        with:
+          name: onay-apk119-diagnostic
+          run-id: 42486987509
+          repository: erman-ksv/Onay
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: diagnostic
+      - name: Verify artifact provenance, exact APK bytes and SHA256
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path('diagnostic/mobile/tezjet-app')
+          apk=root/'Onay-offline-demo-APK119.apk'
+          original=root/'android/app/build/outputs/apk/debug/app-debug.apk'
+          receipt=json.loads((root/'build-provenance.json').read_text())
+          expected='ae8216170a72077fa589c22570544e369b4391b6f8da6f811f0f17885dfdb06f'
+          assert apk.is_file() and original.is_file(), 'Original APK is missing'
+          assert apk.stat().st_size == original.stat().st_size, 'Gradle output differs'
+          assert hashlib.sha256(apk.read_bytes()).hexdigest()==expected, 'APK SHA256 mismatch'
+          assert hashlib.sha256(original.read_bytes()).hexdigest()==expected, 'Gradle APK differs'
+          assert (root/'apk119-sha256.txt').read_text().split()[0]==expected, 'Receipt checksum mismatch'
+          assert receipt['sourceSha']=='e61c32b6ec09fd73cb0f49e71211020a6ce1c1e9', 'Wrong original source'
+          assert receipt['applicationId']=='uz.tezjet.app' and receipt['versionCode']==119
+          assert receipt['offlineDemoPreview'], 'Wrong distribution mode'
+          Path('SHA256SUMS.txt').write_text(expected+'  Onay-offline-demo-APK119.apk\n')
+          Path('release-notes.md').write_text(
+            'Onay APK119, Android debug offline demo (not a production-signed release).\n'
+            'Original source SHA: '+receipt['sourceSha']+'\n'
+            'Package: uz.tezjet.app\nVersionCode: 119\n'
+            'APK SHA256: '+expected+'\n'
+            'This is the identical unmodified APK from GitHub Actions run 42486987509.\n'
+            'Compiled adaptive icon and Android acceptance passed in run 42488949212.\n'
+            'Physical Samsung testing is not claimed. No Metro, SMS, VPS, merge or rebuild.\n'
+          )
+          print('Verified existing APK119',apk.stat().st_size,'bytes / SHA256',expected)
+          PY
+      - name: Create GitHub prerelease with direct APK asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create onay-demo-apk119 \
+            diagnostic/mobile/tezjet-app/Onay-offline-demo-APK119.apk SHA256SUMS.txt \
+            --repo erman-ksv/Onay \
+            --target e61c32b6ec09fd73cb0f49e71211020a6ce1c1e9 \
+            --prerelease --latest=false \
+            --title 'Onay APK119 — verified original Android offline demo' \
+            --notes-file release-notes.md
+      - name: Confirm GitHub release contains exact direct .apk (not ZIP)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view onay-demo-apk119 --repo erman-ksv/Onay \
+            --json assets --jq '.assets[].name' | grep -Fx 'Onay-offline-demo-APK119.apk'
+          gh release view onay-demo-apk119 --repo erman-ksv/Onay \
+            --json assets --jq '.assets[].url'
