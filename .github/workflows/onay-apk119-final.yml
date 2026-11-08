@@ -1,6 +1,8 @@
 name: Onay APK119 white launcher and startup final single build
 on:
-  pull_request:
+  push:
+    branches:
+      - "feat/artifact-auth-ui-v1"
     paths:
       - ".github/workflows/onay-apk119-startup-release.yml"
 
@@ -9,13 +11,13 @@ permissions:
   actions: read
 
 concurrency:
-  group: onay-apk119-one-build-${{ github.event.pull_request.number }}
+  group: onay-apk119-one-build-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   build-apk119:
     name: Verify source and build one APK119
-    if: github.event_name == 'pull_request' && github.event.pull_request.number == 110
+    if: github.event_name == 'push' && github.ref_name == 'feat/artifact-auth-ui-v1'
     runs-on: ubuntu-latest
     env:
       EXPO_PUBLIC_API_URL: ""
@@ -27,7 +29,7 @@ jobs:
       - name: Checkout exact PR source
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.sha }}
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -47,12 +49,12 @@ jobs:
           const config=JSON.parse(fs.readFileSync('app.json','utf8')).expo;
           if (sourceSha!==process.env.EXPECTED_SHA) throw Error('PR source SHA mismatch');
           if (config.android.versionCode!==119 || config.android.package!=='uz.tezjet.app') throw Error('APK119 identity mismatch');
-          const receipt={sourceSha,sourceBranch:process.env.GITHUB_HEAD_REF,runId:process.env.GITHUB_RUN_ID,applicationId:config.android.package,versionCode:119,displayName:config.name,artifactType:'Android debug preview',embeddedJavaScript:true,offlineDemoPreview:true};
+          const receipt={sourceSha,sourceBranch:(process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME),runId:process.env.GITHUB_RUN_ID,applicationId:config.android.package,versionCode:119,displayName:config.name,artifactType:'Android debug preview',embeddedJavaScript:true,offlineDemoPreview:true};
           fs.writeFileSync('build-provenance.json',JSON.stringify(receipt,null,2)+'\n');
           console.log(JSON.stringify(receipt));
           NODE
         env:
-          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_SHA: ${{ github.sha }}
       - name: TypeScript
         run: pnpm typecheck
       - name: Validate native QA scripts before Gradle
@@ -137,13 +139,13 @@ jobs:
   android-acceptance:
     name: APK118 to APK119 Android QA and native screenshots
     needs: build-apk119
-    if: github.event_name == 'pull_request' && github.event.pull_request.number == 110
+    if: github.event_name == 'push' && github.ref_name == 'feat/artifact-auth-ui-v1'
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.sha }}
       - name: Download published APK118 baseline
         uses: actions/download-artifact@v4
         with:
@@ -172,7 +174,7 @@ jobs:
           b=json.loads(Path('apk119/build-provenance.json').read_text())
           assert (a['versionCode'],b['versionCode'])==(118,119)
           assert a['sourceSha']=='516e73a553e65291b95142c7ea80b1259d4e1603'
-          assert b['sourceSha']=='${{ github.event.pull_request.head.sha }}'
+          assert b['sourceSha']=='${{ github.sha }}'
           assert a['applicationId']==b['applicationId']=='uz.tezjet.app'
           assert a['offlineDemoPreview'] and b['offlineDemoPreview']
           sha=hashlib.sha256(new.read_bytes()).hexdigest()
@@ -250,7 +252,7 @@ jobs:
       - name: Publish only if source receipt matches completed Android acceptance
         env:
           GH_TOKEN: ${{ github.token }}
-          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
