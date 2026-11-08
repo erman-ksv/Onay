@@ -51,7 +51,7 @@ export default function OnayPersonalDetails({ theme, fullName, givenName, family
   }
   return <OnayScreenFrame testID="onay-personal-details-screen" title="Личные данные" theme={theme} onBack={onBack}>
     <View testID="onay-profile-personal-details" style={[styles.card, { backgroundColor: c.card }]}>
-      {row("Имя", given ?? (fullName ? fullName : "Не указано"), "onay-profile-personal-name")}
+      {row("Имя", given ?? "Не хранится отдельно", "onay-profile-personal-name")}
       {row("Фамилия", family ?? "Не хранится отдельно", "onay-profile-personal-surname")}
       {row("Номер телефона", phoneNumber || "Не указан", "onay-profile-personal-phone")}
       <View style={styles.row}>
@@ -64,7 +64,7 @@ export default function OnayPersonalDetails({ theme, fullName, givenName, family
       </View>
       {!given || !family ? <Text testID="onay-personal-name-storage-note"
         style={[styles.note, { color: c.muted }]}>
-        В аккаунте имя и фамилия сохранены одной строкой. Мы не разделяем её автоматически, чтобы не исказить данные.
+        Имя и фамилия не сохранены отдельно. Полное ФИО в аккаунте: {fullName || "Не указано"}. Мы не разделяем его автоматически, чтобы не исказить данные.
       </Text> : null}
       {demoMode ? <Text testID="onay-personal-email-demo-notice" style={[styles.note, { color: c.muted }]}>
         ДЕМО · Сохранение email на сервере недоступно.
