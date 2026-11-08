@@ -73,14 +73,16 @@ export default function OnayStartupLoading({
 }
 const styles=StyleSheet.create({
  root:{flex:1, backgroundColor:onayDark.background, justifyContent:"center",alignItems:"center"},
- center:{width:"100%",alignItems:"center",justifyContent:"center",paddingHorizontal:24},
+ // Only the logo participates in centering. Animation/labels are positioned BELOW it,
+ // so native splash logo and JS logo remain aligned instead of jumping vertically.
+ center:{width:"100%",height:96,alignItems:"center",justifyContent:"center",paddingHorizontal:24},
  logo:{width:96,height:96},
- dots:{flexDirection:"row",alignItems:"center",justifyContent:"center",gap:9,marginTop:26,height:14},
+ dots:{position:"absolute",top:122,alignSelf:"center",flexDirection:"row",alignItems:"center",justifyContent:"center",gap:9,height:14},
  square:{width:11,height:11,borderRadius:2,backgroundColor:onayDark.accent},
- label:{color:onayDark.text,textAlign:"center",fontSize:16,lineHeight:24,fontWeight:"600",marginTop:13,includeFontPadding:false},
- error:{color:onayDark.text,textAlign:"center",fontSize:15,lineHeight:23,marginTop:28},
- action:{minHeight:48,minWidth:150,backgroundColor:onayDark.accent,borderRadius:12,marginTop:20,paddingHorizontal:18,alignItems:"center",justifyContent:"center"},
+ label:{position:"absolute",top:149,alignSelf:"center",color:onayDark.text,textAlign:"center",fontSize:16,lineHeight:24,fontWeight:"600",includeFontPadding:false},
+ error:{position:"absolute",top:128,alignSelf:"center",color:onayDark.text,textAlign:"center",fontSize:15,lineHeight:23},
+ action:{position:"absolute",top:204,alignSelf:"center",minHeight:48,minWidth:150,backgroundColor:onayDark.accent,borderRadius:12,paddingHorizontal:18,alignItems:"center",justifyContent:"center"},
  actionText:{fontSize:15,fontWeight:"700",color:onayDark.accentInk},
- secondary:{minHeight:44,marginTop:12,paddingHorizontal:12,justifyContent:"center"},
+ secondary:{position:"absolute",top:260,alignSelf:"center",minHeight:44,paddingHorizontal:12,justifyContent:"center"},
  secondaryText:{fontSize:14,color:onayDark.muted,textAlign:"center"},
 });
