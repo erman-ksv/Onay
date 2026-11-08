@@ -15,7 +15,7 @@ concurrency:
 jobs:
   build-apk117:
     name: Verify source and build one APK117
-    if: github.event_name == 'pull_request' && github.event.pull_request.number == 110
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 110 && github.event.pull_request.head.sha == '02ee16ff8f62b40c1dc37262bf0d9250d01571be'
     runs-on: ubuntu-latest
     env:
       EXPO_PUBLIC_API_URL: ""
@@ -111,6 +111,7 @@ jobs:
   android-acceptance:
     name: APK116 to APK117 Android QA and native screenshots
     needs: build-apk117
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.sha == '02ee16ff8f62b40c1dc37262bf0d9250d01571be'
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
