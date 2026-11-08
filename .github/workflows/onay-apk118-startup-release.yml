@@ -5,6 +5,7 @@ on:
       - ".github/workflows/onay-apk118-startup-release.yml"
       - "mobile/tezjet-app/**"
       - "scripts/onay-apk119-icon-android-qa.py"
+      - "scripts/onay-apk119-resources-qa.py"
 
 permissions:
   contents: read
@@ -58,7 +59,7 @@ jobs:
       - name: TypeScript
         run: pnpm typecheck
       - name: Validate native QA scripts before Gradle
-        run: python3 -m py_compile ../../scripts/onay-apk118-startup-android-qa.py ../../scripts/onay-apk119-icon-android-qa.py ../../scripts/onay-build-sha-android-qa.py
+        run: python3 -m py_compile ../../scripts/onay-apk118-startup-android-qa.py ../../scripts/onay-apk119-icon-android-qa.py ../../scripts/onay-apk119-resources-qa.py ../../scripts/onay-build-sha-android-qa.py
       - name: Mobile regressions
         run: pnpm test
       - name: Verify dynamic provenance reaches Expo configuration
@@ -97,36 +98,50 @@ jobs:
           NODE
       - name: Build exactly one APK119
         run: cd android && ./gradlew assembleDebug
-      - name: Verify package identity and emit SHA256 receipt
+      - name: Copy built APK and create diagnostic checksum before checking resources
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json, hashlib, zipfile
+          import hashlib, shutil
           from pathlib import Path
-          src=Path('android/app/build/outputs/apk/debug/app-debug.apk')
-          assert src.is_file(), 'Gradle APK missing'
-          target=Path('Onay-offline-demo-APK119.apk')
-          target.write_bytes(src.read_bytes())
-          with zipfile.ZipFile(target) as z:
-              js=z.read('assets/index.android.bundle')
-              assert js.startswith(bytes.fromhex('c61fbc03')), 'Hermes bytecode not embedded'
-              names=z.namelist()
-              assert any('ic_launcher_foreground.png' in n for n in names), 'Adaptive foreground not packaged'
-              assert any('ic_launcher.png' in n and n.startswith('res/mipmap-') for n in names), 'Launcher icon not packaged'
-              assert any('mipmap-anydpi-v26/ic_launcher.xml' in n for n in names), 'Adaptive icon XML not packaged'
-              for marker in (b'onay-startup-screen',b'onay-startup-squares',b'onay-startup-label',b'onay-about-source-sha'):
-                  assert marker in js, f'Missing UI marker {marker!r}'
+          source=Path('android/app/build/outputs/apk/debug/app-debug.apk')
+          assert source.is_file(), 'Gradle output APK missing'
+          dest=Path('Onay-offline-demo-APK119.apk')
+          shutil.copyfile(source,dest)
+          Path('apk119-sha256.txt').write_text(hashlib.sha256(dest.read_bytes()).hexdigest()+'  '+dest.name+'\\n')
+          print('Preserved completed Gradle APK and SHA256 before any QA assertions.')
+          PY
+      - name: Inspect actual compiled Android adaptive resources and Hermes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 ../../scripts/onay-apk119-resources-qa.py --apk Onay-offline-demo-APK119.apk --output ../../artifacts/apk119-resource-diagnostic
+          python3 - <<'PY'
+          import json,hashlib
+          from pathlib import Path
+          apk=Path('Onay-offline-demo-APK119.apk')
           receipt=json.loads(Path('build-provenance.json').read_text())
           assert receipt['versionCode']==119 and receipt['offlineDemoPreview']
-          assert len(receipt['sourceSha'])==40
-          assert receipt['applicationId']=='uz.tezjet.app'
-          checksum=hashlib.sha256(target.read_bytes()).hexdigest()
-          Path('apk119-sha256.txt').write_text(checksum+'  '+target.name+'\n')
+          assert len(receipt['sourceSha'])==40 and receipt['applicationId']=='uz.tezjet.app'
+          assert hashlib.sha256(apk.read_bytes()).hexdigest()==Path('apk119-sha256.txt').read_text().split()[0]
           print('APK119 source SHA:',receipt['sourceSha'])
-          print('APK119 SHA256:',checksum)
+          print('APK119 SHA256:',hashlib.sha256(apk.read_bytes()).hexdigest())
           PY
-      - name: Publish single APK119 with provenance and checksum
+      - name: Preserve diagnostic built APK and aapt2 evidence even after failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onay-apk119-diagnostic
+          path: |
+            mobile/tezjet-app/android/app/build/outputs/apk/debug/app-debug.apk
+            mobile/tezjet-app/Onay-offline-demo-APK119.apk
+            mobile/tezjet-app/build-provenance.json
+            mobile/tezjet-app/apk119-sha256.txt
+            artifacts/apk119-resource-diagnostic/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Publish validated APK119 with provenance and checksum
         uses: actions/upload-artifact@v4
         with:
           name: onay-android-demo-apk-119
@@ -134,6 +149,7 @@ jobs:
             mobile/tezjet-app/Onay-offline-demo-APK119.apk
             mobile/tezjet-app/build-provenance.json
             mobile/tezjet-app/apk119-sha256.txt
+            artifacts/apk119-resource-diagnostic/apk119-resource-verification.json
           if-no-files-found: error
 
   android-acceptance:
