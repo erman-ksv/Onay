@@ -965,7 +965,7 @@ test("Own driver vehicle GET works in passenger mode without switching role or a
   assert.equal(current.status, 200);
   const token = current.body.access_token;
   const before = await snapshot(store, user.id);
-  const own = await request("/driver/vehicle", { token });
+  const own = await request("/auth/driver-overview", { token });
   assert.equal(own.status, 200, JSON.stringify(own.body));
   assert.deepEqual(own.body.driver_vehicle, null);
   assert.equal(own.body.approval_status, null);

@@ -54,7 +54,9 @@ test("passenger own snapshot read is authenticated without role mutation; submis
  const routes=read("../../../artifacts/api-server/src/routes/driver.ts");
  const controller=read("../../../artifacts/api-server/src/controllers/driverController.ts");
  const app=read("../app/index.tsx");
- assert.match(routes,/router\.get\("\/driver\/vehicle", authenticate, getDriverVehicle\)/);
+ assert.match(routes,/router\.get\("\/driver\/vehicle", authenticate, requireRole\("driver"\), getDriverVehicle\)/);
+ const authRoutes=read("../../../artifacts/api-server/src/routes/auth.ts");
+ assert.match(authRoutes,/router\.get\("\/auth\/driver-overview", authenticate, getOwnDriverOverview\)/);
  assert.match(routes,/router\.put\("\/driver\/vehicle", authenticate, requireRole\("driver"\), setDriverVehicle\)/);
  assert.match(controller,/await store\.getUser\(request\.auth!\.userId\)/);
  assert.match(controller,/route_name: route\?\.active \? route\.name : null/);

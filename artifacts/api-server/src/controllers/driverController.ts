@@ -59,12 +59,7 @@ export async function getDriverVehicle(request: Request, response: Response): Pr
   response.setHeader("Cache-Control", "no-store");
   const user = await store.getUser(request.auth!.userId);
   if (!user || user.sessionVersion !== request.auth!.user.sessionVersion) throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
-  const route = user.driverRouteChoice ? await store.getRoute(user.driverRouteChoice.routeId) : undefined;
-  response.json({
-    driver_vehicle: serializeUser(user).driver_vehicle ?? null,
-    approval_status: user.driverApprovalStatus ?? null,
-    route_name: route?.active ? route.name : null,
-  });
+  response.json({ driver_vehicle: serializeUser(user).driver_vehicle ?? null, approval_status: user.driverApprovalStatus });
 }
 
 export async function setDriverVehicle(request: Request, response: Response): Promise<void> {
@@ -72,4 +67,19 @@ export async function setDriverVehicle(request: Request, response: Response): Pr
   const user = await store.setDriverVehicle(request.auth!.userId, input, request.auth!.user.sessionVersion);
   response.setHeader("Cache-Control", "no-store");
   response.json({ driver_vehicle: serializeUser(user).driver_vehicle, approval_status: user.driverApprovalStatus });
+}
+
+/** Read only the authenticated account's own driver application, in either role. */
+export async function getOwnDriverOverview(request: Request, response: Response): Promise<void> {
+  response.setHeader("Cache-Control", "no-store");
+  const user = await store.getUser(request.auth!.userId);
+  if (!user || user.sessionVersion !== request.auth!.user.sessionVersion) {
+    throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+  }
+  const route = user.driverRouteChoice ? await store.getRoute(user.driverRouteChoice.routeId) : undefined;
+  response.json({
+    driver_vehicle: serializeUser(user).driver_vehicle ?? null,
+    approval_status: user.driverApprovalStatus ?? null,
+    route_name: route?.active ? route.name : null,
+  });
 }

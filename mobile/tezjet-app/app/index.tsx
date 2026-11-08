@@ -1050,7 +1050,7 @@ function LiveOnayApp({ onDemo }: { onDemo?: (role: Mode) => void }) {
             approval_status: Profile["driver_approval_status"] | null;
             route_name?: string | null;
             review_reason?: string | null;
-          }>("/api/driver/vehicle", token);
+          }>("/api/auth/driver-overview", token);
           return { ...result, driver_vehicle: result.driver_vehicle ?? null,
             approval_status: result.approval_status ?? null };
         }}

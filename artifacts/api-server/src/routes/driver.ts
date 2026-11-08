@@ -3,8 +3,7 @@ import { getDriverVehicle, setDriverVehicle, clearDriverRoute, getDriverRoute, g
 import { authenticate, requireApprovedDriver, requireRole } from "../middleware/auth";
 
 const router: IRouter = Router();
-// Own vehicle snapshot is read-only for an authenticated passenger too.
-router.get("/driver/vehicle", authenticate, getDriverVehicle);
+router.get("/driver/vehicle", authenticate, requireRole("driver"), getDriverVehicle);
 router.put("/driver/vehicle", authenticate, requireRole("driver"), setDriverVehicle);
 
 const driverAccess = [authenticate, requireRole("driver"), requireApprovedDriver];
