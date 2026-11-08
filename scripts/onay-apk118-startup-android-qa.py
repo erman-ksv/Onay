@@ -26,12 +26,13 @@ def cold_launch_record(out,name):
     # The recorder starts before the actual Activity launch. Nothing delays the app's own loading.
     remote=f"/sdcard/{name}.mp4"
     h.adb("shell","am","force-stop","uz.tezjet.app")
+    h.dismiss_pixel_launcher_anr()  # Dismiss an external emulator OS dialog BEFORE the recording.
     h.adb("shell","rm","-f",remote)
     proc=subprocess.Popen(["adb","shell","screenrecord","--bit-rate","2000000","--time-limit","15",remote],
                           stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     try:
         time.sleep(1.0)  # Recorder startup, not an application loading delay.
-        h.adb("shell","monkey","-p","uz.tezjet.app","-c","android.intent.category.LAUNCHER","1",timeout=45)
+        h.launch_onay()
         h.await_node("onay-auth-demo","id",timeout=90)
         time.sleep(2.2)  # Preserve a readable final auth frame in QA video.
     finally:
@@ -73,7 +74,7 @@ def selected_language(lang):
 
 def check_language(out,lang,report):
     h.adb("shell","am","force-stop","uz.tezjet.app")
-    h.adb("shell","monkey","-p","uz.tezjet.app","-c","android.intent.category.LAUNCHER","1",timeout=40)
+    h.launch_onay()
     tap_demo()
     h.click("onay-tab-profile","id")
     h.await_node("onay-passenger-profile-panel","id")
@@ -117,7 +118,7 @@ def main():
         h.adb("shell","wm","density","320")
         try:
             h.adb("shell","am","force-stop","uz.tezjet.app")
-            h.adb("shell","monkey","-p","uz.tezjet.app","-c","android.intent.category.LAUNCHER","1",timeout=40)
+            h.launch_onay()
             tap_demo()
             dump(args.output,"small-screen-320dp")
             report["checks"].append("Small Android display 320dp launched without clipped root")
@@ -129,7 +130,7 @@ def main():
         h.adb("shell","svc","data","disable")
         try:
             h.adb("shell","am","force-stop","uz.tezjet.app")
-            h.adb("shell","monkey","-p","uz.tezjet.app","-c","android.intent.category.LAUNCHER","1",timeout=40)
+            h.launch_onay()
             tap_demo()
             dump(args.output,"offline-demo-available")
             report["checks"].append("Cold offline start without SMS/Metro reaches native demo")

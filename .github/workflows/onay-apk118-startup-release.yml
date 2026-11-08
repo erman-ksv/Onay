@@ -6,6 +6,8 @@ on:
       - "mobile/tezjet-app/**"
       - "scripts/onay-apk119-icon-android-qa.py"
       - "scripts/onay-apk119-resources-qa.py"
+      - "scripts/onay-android-apk-smoke.py"
+      - "scripts/onay-apk118-startup-android-qa.py"
 
 permissions:
   contents: read

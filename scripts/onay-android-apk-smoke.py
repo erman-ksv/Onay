@@ -49,6 +49,32 @@ def find_node(root, query, mode="any"):
     return None
 
 
+def dismiss_pixel_launcher_anr(root=None, source=None):
+    """Only close a known SYSTEM Pixel Launcher ANR overlay, never a target-app error."""
+    try:
+        if root is None:
+            root, source = ui_tree()
+        if "Pixel Launcher isn't responding" not in (source or ""):
+            return False
+        button = find_node(root, "android:id/aerr_close", "id")
+        if button is None:
+            raise AssertionError("Pixel Launcher ANR dialog has no close button")
+        x, y = bounds(button)
+        adb("shell", "input", "tap", str(x), str(y))
+        print("ANDROID_EMULATOR_OS_RECOVERY: dismissed Pixel Launcher ANR, not an Onay failure", flush=True)
+        return True
+    except AssertionError:
+        raise
+    except Exception as error:
+        print("ANDROID_EMULATOR_OS_RECOVERY failed:", repr(error), flush=True)
+        return False
+
+
+def launch_onay():
+    """Launch verified Android MainActivity directly so cold start does not depend on Pixel Launcher."""
+    adb("shell", "am", "start", "-n", "uz.tezjet.app/.MainActivity", timeout=45)
+
+
 def await_node(query, mode="any", timeout=35):
     deadline = time.monotonic() + timeout
     last = ""
@@ -58,6 +84,8 @@ def await_node(query, mode="any", timeout=35):
             node = find_node(root, query, mode)
             if node is not None:
                 return node
+            if dismiss_pixel_launcher_anr(root, last):
+                continue
         except Exception as exc:
             last = str(exc)
         time.sleep(2)
@@ -139,7 +167,8 @@ def install_exact(apk, code, out, stage):
 
 def open_demo():
     adb("shell", "am", "force-stop", "uz.tezjet.app")
-    adb("shell", "monkey", "-p", "uz.tezjet.app", "-c", "android.intent.category.LAUNCHER", "1", timeout=40)
+    dismiss_pixel_launcher_anr()
+    launch_onay()
     await_node("Посмотреть без SMS", timeout=90)
     click("Посмотреть без SMS")
     await_node("ДЕМО ONAY", timeout=60)
