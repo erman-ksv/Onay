@@ -65,8 +65,9 @@ export function onayEntryScreen(input: {
   showEndpointSettings: boolean;
 }): OnayEntryScreen {
   // Missing API configuration must use a V2 screen, including first APK launch.
-  if (!input.token && input.apiBase && !input.showEndpointSettings) return "auth";
+  // Do not flash auth until the stored endpoint and token have both been read.
   if (input.sessionLoading) return "loading";
+  if (!input.token && input.apiBase && !input.showEndpointSettings) return "auth";
   if (input.showEndpointSettings) return "connection";
   return input.token ? "application" : "auth";
 }
