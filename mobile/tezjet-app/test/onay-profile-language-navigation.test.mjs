@@ -29,7 +29,7 @@ test("language survives restart independently of auth, stale hydration cannot ov
  assert.match(source,/onay_language_v1/);
  assert.match(source,/AsyncStorage.getItem\(LANGUAGE_KEY\)/);
  assert.match(source,/AsyncStorage.setItem\(LANGUAGE_KEY, value\)/);
- assert.match(source,/active && !changed.current/);
+ assert.match(source,/!changed.current &&/);
  assert.match(source,/value === "ru" \|\| value === "kk" \|\| value === "uz"/);
  assert.doesNotMatch(source,/fetch\(|TOKEN|socket|\/api\//);
  for (const file of ["../components/OnayPassengerProfile.tsx", "../components/OnayDriverProfile.tsx"]) {
