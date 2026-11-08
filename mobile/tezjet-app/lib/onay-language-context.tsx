@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { translateOnay, type OnayLanguage } from "./onay-translations";
+import { hydrateOnayStartupLanguage } from "./onay-startup-language";
 
 const LANGUAGE_KEY = "onay_language_v1";
 type LanguageHydration = "loading" | "ready" | "error";
