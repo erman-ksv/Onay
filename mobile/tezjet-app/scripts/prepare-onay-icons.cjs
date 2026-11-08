@@ -148,6 +148,23 @@ function produceImages(source) {
       icon[i + 3] = 255;
     }
   }
+  // Final anti-aliased visible bounds may differ from the source alpha outline.
+  // Recenter the actual visible artwork for equal left/right and top/bottom space.
+  const visible = bounds({ width: SIZE, height: SIZE, data: foreground }, 12);
+  const shiftX = Math.round(SIZE / 2 - (visible.left + visible.width / 2));
+  const shiftY = Math.round(SIZE / 2 - (visible.top + visible.height / 2));
+  if (shiftX || shiftY) {
+    const shiftedFg = Buffer.alloc(SIZE * SIZE * 4);
+    const shiftedIcon = Buffer.alloc(SIZE * SIZE * 4, 255);
+    for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
+      const tx = x + shiftX, ty = y + shiftY;
+      if (tx < 0 || ty < 0 || tx >= SIZE || ty >= SIZE) continue;
+      const src = (y * SIZE + x) * 4, dst = (ty * SIZE + tx) * 4;
+      foreground.copy(shiftedFg, dst, src, src + 4);
+      icon.copy(shiftedIcon, dst, src, src + 4);
+    }
+    return { icon: encodePng(SIZE, SIZE, shiftedIcon), foreground: encodePng(SIZE, SIZE, shiftedFg) };
+  }
   return { icon: encodePng(SIZE, SIZE, icon), foreground: encodePng(SIZE, SIZE, foreground) };
 }
 function writeIfChanged(filename, content) {

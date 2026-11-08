@@ -9,7 +9,8 @@ const config=JSON.parse(readFileSync(new URL('../app.json',import.meta.url),'utf
 test('debug identity distinguishes V2 upgrades while preserving Android applicationId',()=>{
  assert.equal(config.name,'Onay');assert.equal(config.android.package,'uz.tezjet.app');
  assert.ok(Number.isSafeInteger(config.android.versionCode)&&config.android.versionCode>1);
- assert.equal(config.icon,'./assets/onay-original-logo.png');
+ assert.equal(config.icon,'./assets/onay-launcher-icon.png');
+ assert.equal(config.android.adaptiveIcon.backgroundColor,'#ffffff');
 });
 test('public build receipt embeds the selected source and preserves ordinary Expo configuration',t=>{
  const keys=['ONAY_BUILD_SHA','ONAY_BUILD_BRANCH','GITHUB_RUN_ID'];const before=Object.fromEntries(keys.map(k=>[k,process.env[k]]));

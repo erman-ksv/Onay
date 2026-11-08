@@ -1,21 +1,23 @@
-name: Onay APK118 startup splash and source SHA single build
+name: Onay APK119 white launcher and startup final single build
 on:
   pull_request:
     paths:
       - ".github/workflows/onay-apk118-startup-release.yml"
+      - "mobile/tezjet-app/**"
+      - "scripts/onay-apk119-icon-android-qa.py"
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: onay-apk118-one-build-${{ github.event.pull_request.number }}
+  group: onay-apk119-one-build-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  build-apk118:
-    name: Verify source and build one APK118
-    if: github.event_name == 'pull_request' && github.event.pull_request.number == 110 && github.event.pull_request.head.sha == '516e73a553e65291b95142c7ea80b1259d4e1603'
+  build-apk119:
+    name: Verify source and build one APK119
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 110
     runs-on: ubuntu-latest
     env:
       EXPO_PUBLIC_API_URL: ""
@@ -46,8 +48,8 @@ jobs:
           const sourceSha=cp.execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
           const config=JSON.parse(fs.readFileSync('app.json','utf8')).expo;
           if (sourceSha!==process.env.EXPECTED_SHA) throw Error('PR source SHA mismatch');
-          if (config.android.versionCode!==118 || config.android.package!=='uz.tezjet.app') throw Error('APK118 identity mismatch');
-          const receipt={sourceSha,sourceBranch:process.env.GITHUB_HEAD_REF,runId:process.env.GITHUB_RUN_ID,applicationId:config.android.package,versionCode:118,displayName:config.name,artifactType:'Android debug preview',embeddedJavaScript:true,offlineDemoPreview:true};
+          if (config.android.versionCode!==119 || config.android.package!=='uz.tezjet.app') throw Error('APK119 identity mismatch');
+          const receipt={sourceSha,sourceBranch:(process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME),runId:process.env.GITHUB_RUN_ID,applicationId:config.android.package,versionCode:119,displayName:config.name,artifactType:'Android debug preview',embeddedJavaScript:true,offlineDemoPreview:true};
           fs.writeFileSync('build-provenance.json',JSON.stringify(receipt,null,2)+'\n');
           console.log(JSON.stringify(receipt));
           NODE
@@ -56,19 +58,20 @@ jobs:
       - name: TypeScript
         run: pnpm typecheck
       - name: Validate native QA scripts before Gradle
-        run: python3 -m py_compile ../../scripts/onay-apk118-startup-android-qa.py ../../scripts/onay-build-sha-android-qa.py
+        run: python3 -m py_compile ../../scripts/onay-apk118-startup-android-qa.py ../../scripts/onay-apk119-icon-android-qa.py ../../scripts/onay-build-sha-android-qa.py
       - name: Mobile regressions
         run: pnpm test
       - name: Verify dynamic provenance reaches Expo configuration
         run: |
-          pnpm exec expo config --json > /tmp/onay-apk118-expo.json
+          pnpm exec expo config --json > /tmp/onay-apk119-expo.json
           node <<'NODE'
           const fs=require('node:fs');
-          const config=JSON.parse(fs.readFileSync('/tmp/onay-apk118-expo.json','utf8'));
+          const config=JSON.parse(fs.readFileSync('/tmp/onay-apk119-expo.json','utf8'));
           const receipt=JSON.parse(fs.readFileSync('build-provenance.json','utf8'));
           if(config.extra?.onayBuild?.commit!==receipt.sourceSha) throw Error('Embedded Expo source SHA differs from build provenance');
           if(config.android?.versionCode!==receipt.versionCode || config.android.package!==receipt.applicationId) throw Error('Expo Android identity mismatch');
-          if(!config.plugins.some(p=>Array.isArray(p) && p[0]==='expo-splash-screen' && p[1].backgroundColor==='#0a1d15')) throw Error('Native branded splash config missing');
+          if(!config.plugins.some(p=>Array.isArray(p) && p[0]==='expo-splash-screen' && p[1].backgroundColor==='#0a1d15' && p[1].imageWidth===160)) throw Error('Native branded splash config missing');
+          if(config.icon!=='./assets/onay-launcher-icon.png'||config.android.adaptiveIcon.foregroundImage!=='./assets/onay-adaptive-foreground.png'||config.android.adaptiveIcon.backgroundColor!=='#ffffff')throw Error('Launcher/adaptive config mismatch');
           console.log('Expo/receipt SHA parity verified:', receipt.sourceSha);
           NODE
       - name: Export Android and iOS JS bundles
@@ -79,6 +82,11 @@ jobs:
           java-version: "17"
       - name: Prebuild native Android once
         run: pnpm exec expo prebuild --platform android --no-install --clean
+      - name: Inspect actual Android launcher resources
+        run: |
+          test -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          grep -Rqi '#ffffff' android/app/src/main/res/values/
+          grep -Rq 'ic_launcher_foreground' android/app/src/main/res/mipmap-anydpi-v26
       - name: Embed Hermes bundle in standalone debug APK
         run: |
           node <<'NODE'
@@ -87,7 +95,7 @@ jobs:
           if(!original.includes('react {')) throw Error('Gradle React config missing');
           fs.writeFileSync(path,original.replace('react {','react {\n    debuggableVariants = []'));
           NODE
-      - name: Build exactly one APK118
+      - name: Build exactly one APK119
         run: cd android && ./gradlew assembleDebug
       - name: Verify package identity and emit SHA256 receipt
         shell: bash
@@ -98,35 +106,39 @@ jobs:
           from pathlib import Path
           src=Path('android/app/build/outputs/apk/debug/app-debug.apk')
           assert src.is_file(), 'Gradle APK missing'
-          target=Path('Onay-offline-demo-APK118.apk')
+          target=Path('Onay-offline-demo-APK119.apk')
           target.write_bytes(src.read_bytes())
           with zipfile.ZipFile(target) as z:
               js=z.read('assets/index.android.bundle')
               assert js.startswith(bytes.fromhex('c61fbc03')), 'Hermes bytecode not embedded'
+              names=z.namelist()
+              assert any('ic_launcher_foreground.png' in n for n in names), 'Adaptive foreground not packaged'
+              assert any('ic_launcher.png' in n and n.startswith('res/mipmap-') for n in names), 'Launcher icon not packaged'
+              assert any('mipmap-anydpi-v26/ic_launcher.xml' in n for n in names), 'Adaptive icon XML not packaged'
               for marker in (b'onay-startup-screen',b'onay-startup-squares',b'onay-startup-label',b'onay-about-source-sha'):
                   assert marker in js, f'Missing UI marker {marker!r}'
           receipt=json.loads(Path('build-provenance.json').read_text())
-          assert receipt['versionCode']==118 and receipt['offlineDemoPreview']
+          assert receipt['versionCode']==119 and receipt['offlineDemoPreview']
           assert len(receipt['sourceSha'])==40
           assert receipt['applicationId']=='uz.tezjet.app'
           checksum=hashlib.sha256(target.read_bytes()).hexdigest()
-          Path('apk118-sha256.txt').write_text(checksum+'  '+target.name+'\n')
-          print('APK118 source SHA:',receipt['sourceSha'])
-          print('APK118 SHA256:',checksum)
+          Path('apk119-sha256.txt').write_text(checksum+'  '+target.name+'\n')
+          print('APK119 source SHA:',receipt['sourceSha'])
+          print('APK119 SHA256:',checksum)
           PY
-      - name: Publish single APK118 with provenance and checksum
+      - name: Publish single APK119 with provenance and checksum
         uses: actions/upload-artifact@v4
         with:
-          name: onay-android-demo-apk-118
+          name: onay-android-demo-apk-119
           path: |
-            mobile/tezjet-app/Onay-offline-demo-APK118.apk
+            mobile/tezjet-app/Onay-offline-demo-APK119.apk
             mobile/tezjet-app/build-provenance.json
-            mobile/tezjet-app/apk118-sha256.txt
+            mobile/tezjet-app/apk119-sha256.txt
           if-no-files-found: error
 
   android-acceptance:
-    name: APK117 to APK118 Android QA and native screenshots
-    needs: build-apk118
+    name: APK118 to APK119 Android QA and native screenshots
+    needs: build-apk119
     if: github.event_name == 'pull_request' && github.event.pull_request.number == 110
     runs-on: ubuntu-22.04
     timeout-minutes: 60
@@ -134,19 +146,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - name: Download published APK117 baseline
-        uses: actions/download-artifact@v4
-        with:
-          name: onay-android-demo-apk-117
-          run-id: 42462243735
-          repository: erman-ksv/Onay
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: apk117
-      - name: Download just-published APK118 from the same run
+      - name: Download published APK118 baseline
         uses: actions/download-artifact@v4
         with:
           name: onay-android-demo-apk-118
+          run-id: 42472262883
+          repository: erman-ksv/Onay
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           path: apk118
+      - name: Download just-published APK119 from the same run
+        uses: actions/download-artifact@v4
+        with:
+          name: onay-android-demo-apk-119
+          path: apk119
       - name: Verify source receipt, APK checksum and signer continuity
         shell: bash
         run: |
@@ -155,27 +167,27 @@ jobs:
           python3 - <<'PY'
           import hashlib,json,zipfile
           from pathlib import Path
-          old=Path('apk117/Onay-offline-demo-APK117.apk')
-          new=Path('apk118/Onay-offline-demo-APK118.apk')
+          old=Path('apk118/Onay-offline-demo-APK118.apk')
+          new=Path('apk119/Onay-offline-demo-APK119.apk')
           assert old.is_file() and new.is_file()
-          a=json.loads(Path('apk117/build-provenance.json').read_text())
-          b=json.loads(Path('apk118/build-provenance.json').read_text())
-          assert (a['versionCode'],b['versionCode'])==(117,118)
-          assert a['sourceSha']=='02ee16ff8f62b40c1dc37262bf0d9250d01571be'
+          a=json.loads(Path('apk118/build-provenance.json').read_text())
+          b=json.loads(Path('apk119/build-provenance.json').read_text())
+          assert (a['versionCode'],b['versionCode'])==(118,119)
+          assert a['sourceSha']=='516e73a553e65291b95142c7ea80b1259d4e1603'
           assert b['sourceSha']=='${{ github.event.pull_request.head.sha }}'
           assert a['applicationId']==b['applicationId']=='uz.tezjet.app'
           assert a['offlineDemoPreview'] and b['offlineDemoPreview']
           sha=hashlib.sha256(new.read_bytes()).hexdigest()
-          assert Path('apk118/apk118-sha256.txt').read_text().split()[0]==sha
+          assert Path('apk119/apk119-sha256.txt').read_text().split()[0]==sha
           with zipfile.ZipFile(new) as z:
               assert z.read('assets/index.android.bundle').startswith(bytes.fromhex('c61fbc03'))
           print('Source SHA',b['sourceSha'])
-          print('APK118 SHA256',sha)
+          print('APK119 SHA256',sha)
           PY
           signer="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)"
-          "$signer" verify --print-certs apk117/Onay-offline-demo-APK117.apk | grep 'certificate SHA-256 digest' >/tmp/onay-apk117-cert
           "$signer" verify --print-certs apk118/Onay-offline-demo-APK118.apk | grep 'certificate SHA-256 digest' >/tmp/onay-apk118-cert
-          diff -u /tmp/onay-apk117-cert /tmp/onay-apk118-cert
+          "$signer" verify --print-certs apk119/Onay-offline-demo-APK119.apk | grep 'certificate SHA-256 digest' >/tmp/onay-apk119-cert
+          diff -u /tmp/onay-apk118-cert /tmp/onay-apk119-cert
       - name: Install SDK emulator, headless libraries and video decoder
         shell: bash
         run: |
@@ -203,8 +215,8 @@ jobs:
           import os
           fd=os.open('/dev/kvm',os.O_RDWR|os.O_CLOEXEC);print('KVM usable',fd);os.close(fd)
           PY
-          "$ANDROID_HOME/emulator/emulator" -accel-check | tee /tmp/onay-apk118-accel
-          grep -Eiq 'KVM.*(installed and usable|is usable|is enabled)' /tmp/onay-apk118-accel
+          "$ANDROID_HOME/emulator/emulator" -accel-check | tee /tmp/onay-apk119-accel
+          grep -Eiq 'KVM.*(installed and usable|is usable|is enabled)' /tmp/onay-apk119-accel
       - name: Real Android 12+ startup MP4 and installed provenance SHA comparison
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -216,11 +228,41 @@ jobs:
           disable-animations: false
           disable-linux-hw-accel: false
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: python3 scripts/onay-apk118-startup-android-qa.py --old-apk apk117/Onay-offline-demo-APK117.apk --new-apk apk118/Onay-offline-demo-APK118.apk --output artifacts/apk118-startup-native && python3 scripts/onay-build-sha-android-qa.py --provenance apk118/build-provenance.json --version-code 118 --output artifacts/apk118-startup-native
+          script: python3 scripts/onay-apk118-startup-android-qa.py --old-apk apk118/Onay-offline-demo-APK118.apk --new-apk apk119/Onay-offline-demo-APK119.apk --old-version 118 --new-version 119 --output artifacts/apk119-startup-native && python3 scripts/onay-build-sha-android-qa.py --provenance apk119/build-provenance.json --version-code 119 --output artifacts/apk119-startup-native && python3 scripts/onay-apk119-icon-android-qa.py --version-code 119 --output artifacts/apk119-startup-native
       - name: Publish native Android screenshots XML and verification report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: onay-apk118-startup-android-qa
-          path: artifacts/apk118-startup-native/
+          name: onay-apk119-startup-android-qa
+          path: artifacts/apk119-startup-native/
           if-no-files-found: warn
+
+  publish-direct-apk:
+    name: Publish verified direct APK119 (no ZIP)
+    needs: android-acceptance
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: onay-android-demo-apk-119
+          path: final
+      - name: Publish only if source receipt matches completed Android acceptance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          r=json.loads(Path('final/build-provenance.json').read_text())
+          apk=Path('final/Onay-offline-demo-APK119.apk')
+          assert r['sourceSha']==os.environ['EXPECTED_SHA']
+          assert r['applicationId']=='uz.tezjet.app' and r['versionCode']==119
+          assert hashlib.sha256(apk.read_bytes()).hexdigest()==Path('final/apk119-sha256.txt').read_text().split()[0]
+          Path('release-notes.md').write_text('Onay APK119 — Android offline demo, debug preview (not production).\nSource: '+r['sourceSha']+'\nPackage uz.tezjet.app / versionCode 119.\nWhite padded adaptive icon, dark localized startup. See same-run Android emulator screenshot/video evidence. Samsung physical phone testing is not claimed. No SMS/VPS/merge.\n')
+          PY
+          gh release create onay-demo-apk119 final/Onay-offline-demo-APK119.apk final/apk119-sha256.txt --repo erman-ksv/Onay --target "$EXPECTED_SHA" --prerelease --latest=false --title 'Onay APK119 - icon and startup demo' --notes-file release-notes.md
