@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import buildConfig from '../app.config.ts';
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import buildConfig, { resolveOnayBuildMetadata } from '../app.config.ts';
 import { getOnayBuildIdentity } from '../lib/onay-build-identity.ts';
 const config=JSON.parse(readFileSync(new URL('../app.json',import.meta.url),'utf8')).expo;
 test('debug identity distinguishes V2 upgrades while preserving Android applicationId',()=>{
@@ -45,4 +47,39 @@ test('runtime build identity appears on both profiles and About with actual mode
  for(const source of [profile,driver]) assert.match(source,/OnayBuildIdentity mode=\{demoMode \? "demo" : "live"\}/);
  assert.match(about, /<OnayBuildIdentity mode=\{mode\}/);
  for(const marker of ['onay-about-version-code','onay-about-source-sha','onay-about-runtime-mode','onay-about-build-mismatch','onay-profile-build-identity']) assert.ok(build.includes(marker));
+});
+
+test('generated build-provenance sourceSha is embedded in Expo config and rendered About identity',t=>{
+ const sha='f135'.repeat(10);
+ const cwd=process.cwd(), dir=mkdtempSync(join(tmpdir(),'onay-build-provenance-'));
+ t.after(()=>{process.chdir(cwd);rmSync(dir,{recursive:true,force:true});});
+ const receipt={
+   sourceSha:sha, sourceBranch:'feat/artifact-auth-ui-v1', runId:'98765',
+   applicationId:config.android.package, versionCode:config.android.versionCode,
+ };
+ writeFileSync(join(dir,'build-provenance.json'),JSON.stringify(receipt));
+ process.chdir(dir);
+ const output=buildConfig({config});
+ assert.equal(output.extra.onayBuild.commit,receipt.sourceSha);
+ assert.equal(output.extra.onayBuild.versionCode,receipt.versionCode);
+ assert.equal(output.extra.onayBuild.runId,receipt.runId);
+ const display=getOnayBuildIdentity(output.version,output.version,String(receipt.versionCode),output.extra.onayBuild,'demo');
+ assert.equal(display.sourceSha,receipt.sourceSha);
+ assert.equal(display.shortSha,receipt.sourceSha.slice(0,12));
+ assert.equal(display.versionCode,receipt.versionCode);
+ assert.equal(display.versionMismatch,false);
+ const component=readFileSync(new URL('../components/OnayBuildIdentity.tsx',import.meta.url),'utf8');
+ assert.match(component,/SHA исходников: \{info\.shortSha\}/);
+ assert.match(component,/Constants\.expoConfig\?\.extra\?\.onayBuild/);
+});
+
+test('invalid or conflicting provenance rejects a false build identity',()=>{
+ const base={sourceSha:'a'.repeat(40),versionCode:config.android.versionCode,applicationId:config.android.package};
+ const env={ONAY_BUILD_SHA:'b'.repeat(40)};
+ assert.throws(()=>resolveOnayBuildMetadata(config,base,env),/conflicts/);
+ assert.throws(()=>resolveOnayBuildMetadata(config,{...base,sourceSha:'local'},{}),/sourceSha/);
+ assert.throws(()=>resolveOnayBuildMetadata(config,{...base,versionCode:999},{}),/versionCode/);
+ assert.throws(()=>resolveOnayBuildMetadata(config,{...base,applicationId:'another.app'},{}),/applicationId/);
+ assert.throws(()=>resolveOnayBuildMetadata(config,{...base,sourceSha:'a'.repeat(40).toUpperCase().replace(/A/g,'G')},{}),/sourceSha/);
+ assert.equal(resolveOnayBuildMetadata(config,null,{}).commit,'local');
 });
