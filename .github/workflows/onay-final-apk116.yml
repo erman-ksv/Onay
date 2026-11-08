@@ -14,6 +14,7 @@ concurrency:
 
 jobs:
   verify-mobile:
+    if: github.event.pull_request.head.sha == '5421afb1f3caad8f86c9f9612f6b9c79af176f3b'
     runs-on: ubuntu-latest
     env:
       EXPO_PUBLIC_API_URL: ${{ vars.TEZJET_API_URL }}
@@ -123,7 +124,7 @@ jobs:
 
   android-native-acceptance:
     name: APK115 to APK116 on Android - both new screens
-    if: github.event_name == 'pull_request' && github.event.pull_request.number == 110
+    if: github.event.pull_request.head.sha == '5421afb1f3caad8f86c9f9612f6b9c79af176f3b'
     needs: verify-mobile
     runs-on: ubuntu-22.04
     timeout-minutes: 55
