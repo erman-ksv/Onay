@@ -10,6 +10,19 @@
     "plugins": [
       "expo-router",
       [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0a1d15",
+          "image": "./assets/onay-original-logo.png",
+          "imageWidth": 96,
+          "resizeMode": "contain",
+          "dark": {
+            "backgroundColor": "#0a1d15",
+            "image": "./assets/onay-original-logo.png"
+          }
+        }
+      ],
+      [
         "expo-location",
         {
           "locationWhenInUsePermission": "Onay использует местоположение только по запросу, чтобы оформить поездку."
@@ -26,7 +39,11 @@
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION"
       ],
-      "versionCode": 117
+      "versionCode": 117,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/onay-original-logo.png",
+        "backgroundColor": "#0a1d15"
+      }
     },
     "experiments": {
       "typedRoutes": true
