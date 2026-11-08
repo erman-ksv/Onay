@@ -83,7 +83,10 @@ export default function OnayPassengerProfile({ fullName, phoneNumber, busy, them
     return <OnayPassengerSupport theme={theme} onBack={() => setSupportOpen(false)} />;
   }
   if (aboutOpen) {
-    return <OnayPassengerAbout theme={theme} mode={demoMode ? "demo" : "live"} onBack={() => setAboutOpen(false)} />;
+    return <Modal visible animationType="slide" presentationStyle="fullScreen"
+      onRequestClose={() => setAboutOpen(false)}>
+      <OnayPassengerAbout theme={theme} mode={demoMode ? "demo" : "live"} onBack={() => setAboutOpen(false)} />
+    </Modal>;
   }
   if (personalOpen) return <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setPersonalOpen(false)}>
     <OnayPersonalDetails theme={theme} fullName={fullName} phoneNumber={phoneNumber} email={email}
