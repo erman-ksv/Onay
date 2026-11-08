@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   publish-verified-demo:
-    if: github.repository == 'erman-ksv/Onay' && github.event.pull_request.number == 110 && github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request.head.sha == 'c5320774ae1f863d830739b23dfd79f62a4f32d3' && github.repository == 'erman-ksv/Onay' && github.event.pull_request.number == 110 && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

@@ -15,7 +15,7 @@ concurrency:
 jobs:
   build-apk118:
     name: Verify source and build one APK118
-    if: github.event_name == 'pull_request' && github.event.pull_request.number == 110
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 110 && github.event.pull_request.head.sha == '516e73a553e65291b95142c7ea80b1259d4e1603'
     runs-on: ubuntu-latest
     env:
       EXPO_PUBLIC_API_URL: ""
