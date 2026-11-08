@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { onayEntryScreen, onayDark } from "../lib/onay-auth-ui.ts";
+import { hydrateOnayStartupLanguage, parseOnayStartupLanguage } from "../lib/onay-startup-language.ts";
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8");
 
 test("native Onay splash and Android adaptive icon share the real logo and dark background", () => {
@@ -20,7 +21,7 @@ test("brand startup uses saved language, not a speculative first Russian frame",
  const context=read("../lib/onay-language-context.tsx");
  const layout=read("../app/_layout.tsx");
  const startup=read("../components/OnayStartupLoading.tsx");
- assert.match(context,/onay_language_v1/);
+ assert.match(read("../lib/onay-startup-language.ts"),/onay_language_v1/);
  assert.match(context,/hydration: "loading"/);
  assert.match(context,/AsyncStorage\.getItem\(LANGUAGE_KEY\)/);
  assert.match(context,/setHydration\("ready"\)/);
@@ -59,4 +60,17 @@ test("restore must resolve before auth; server remains optional for demo", () =>
  assert.match(index,/onDemo=\{enabled \? setDemoRole : undefined\}/);
  assert.match(index,/AsyncStorage\.multiGet\(\[API_ENDPOINT, TOKEN\]\)/);
  assert.match(index,/setMode\(\(me\.user\.active_role \?\? me\.user\.role\) === "driver"/);
+});
+
+test("persisted RU UZ KK resolve before loading label; transient storage error retries",async()=>{
+ for (const lang of ["ru","uz","kk"]) {
+  assert.equal(await hydrateOnayStartupLanguage(async()=>lang),lang);
+ }
+ assert.equal(parseOnayStartupLanguage(null),"ru");
+ assert.equal(parseOnayStartupLanguage("invalid"),"ru");
+ let calls=0;
+ const read=async()=>{calls++;if(calls===1)throw new Error("storage temporarily unavailable");return "uz";};
+ await assert.rejects(()=>hydrateOnayStartupLanguage(read),/storage temporarily unavailable/);
+ assert.equal(await hydrateOnayStartupLanguage(read),"uz");
+ assert.equal(calls,2);
 });
