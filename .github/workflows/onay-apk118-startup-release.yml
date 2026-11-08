@@ -1,4 +1,4 @@
-name: Onay APK119 white launcher and startup final single build
+name: Onay APK119 compiled resources and Android acceptance (reuse original Gradle APK)
 on:
   pull_request:
     paths:
@@ -17,8 +17,8 @@ concurrency:
 
 jobs:
   build-apk119:
-    name: Verify source and build one APK119
-    if: github.event_name == 'pull_request' && github.event.pull_request.number == 110
+    name: Build APK119 on original source SHA only
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 110 && github.event.pull_request.head.sha == 'e61c32b6ec09fd73cb0f49e71211020a6ce1c1e9'
     runs-on: ubuntu-latest
     env:
       EXPO_PUBLIC_API_URL: ""
@@ -153,8 +153,7 @@ jobs:
           if-no-files-found: error
 
   android-acceptance:
-    name: APK118 to APK119 Android QA and native screenshots
-    needs: build-apk119
+    name: Verify saved APK119, Android QA and native screenshots without rebuilding
     if: github.event_name == 'pull_request' && github.event.pull_request.number == 110
     runs-on: ubuntu-22.04
     timeout-minutes: 60
@@ -170,16 +169,27 @@ jobs:
           repository: erman-ksv/Onay
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: apk118
-      - name: Download just-published APK119 from the same run
+      - name: Reuse preserved APK119 diagnostic artifact from completed Gradle, no rebuild
         uses: actions/download-artifact@v4
         with:
-          name: onay-android-demo-apk-119
-          path: apk119
+          name: onay-apk119-diagnostic
+          run-id: 42486987509
+          repository: erman-ksv/Onay
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: diagnostic
+      - name: Stage exact original APK119 and provenance without resigning
+        run: |
+          mkdir -p apk119
+          cp diagnostic/mobile/tezjet-app/Onay-offline-demo-APK119.apk apk119/
+          cp diagnostic/mobile/tezjet-app/build-provenance.json apk119/
+          cp diagnostic/mobile/tezjet-app/apk119-sha256.txt apk119/
+          cmp diagnostic/mobile/tezjet-app/android/app/build/outputs/apk/debug/app-debug.apk apk119/Onay-offline-demo-APK119.apk
+          python3 scripts/onay-apk119-resources-qa.py --apk apk119/Onay-offline-demo-APK119.apk --output artifacts/apk119-startup-native
       - name: Verify source receipt, APK checksum and signer continuity
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile scripts/onay-apk118-startup-android-qa.py scripts/onay-build-sha-android-qa.py
+          python3 -m py_compile scripts/onay-apk118-startup-android-qa.py scripts/onay-apk119-resources-qa.py scripts/onay-build-sha-android-qa.py
           python3 - <<'PY'
           import hashlib,json,zipfile
           from pathlib import Path
@@ -190,7 +200,7 @@ jobs:
           b=json.loads(Path('apk119/build-provenance.json').read_text())
           assert (a['versionCode'],b['versionCode'])==(118,119)
           assert a['sourceSha']=='516e73a553e65291b95142c7ea80b1259d4e1603'
-          assert b['sourceSha']=='${{ github.event.pull_request.head.sha }}'
+          assert b['sourceSha']=='e61c32b6ec09fd73cb0f49e71211020a6ce1c1e9'
           assert a['applicationId']==b['applicationId']=='uz.tezjet.app'
           assert a['offlineDemoPreview'] and b['offlineDemoPreview']
           sha=hashlib.sha256(new.read_bytes()).hexdigest()
@@ -263,8 +273,17 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: onay-android-demo-apk-119
-          path: final
+          name: onay-apk119-diagnostic
+          run-id: 42486987509
+          repository: erman-ksv/Onay
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: diagnostic
+      - name: Stage unchanged, Android-accepted APK119 for direct release
+        run: |
+          mkdir -p final
+          cp diagnostic/mobile/tezjet-app/Onay-offline-demo-APK119.apk final/
+          cp diagnostic/mobile/tezjet-app/build-provenance.json final/
+          cp diagnostic/mobile/tezjet-app/apk119-sha256.txt final/
       - name: Publish only if source receipt matches completed Android acceptance
         env:
           GH_TOKEN: ${{ github.token }}
@@ -276,9 +295,9 @@ jobs:
           from pathlib import Path
           r=json.loads(Path('final/build-provenance.json').read_text())
           apk=Path('final/Onay-offline-demo-APK119.apk')
-          assert r['sourceSha']==os.environ['EXPECTED_SHA']
+          assert r['sourceSha']=='e61c32b6ec09fd73cb0f49e71211020a6ce1c1e9'
           assert r['applicationId']=='uz.tezjet.app' and r['versionCode']==119
           assert hashlib.sha256(apk.read_bytes()).hexdigest()==Path('final/apk119-sha256.txt').read_text().split()[0]
           Path('release-notes.md').write_text('Onay APK119 — Android offline demo, debug preview (not production).\nSource: '+r['sourceSha']+'\nPackage uz.tezjet.app / versionCode 119.\nWhite padded adaptive icon, dark localized startup. See same-run Android emulator screenshot/video evidence. Samsung physical phone testing is not claimed. No SMS/VPS/merge.\n')
           PY
-          gh release create onay-demo-apk119 final/Onay-offline-demo-APK119.apk final/apk119-sha256.txt --repo erman-ksv/Onay --target "$EXPECTED_SHA" --prerelease --latest=false --title 'Onay APK119 - icon and startup demo' --notes-file release-notes.md
+          gh release create onay-demo-apk119 final/Onay-offline-demo-APK119.apk final/apk119-sha256.txt --repo erman-ksv/Onay --target e61c32b6ec09fd73cb0f49e71211020a6ce1c1e9 --prerelease --latest=false --title 'Onay APK119 - icon and startup demo' --notes-file release-notes.md

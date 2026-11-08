@@ -79,7 +79,7 @@ def resource_id(xml, element):
     m = re.search(r"(?ims)^\s*E:\s*(?:[^\s:]+:)?"+re.escape(element)+r"\b([^\r\n]*)(.*?)(?=^\s*E:|\Z)", xml)
     if not m:
         raise AssertionError(f"Compiled adaptive icon has no <{element}> element")
-    a = re.search(r"(?im)^\s*A:\s*(?:android:)?drawable[^\r\n]*?@(?:0x)?([0-9a-f]{8})\b", m.group(2))
+    a = re.search(r"(?im)^\s*A:\s*[^\r\n]*?drawable(?:\([^)]*\))?\s*=\s*@(?:0x)?([0-9a-f]{8})\b", m.group(2))
     if not a:
         raise AssertionError(f"Compiled <{element}> has no Android drawable resource ID: {m.group(2)[:300]}")
     return "0x" + a.group(1).lower()
@@ -149,7 +149,7 @@ def run(apk, output):
             bg = resolve(entries, background_id)
             files = confirm_image(z, fg["body"], "adaptive foreground")
             info["foreground"] = {"id": foreground_id, "resource": fg["name"], "packed_files": files}
-            info["checks"].append("foreground XML ID resolves to an existing, valid packaged PNG/WebP")
+            info["checks"].append("foreground XML ID resolves to an existing packaged image, independent of filename extension")
             # Background may be a color resource instead of a bitmap.
             if WHITE.search(bg["body"]):
                 info["background"] = {"id": background_id, "resource": bg["name"], "value": "white"}
