@@ -37,3 +37,27 @@ test("both themes work while profile history, support, driver mode and logout st
   assert.match(profile, /row\("support", "Поддержка", \(\) => setSupportOpen\(true\)\)/);
   assert.match(profile, /testID="onay-profile-logout"/);
 });
+
+test("About is full-screen with Safe Area and scroll, and legal document rows respond without fake links", () => {
+  assert.match(profile, /return <Modal visible animationType="slide" presentationStyle="fullScreen"/);
+  assert.match(about, /useSafeAreaInsets\(\)/);
+  assert.match(about, /paddingTop: insets\.top/);
+  assert.match(about, /testID="onay-about-scroll"/);
+  assert.match(about, /paddingBottom: Math\.max\(24, insets\.bottom \+ 20\)/);
+  assert.match(about, /accessibilityRole="button"/);
+  assert.match(about, /onPress=\{\(\) => setSelectedLegalDocument\(label\)\}/);
+  assert.match(about, /testID="onay-about-legal-feedback"/);
+  assert.match(about, /t\("Документ не опубликован"\)/);
+  assert.doesNotMatch(about, /Linking\.openURL|https?:\/\//);
+});
+
+test("About copy is available in Uzbek and Kazakh while legal status stays honest", () => {
+  const translations = readFileSync(new URL("../lib/onay-translations.ts", import.meta.url), "utf8");
+  for (const label of [
+    "Назад в профиль",
+    "Документ не опубликован",
+    "Политика конфиденциальности",
+    "Условия использования",
+    "Междугородние поездки на такси. Выберите маршрут и остановку, затем оформите заказ. Стоимость и доступность водителей подтверждаются сервером.",
+  ]) assert.ok(translations.includes(JSON.stringify(label) + ":"), label);
+});
