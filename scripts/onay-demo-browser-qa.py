@@ -82,7 +82,14 @@ def main():
             expect(page.get_by_test_id("onay-profile-personal-name")).to_contain_text("Не хранится отдельно")
             expect(page.get_by_test_id("onay-personal-name-storage-note")).to_contain_text("Демо-пассажир")
             expect(page.get_by_test_id("onay-profile-personal-surname")).to_contain_text("Не хранится отдельно")
-            expect(page.get_by_test_id("onay-profile-personal-email")).to_be_disabled()
+            demo_email = page.get_by_test_id("onay-profile-personal-email")
+            expect(demo_email).to_have_value("")
+            # React Native Web can expose editable={false} as readOnly rather than disabled.
+            # Test the native DOM editing restriction and a real keyboard attempt.
+            assert demo_email.evaluate("(input) => input.readOnly || input.disabled"), "Demo email is editable"
+            demo_email.evaluate("(input) => input.focus()")
+            page.keyboard.type("attempted-demo-change@example.com")
+            expect(demo_email).to_have_value("")
             expect(page.get_by_test_id("onay-personal-email-demo-notice")).to_be_visible()
             expect(page.get_by_test_id("onay-personal-email-save")).to_be_disabled()
             shot(page, "demo-personal-data-email-readonly")
