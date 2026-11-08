@@ -94,6 +94,19 @@ def main():
             expect(page.get_by_test_id("onay-personal-email-save")).to_be_disabled()
             shot(page, "demo-personal-data-email-readonly")
             page.get_by_test_id("onay-screen-back").click()
+            page.get_by_test_id("onay-profile-about").click()
+            expect(page.get_by_test_id("onay-passenger-about-screen")).to_be_visible()
+            for legal_id, title in (
+                ("onay-legal-privacy-unavailable", "Политика конфиденциальности"),
+                ("onay-legal-terms-unavailable", "Условия использования"),
+            ):
+                page.get_by_test_id(legal_id).click()
+                expect(page.get_by_test_id("onay-about-legal-feedback")).to_contain_text(title)
+                expect(page.get_by_test_id("onay-about-legal-feedback")).to_contain_text("Документ не опубликован")
+            shot(page, "demo-about-unpublished-legal")
+            page.get_by_test_id("onay-about-back").click()
+            expect(page.get_by_test_id("onay-passenger-profile-panel")).to_be_visible()
+            passed("About scrollable full page and unpublished legal actions show honest localized feedback")
             page.get_by_test_id("onay-profile-support").click()
             expect(page.get_by_test_id("onay-demo-page")).to_contain_text("сообщения не отправляются")
             page.get_by_test_id("onay-support-back").click()
