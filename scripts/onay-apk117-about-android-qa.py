@@ -69,12 +69,15 @@ def open_about(lang):
     h.await_node(HEADINGS[lang], "text")
     h.await_node("onay-about-confirmed-logo", "id")
     back = h.await_node("onay-about-back", "id")
-    top = int(re.findall(r"\\d+", back.attrib.get("bounds", "[0,0][0,0]"))[1])
+    top = int(re.findall(r"\d+", back.attrib.get("bounds", "[0,0][0,0]"))[1])
     if top < 35:
         raise AssertionError(f"About header intrudes into system status bar: y={top}")
 
 def verify_about(output, lang, theme, checks):
     h.click("onay-profile-theme-" + theme, "id")
+    selected_theme = h.await_node("onay-profile-theme-" + theme, "id")
+    if selected_theme.attrib.get("selected") != "true":
+        raise AssertionError(f"Theme {theme} not selected: {selected_theme.attrib}")
     h.click("onay-language-" + lang, "id")
     h.await_node({"ru": "Язык", "uz": "Til", "kk": "Тіл"}[lang])
     open_about(lang)
