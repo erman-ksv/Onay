@@ -12,7 +12,7 @@ test("personal details: only email edits; full_name is never split or rewritten"
  const app=read("../app/index.tsx");
  for(const id of ["onay-profile-personal-name","onay-profile-personal-surname","onay-profile-personal-phone","onay-profile-personal-email","onay-personal-email-save"]) assert.ok(details.includes(id));
  assert.match(details,/family \?\? "Не хранится отдельно"/);
- assert.match(details,/В аккаунте имя и фамилия сохранены одной строкой/);
+ assert.match(details,/Имя и фамилия не сохранены отдельно/);
  assert.doesNotMatch(details,/fullName\.split|split\(" "\)|split\(' '\)/);
  assert.match(details,/onSaveEmail\(normalized\)/);
  assert.match(details,/busyRef\.current/);

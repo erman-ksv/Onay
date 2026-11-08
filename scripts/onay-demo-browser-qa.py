@@ -79,7 +79,8 @@ def main():
 
             page.get_by_test_id("onay-tab-profile").click()
             page.get_by_test_id("onay-profile-personal-data").click()
-            expect(page.get_by_test_id("onay-profile-personal-name")).to_have_text("Демо-пассажир")
+            expect(page.get_by_test_id("onay-profile-personal-name")).to_contain_text("Не хранится отдельно")
+            expect(page.get_by_test_id("onay-personal-name-storage-note")).to_contain_text("Демо-пассажир")
             expect(page.get_by_test_id("onay-profile-personal-surname")).to_contain_text("Не хранится отдельно")
             expect(page.get_by_test_id("onay-profile-personal-email")).to_be_disabled()
             expect(page.get_by_test_id("onay-personal-email-demo-notice")).to_be_visible()

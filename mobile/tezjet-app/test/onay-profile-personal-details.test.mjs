@@ -19,7 +19,7 @@ test("passenger personal information opens a native full page with a working Bac
 
 test("personal data is sourced from the authenticated account and never fabricated", () => {
   const details = readFileSync(new URL("../components/OnayPersonalDetails.tsx", import.meta.url), "utf8");
-  assert.match(details, /fullName \? fullName : "Не указано"/);
+  assert.match(details, /fullName \|\| "Не указано"/);
   assert.match(details, /phoneNumber \|\| "Не указан"/);
   assert.match(app, /phone_number\?: string/);
   assert.match(app, /phoneNumber=\{profile\.phone_number\}/);
