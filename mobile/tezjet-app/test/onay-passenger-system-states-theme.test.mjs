@@ -18,7 +18,8 @@ test('stale passenger data keeps readable alert and unchanged real refresh actio
  for(const value of ['accessibilityRole="alert"','passengerDarkSystem && s.darkPassengerTripCard','testID="onay-data-error-retry"','void refreshOrders(); void refreshAvailability(); setProfileRefresh(value => value + 1);','disabled={busy}'])assert.ok(card.includes(value));
 });
 test('profile recovery remains distinct from empty and never renders the previous shell',()=>{
- const from=app.indexOf('if (token && !profile) return <OnayScreenFrame');const to=app.indexOf('// Presentation only;',from);assert.ok(from>0&&to>from);const card=app.slice(from,to);
- for(const value of ['profileLoading ? "Загружаем профиль…" : "Нет связи с профилем"','testID="onay-profile-unavailable"','profileError ||','<ActivityIndicator','testID="onay-profile-retry"','onPress={() => setProfileRefresh(value => value + 1)}','disabled={busy || profileLoading}','onPress={logout}'])assert.ok(card.includes(value));
+ const from=app.indexOf('if (token && !profile && profileLoading) return <OnayStartupLoading/>;');
+ const to=app.indexOf('// Presentation only;',from);assert.ok(from>0&&to>from);const card=app.slice(from,to);
+ for(const value of ['if (token && !profile && profileLoading) return <OnayStartupLoading/>','title="Нет связи с профилем"','testID="onay-profile-unavailable"','profileError ||','testID="onay-profile-retry"','onPress={() => setProfileRefresh(value => value + 1)}','disabled={busy || profileLoading}','onPress={logout}'])assert.ok(card.includes(value));
  assert.ok(!app.includes('ТВОЙ ГОРОД. ТВОЙ МАРШРУТ.'));
 });
