@@ -2,6 +2,7 @@ import TextInput from "../components/OnayTextInput";
 import Text from "../components/OnayText";
 import Constants from "expo-constants";
 import OnayDemoApp from "../components/OnayDemoApp";
+import OnayStartupLoading from "../components/OnayStartupLoading";
 import { onayDemoPreviewEnabled } from "../lib/onay-demo";
 import OnayPassengerRide from "../components/OnayPassengerRide";
 import { useOnaySystemUi } from "../lib/use-onay-system-ui";
@@ -160,6 +161,8 @@ function LiveOnayApp({ onDemo }: { onDemo?: (role: Mode) => void }) {
   const [orders, setOrders] = useState<RideOrder[]>([]);
   const [driverSeatSnapshot, setDriverSeatSnapshot] = useState<DriverSeatSnapshot | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
+  const [sessionRestoreError, setSessionRestoreError] = useState(false);
+  const [sessionRestoreRevision, setSessionRestoreRevision] = useState(0);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState("");
   const [dataError, setDataError] = useState("");
@@ -231,8 +234,10 @@ function LiveOnayApp({ onDemo }: { onDemo?: (role: Mode) => void }) {
   const visibleError = dataError || routeError || (profile ? profileError : "");
 
   useEffect(() => {
-    AsyncStorage.multiGet([API_ENDPOINT, TOKEN])
+    let active = true;
+    void AsyncStorage.multiGet([API_ENDPOINT, TOKEN])
       .then(values => {
+        if (!active) return;
         const savedEndpoint = values[0][1];
         if (savedEndpoint) {
           try {
@@ -241,15 +246,16 @@ function LiveOnayApp({ onDemo }: { onDemo?: (role: Mode) => void }) {
           } catch (e) {
             setEndpointError(errorMessage(e, "Проверь адрес сервера Onay."));
             setShowEndpointSettings(true);
-            return;
           }
         }
         const savedToken = values[1][1];
         if (savedToken) { currentToken.current = savedToken; setToken(savedToken); }
+        setSessionRestoreError(false);
       })
-      .catch(() => setProfileError("Не удалось восстановить вход на этом устройстве."))
-      .finally(() => setSessionLoading(false));
-  }, []);
+      .catch(() => { if (active) setSessionRestoreError(true); })
+      .finally(() => { if (active) setSessionLoading(false); });
+    return () => { active = false; };
+  }, [sessionRestoreRevision]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1_000);
@@ -903,12 +909,10 @@ function LiveOnayApp({ onDemo }: { onDemo?: (role: Mode) => void }) {
   // Do not hide the existing API setup and session-recovery screens.
   useOnaySystemUi(!token && !showEndpointSettings ? "dark" : passengerTheme);
   const entryScreen = onayEntryScreen({ sessionLoading, token, apiBase, showEndpointSettings });
-  if (entryScreen === "loading") {
-    return <View style={{ flex: 1, backgroundColor: onayDark.background, alignItems: "center", justifyContent: "center" }}>
-      <ActivityIndicator color={onayDark.accent} />
-      <Text style={{ color: onayDark.muted, marginTop: 12 }}>Восстанавливаем вход…</Text>
-    </View>;
-  }
+  if (entryScreen === "loading") return <OnayStartupLoading/>;
+  if (sessionRestoreError) return <OnayStartupLoading error
+    onRetry={() => { setSessionLoading(true); setSessionRestoreRevision(v => v + 1); }}
+    onContinue={() => setSessionRestoreError(false)}/>;
   if (entryScreen === "connection") {
     return <OnayServerSettings value={endpointInput} onChange={setEndpointInput} onSave={() => { void saveEndpoint(); }}
       onBack={() => setShowEndpointSettings(false)} busy={busy || sessionLoading} error={endpointError} theme={passengerTheme}/>;
@@ -938,7 +942,8 @@ function LiveOnayApp({ onDemo }: { onDemo?: (role: Mode) => void }) {
     />;
   }
 
-  if (token && !profile) return <OnayScreenFrame title={profileLoading ? "Загружаем профиль…" : "Нет связи с профилем"} theme={passengerTheme} testID="onay-profile-unavailable">
+  if (token && !profile && profileLoading) return <OnayStartupLoading/>;
+  if (token && !profile) return <OnayScreenFrame title="Нет связи с профилем" theme={passengerTheme} testID="onay-profile-unavailable">
     {profileLoading ? <ActivityIndicator color={onayDark.accent}/> : null}
     <Text style={{ color: onayDark.muted, marginTop: 16 }}>{profileError || "Проверь интернет и повтори обновление."}</Text>
     <Button title="Повторить загрузку профиля" testID="onay-profile-retry" onPress={() => setProfileRefresh(value => value + 1)} disabled={busy || profileLoading} dark/>
