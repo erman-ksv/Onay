@@ -21,9 +21,18 @@ def main():
  result={"status":"failed","checks":[],"failures":[]}
  try:
   h.wait_for_healthy_android()
-  for apk,code in [(a.old_apk,a.old_version_code),(a.new_apk,a.version_code)]:
-   h.install_exact(apk,code,a.output,f"apk{code}")
-   result["checks"].append(f"Installed versionCode={code} via ADB")
+  # APK114 has the legacy personal-data page: never assert APK116-only controls before upgrade.
+  h.install_exact(a.old_apk,a.old_version_code,a.output,f"apk{a.old_version_code}")
+  result["checks"].append(f"Installed legacy versionCode={a.old_version_code} via ADB")
+  h.open_demo()
+  h.click("onay-tab-profile","id")
+  h.await_node("onay-passenger-profile-panel","id")
+  h.click("onay-profile-personal-data","id")
+  h.await_node("onay-profile-personal-details","id")
+  record(a.output,f"android-legacy-personal-apk{a.old_version_code}")
+  # Upgrade in place and only now expect the new standalone details and driver overview.
+  h.install_exact(a.new_apk,a.version_code,a.output,f"apk{a.version_code}")
+  result["checks"].append(f"Upgraded to versionCode={a.version_code} via ADB")
   h.open_demo()
   h.click("onay-tab-profile","id")
   h.await_node("onay-passenger-profile-panel","id")
