@@ -115,7 +115,11 @@ def main():
                     page.get_by_test_id("onay-trips-back-to-active").click()
                     page.get_by_test_id("onay-tab-profile").click()
                     page.get_by_test_id("onay-profile-personal-data").click()
-                    expect(page.get_by_test_id("onay-profile-personal-name")).to_have_text("Visual QA")
+                    # Legacy accounts store only full_name; do not fabricate a given name or surname.
+                    expect(page.get_by_test_id("onay-profile-personal-name")).to_contain_text("Не хранится отдельно")
+                    expect(page.get_by_test_id("onay-profile-personal-surname")).to_contain_text("Не хранится отдельно")
+                    expect(page.get_by_test_id("onay-personal-name-storage-note")).to_contain_text("Visual QA")
+                    expect(page.get_by_test_id("onay-profile-personal-email")).to_be_enabled()
                     shot(page, "actual-passenger-personal-data")
                     page.get_by_test_id("onay-screen-back").click()
                     for child in ("support", "about"):
