@@ -149,8 +149,9 @@ export interface Store {
   updateQueueEntry(
     driverId: string,
     patch: Partial<QueueEntry>,
+    expectedSessionVersion?: number,
   ): MaybePromise<QueueEntry | undefined>;
-  leaveQueue(driverId: string): MaybePromise<void>;
+  leaveQueue(driverId: string, expectedSessionVersion?: number): MaybePromise<void>;
   getQueue(): MaybePromise<QueueEntry[]>;
   getQueuePosition(driverId: string): MaybePromise<number | null>;
   getFirstEligibleDriver(seats: number): MaybePromise<QueueEntry | undefined>;

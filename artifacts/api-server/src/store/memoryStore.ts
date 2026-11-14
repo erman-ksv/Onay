@@ -402,7 +402,9 @@ class MemoryStore implements Store {
   updateQueueEntry(
     driverId: string,
     patch: Partial<QueueEntry>,
+    expectedSessionVersion?: number,
   ): QueueEntry | undefined {
+    if (expectedSessionVersion !== undefined) this.requireCurrentRole(driverId, "driver", expectedSessionVersion);
     const entry = this.queueEntries.get(driverId);
     if (!entry) {
       return undefined;
@@ -417,7 +419,8 @@ class MemoryStore implements Store {
     return entry.routeContext ? structuredClone(entry) : entry;
   }
 
-  leaveQueue(driverId: string): void {
+  leaveQueue(driverId: string, expectedSessionVersion?: number): void {
+    if (expectedSessionVersion !== undefined) this.requireCurrentRole(driverId, "driver", expectedSessionVersion);
     const current = this.queueEntries.get(driverId);
     if (current && (hasActiveOrders(current) || current.pendingOfferOrderId)) {
       throw new AppError(409, "Driver cannot leave the queue while an order is active", "ACTIVE_ORDER");

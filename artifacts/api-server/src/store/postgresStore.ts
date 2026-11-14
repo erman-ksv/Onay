@@ -751,8 +751,8 @@ export class PostgresStore implements Store {
     });
   }
 
-  async updateQueueEntry(driverId: string, patch: Partial<QueueEntry>): Promise<QueueEntry | undefined> {
-    const { db, driverQueueTable } = await this.database();
+  async updateQueueEntry(driverId: string, patch: Partial<QueueEntry>, expectedSessionVersion?: number): Promise<QueueEntry | undefined> {
+    const { db, driverQueueTable, usersTable } = await this.database();
     const values: {
       joinedAt?: number;
       status?: QueueEntry["status"];
@@ -779,6 +779,16 @@ export class PostgresStore implements Store {
     return db.transaction(async tx => {
       const [currentRow] = await tx.select().from(driverQueueTable)
         .where(eq(driverQueueTable.driverId, driverId)).for("update").limit(1);
+      // Match join/depart lock order: queue first, then current account. The
+      // authenticated session may have been revoked while this request waited.
+      if (expectedSessionVersion !== undefined) {
+        const [user] = await tx.select().from(usersTable)
+          .where(eq(usersTable.id, driverId)).for("share").limit(1);
+        if (!user || user.sessionVersion !== expectedSessionVersion) {
+          throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+        }
+        if (user.role !== "driver") throw new AppError(403, "driver mode is required", "FORBIDDEN");
+      }
       if (!currentRow) return undefined;
       const current = asQueueEntry(currentRow as unknown as Record<string, unknown>);
       assertQueueOfferPatch(current, patch);
@@ -865,11 +875,19 @@ export class PostgresStore implements Store {
     throw new AppError(409, "Line passengers changed; reload the queue before departure", "QUEUE_BUSY");
   }
 
-  async leaveQueue(driverId: string): Promise<void> {
-    const { db, driverQueueTable } = await this.database();
+  async leaveQueue(driverId: string, expectedSessionVersion?: number): Promise<void> {
+    const { db, driverQueueTable, usersTable } = await this.database();
     await db.transaction(async tx => {
       const [row] = await tx.select().from(driverQueueTable)
         .where(eq(driverQueueTable.driverId, driverId)).for("update").limit(1);
+      if (expectedSessionVersion !== undefined) {
+        const [user] = await tx.select().from(usersTable)
+          .where(eq(usersTable.id, driverId)).for("share").limit(1);
+        if (!user || user.sessionVersion !== expectedSessionVersion) {
+          throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+        }
+        if (user.role !== "driver") throw new AppError(403, "driver mode is required", "FORBIDDEN");
+      }
       if (!row) return;
       const entry = asQueueEntry(row as unknown as Record<string, unknown>);
       if (hasActiveOrders(entry) || entry.pendingOfferOrderId) {

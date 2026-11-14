@@ -158,7 +158,7 @@ export async function leaveQueue(request: Request, response: Response): Promise<
       "ACTIVE_ORDER",
     );
   }
-  await store.leaveQueue(driverId);
+  await store.leaveQueue(driverId, request.auth?.user.sessionVersion);
   await emitQueueUpdate(request.app.locals.io, { type: "left", driverId });
   await processOrderDispatch(request.app.locals.io);
   response.status(204).send();
@@ -181,7 +181,7 @@ export async function updateQueueLocation(request: Request, response: Response):
       "OUTSIDE_QUEUE_GEOFENCE",
     );
   }
-  const entry = await store.updateQueueEntry(driverId, { lastLocation: location });
+  const entry = await store.updateQueueEntry(driverId, { lastLocation: location }, request.auth?.user.sessionVersion);
   if (!entry) {
     throw new AppError(404, "Driver is not in the queue", "NOT_IN_QUEUE");
   }
@@ -229,7 +229,7 @@ export async function updateQueueStatus(request: Request, response: Response): P
         : status === "searching"
           ? true
           : current.inFifo !== false,
-  });
+  }, request.auth?.user.sessionVersion);
   if (!entry) {
     throw new AppError(404, "Driver is not in the queue", "NOT_IN_QUEUE");
   }

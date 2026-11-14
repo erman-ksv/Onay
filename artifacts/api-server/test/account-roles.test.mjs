@@ -370,6 +370,27 @@ for (const adapterName of ["MemoryStore", "PostgresStore"]) {
     }
   });
 
+  test(`${adapterName} queue mutations reject revoked sessions without changing the enrollment`, async t => {
+    const adapter = adapterName === "MemoryStore" ? new production.MemoryStore() : store;
+    const f = await fixture(t, adapter);
+    const driver = await f.approvedDriver();
+    await adapter.joinQueue(f.queueInput(driver), driver.sessionVersion);
+    const before = structuredClone(await adapter.getQueueEntry(driver.id));
+    const current = await adapter.invalidateSessions(driver.id, driver.sessionVersion);
+    for (const operation of [
+      () => adapter.leaveQueue(driver.id, driver.sessionVersion),
+      () => adapter.updateQueueEntry(driver.id, { status: "in_transit", inFifo: false }, driver.sessionVersion),
+      () => adapter.updateQueueEntry(driver.id, { lastLocation: { ...location, timestamp: Date.now() } }, driver.sessionVersion),
+    ]) {
+      await assert.rejects(async () => operation(), { statusCode: 401, code: "UNAUTHORIZED" });
+      assert.deepEqual(await adapter.getQueueEntry(driver.id), before);
+    }
+    // The replacement session keeps its normal queue authority.
+    assert.ok(await adapter.updateQueueEntry(driver.id, { lastLocation: { ...location, timestamp: Date.now() } }, current.sessionVersion));
+    await adapter.leaveQueue(driver.id, current.sessionVersion);
+    assert.equal(await adapter.getQueueEntry(driver.id), undefined);
+  });
+
   test(`${adapterName} refuses stale sessions and current-role violations in writes`, async t => {
     const adapter = adapterName === "MemoryStore" ? new production.MemoryStore() : store;
     const f = await fixture(t, adapter);
