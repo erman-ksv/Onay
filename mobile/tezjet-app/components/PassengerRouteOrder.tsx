@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { formatFareMoney } from "../lib/fare-money";
 import { ActivityIndicator, Modal, Pressable, StyleSheet, View } from "react-native";
 import * as Location from "expo-location";
+import { passengerPositionWithDeadline } from "../lib/passenger-location";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { API, ApiError, errorMessage, request } from "../lib/api";
 import { isClosed, type RideOrder } from "../lib/orders";
@@ -215,7 +216,7 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
       // The final booking request always revalidates the route, seats and FIFO on the server.
       const permission = await Location.requestForegroundPermissionsAsync();
       if (!permission.granted) throw new Error("Разреши геолокацию для проверки точки посадки.");
-      const coords = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const coords = await passengerPositionWithDeadline(() => Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
       if (!inScope()) return;
       if (activeSelectionKey.current !== passengerRouteSelectionKey(selection)) {
         throw new Error("Маршрут или количество мест изменились. Проверь наличие заново.");
