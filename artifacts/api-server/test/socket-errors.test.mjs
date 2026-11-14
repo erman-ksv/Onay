@@ -188,6 +188,51 @@ test("Socket driver lookup rejection drops its location and later valid location
   assert.equal((await fetch(serverUrl)).status, 200);
 });
 
+test("Socket drops malformed driver telemetry, strips untrusted fields, and keeps valid delivery working", { timeout: 15_000 }, async t => {
+  const { socket: observer } = await client(t);
+  const { socket: driver, user } = await client(t, "driver");
+  await Promise.all([connect(observer), connect(driver)]);
+  const locations = [];
+  observer.on("driver:location", payload => locations.push(payload));
+  for (const location of [null, [], "point", {}, { lat: "41", lng: 69 },
+    { lat: 91, lng: 0 }, { lat: 0, lng: -181 }, { lat: 0, lng: 0, timestamp: "123" },
+    { lat: 0, lng: 0, timestamp: 0 }, { lat: 0, lng: 0, isMocked: "false" }]) {
+    driver.emit("driver:location", location);
+  }
+  const valid = { lat: 41.3111, lng: 69.2797, timestamp: 314159 };
+  const delivered = waitForEvent(observer, "driver:location", payload => payload.location?.timestamp === valid.timestamp);
+  driver.emit("driver:location", { ...valid, private_note: "must not be relayed", driver_id: "spoof" });
+  await delivered;
+  assert.deepEqual(locations, [{ driver_id: user.id, location: valid }]);
+  assert.equal(driver.connected, true);
+  assert.equal((await fetch(serverUrl)).status, 200);
+});
+
+test("Socket drops driver telemetry when a blocked account read resumes after session revocation", { timeout: 15_000 }, async t => {
+  const { socket: observer } = await client(t);
+  const { socket: driver, user } = await client(t, "driver");
+  await Promise.all([connect(observer), connect(driver)]);
+  const locations = [];
+  observer.on("driver:location", payload => locations.push(payload));
+  const getUser = store.getUser.bind(store);
+  let release, started;
+  const gate = new Promise(resolve => { release = resolve; });
+  const pending = new Promise(resolve => { started = resolve; });
+  t.mock.method(store, "getUser", async id => {
+    if (id === user.id) { started(); await gate; }
+    return getUser(id);
+  });
+  const disconnected = waitForEvent(driver, "disconnect");
+  driver.emit("driver:location", { lat: 41.3111, lng: 69.2797, timestamp: 1 });
+  try {
+    await pending;
+    await store.invalidateSessions(user.id);
+  } finally { release(); }
+  assert.equal(await disconnected, "io server disconnect");
+  assert.deepEqual(locations, []);
+  assert.equal(observer.connected, true);
+});
+
 for (const action of ["invalidate", "switch", "logout"]) {
   test(`Socket ${action} revokes the previous driver's location access`, { timeout: 15_000 }, async t => {
     const { socket: observer } = await client(t);

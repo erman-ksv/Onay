@@ -8,6 +8,7 @@ import { logger } from "./lib/logger";
 import { PYATAK_ZONE, REQUIRE_DRIVER_APPROVAL } from "./utils/config";
 import { emitIncomingOrder } from "./utils/realtime";
 import { queueStatusView } from "./services/queueView";
+import { readDriverLocation } from "./utils/driverLocation";
 
 export function createRealtimeServer(httpServer: HttpServer): Server {
   const io = new Server(httpServer, {
@@ -121,10 +122,12 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
     }
     logger.info({ userId, socketId: socket.id }, "Socket client connected");
 
-    socket.on("driver:location", async (location: unknown) => {
+    socket.on("driver:location", async (value: unknown) => {
       if (socket.data.role !== "driver") {
         return;
       }
+      const location = readDriverLocation(value);
+      if (!location) return;
       try {
         if (!verifyAccessToken(token)) {
           socket.disconnect(true);
