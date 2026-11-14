@@ -391,6 +391,29 @@ for (const adapterName of ["MemoryStore", "PostgresStore"]) {
     assert.equal(await adapter.getQueueEntry(driver.id), undefined);
   });
 
+  test(`${adapterName} driver telemetry requires one active assignment and both current sessions`, async t => {
+    const adapter = adapterName === "MemoryStore" ? new production.MemoryStore() : store;
+    const f = await fixture(t, adapter);
+    const driver = await f.approvedDriver();
+    const passenger = await f.createUser();
+    const unrelated = await f.createUser();
+    for (const status of ["searching", "en_route_to_c", "arrived_at_c", "boarded_waiting", "in_transit", "completed", "cancelled"]) {
+      const order = await adapter.createOrder(f.orderInput(passenger, { driverId: driver.id, status }));
+      const expected = ["en_route_to_c", "arrived_at_c", "boarded_waiting", "in_transit"].includes(status);
+      assert.equal(await adapter.canReceiveDriverLocation(order.id, driver.id, driver.sessionVersion, passenger.id, passenger.sessionVersion), expected);
+      assert.equal(await adapter.canReceiveDriverLocation(order.id, driver.id, driver.sessionVersion, unrelated.id, unrelated.sessionVersion), false);
+      assert.equal(await adapter.canReceiveDriverLocation(order.id, driver.id, driver.sessionVersion + 1, passenger.id, passenger.sessionVersion), false);
+      assert.equal(await adapter.canReceiveDriverLocation(order.id, driver.id, driver.sessionVersion, passenger.id, passenger.sessionVersion + 1), false);
+    }
+    const order = await adapter.createOrder(f.orderInput(passenger, { driverId: driver.id, status: "in_transit" }));
+    await adapter.invalidateSessions(passenger.id, passenger.sessionVersion);
+    assert.equal(await adapter.canReceiveDriverLocation(order.id, driver.id, driver.sessionVersion, passenger.id, passenger.sessionVersion), false);
+    const currentPassenger = await adapter.getUser(passenger.id);
+    assert.equal(await adapter.canReceiveDriverLocation(order.id, driver.id, driver.sessionVersion, passenger.id, currentPassenger.sessionVersion), true);
+    await adapter.setDriverApproval(driver.id, "rejected");
+    assert.equal(await adapter.canReceiveDriverLocation(order.id, driver.id, driver.sessionVersion, passenger.id, currentPassenger.sessionVersion), false);
+  });
+
   test(`${adapterName} refuses stale sessions and current-role violations in writes`, async t => {
     const adapter = adapterName === "MemoryStore" ? new production.MemoryStore() : store;
     const f = await fixture(t, adapter);

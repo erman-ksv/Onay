@@ -1,3 +1,4 @@
+import { alias } from "drizzle-orm/pg-core";
 import { applyRoutePricingPatch, normalizeRoutePricing, routePricePerStop } from "../utils/routePricing";
 import { assertVehicleQueueCapacity, assertVehicleReview, createDriverVehicle, hasRequiredDriverApproval } from "../utils/driverVehicle";
 import { createHmac, randomUUID } from "node:crypto";
@@ -661,6 +662,24 @@ export class PostgresStore implements Store {
       expiresAt: Number(row.expiresAt),
       ...(row.deliveryId ? { deliveryId: row.deliveryId } : {}),
     } : undefined;
+  }
+
+  async canReceiveDriverLocation(orderId: string, driverId: string, driverSessionVersion: number,
+    passengerId: string, passengerSessionVersion: number): Promise<boolean> {
+    const { db, ordersTable, usersTable } = await this.database();
+    const passenger = alias(usersTable, "telemetry_passenger");
+    // One SQL statement observes order, sender, and recipient together. Separate
+    // awaited reads can combine a revoked session with an earlier assignment.
+    const [authorized] = await db.select({ driver: usersTable }).from(ordersTable)
+      .innerJoin(usersTable, eq(usersTable.id, ordersTable.driverId))
+      .innerJoin(passenger, eq(passenger.id, ordersTable.passengerId))
+      .where(and(eq(ordersTable.id, orderId), eq(ordersTable.driverId, driverId),
+        eq(ordersTable.passengerId, passengerId),
+        inArray(ordersTable.status, ["en_route_to_c", "arrived_at_c", "boarded_waiting", "in_transit"]),
+        eq(usersTable.role, "driver"), eq(usersTable.sessionVersion, driverSessionVersion),
+        eq(passenger.role, "passenger"), eq(passenger.sessionVersion, passengerSessionVersion)))
+      .limit(1);
+    return !!authorized && hasRequiredDriverApproval(authorized.driver, REQUIRE_DRIVER_APPROVAL);
   }
 
   async getQueueEntry(driverId: string): Promise<QueueEntry | undefined> {

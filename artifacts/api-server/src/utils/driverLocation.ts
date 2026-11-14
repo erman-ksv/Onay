@@ -1,4 +1,4 @@
-import type { Coordinates } from "../types/domain";
+import type { Coordinates, Order } from "../types/domain";
 import { isValidCoordinates } from "./geo";
 
 /** Socket telemetry is untrusted JSON; forward only validated coordinate fields. */
@@ -16,4 +16,10 @@ export function readDriverLocation(value: unknown): Coordinates | undefined {
     ...(input.isMocked === undefined ? {} : { isMocked: input.isMocked }),
   };
   return isValidCoordinates(location) ? location : undefined;
+}
+
+export function isActiveDriverLocationOrder(order: Order | undefined, driverId: string, passengerId?: string): boolean {
+  return !!order && order.driverId === driverId &&
+    (passengerId === undefined || order.passengerId === passengerId) &&
+    ["en_route_to_c", "arrived_at_c", "boarded_waiting", "in_transit"].includes(order.status);
 }

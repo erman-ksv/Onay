@@ -8,7 +8,7 @@ import { logger } from "./lib/logger";
 import { PYATAK_ZONE, REQUIRE_DRIVER_APPROVAL } from "./utils/config";
 import { emitIncomingOrder } from "./utils/realtime";
 import { queueStatusView } from "./services/queueView";
-import { readDriverLocation } from "./utils/driverLocation";
+import { isActiveDriverLocationOrder, readDriverLocation } from "./utils/driverLocation";
 
 export function createRealtimeServer(httpServer: HttpServer): Server {
   const io = new Server(httpServer, {
@@ -143,10 +143,40 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
         ) {
           return;
         }
-        socket.broadcast.emit("driver:location", {
-          driver_id: userId,
-          location,
-        });
+        // Match GET /orders/:id/driver: precise driver data belongs only to
+        // the passenger of a currently accepted ride, never global map viewers.
+        const orders = await store.listOrdersForUser(userId);
+        const delivered = new Set<string>();
+        for (const order of orders) {
+          if (!isActiveDriverLocationOrder(order, userId) || delivered.has(order.passengerId)) continue;
+          const passenger = await store.getUser(order.passengerId);
+          if (!passenger || passenger.role !== "passenger") continue;
+          const recipients = await io.in(`user:${passenger.id}`).fetchSockets();
+          const sessions = new Map<number, typeof recipients>();
+          for (const recipient of recipients) {
+            const version = recipient.data.sessionVersion;
+            if (typeof version !== "number") continue;
+            const group = sessions.get(version) ?? [];
+            group.push(recipient);
+            sessions.set(version, group);
+          }
+          let sent = false;
+          for (const [version, group] of sessions) {
+            // Last awaited operation jointly rechecks assignment and both live
+            // accounts. No stale passenger snapshot can authorize this event.
+            if (!await store.canReceiveDriverLocation(order.id, userId, socket.data.sessionVersion, passenger.id, version)) continue;
+            if (!socket.connected || !verifyAccessToken(token)) return;
+            for (const recipient of group) {
+              const claims = verifyAccessToken(recipient.data.accessToken as string);
+              if (!claims || claims.sub !== passenger.id || claims.role !== "passenger" ||
+                  claims.sessionVersion !== version || recipient.data.userId !== passenger.id ||
+                  recipient.data.role !== "passenger" || recipient.data.sessionVersion !== version) continue;
+              recipient.emit("driver:location", { driver_id: userId, location });
+              sent = true;
+            }
+          }
+          if (sent) delivered.add(passenger.id);
+        }
       } catch (err) {
         logger.error({ err, userId, socketId: socket.id }, "Socket driver location failed");
       }

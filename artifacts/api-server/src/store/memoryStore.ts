@@ -1,3 +1,4 @@
+import { isActiveDriverLocationOrder } from "../utils/driverLocation";
 import { applyRoutePricingPatch, normalizeRoutePricing } from "../utils/routePricing";
 import { assertVehicleQueueCapacity, assertVehicleReview, createDriverVehicle, hasRequiredDriverApproval } from "../utils/driverVehicle";
 import { randomUUID } from "node:crypto";
@@ -338,6 +339,16 @@ class MemoryStore implements Store {
     }
     this.otpChallenges.delete(phoneNumber);
     return structuredClone(challenge);
+  }
+
+  canReceiveDriverLocation(orderId: string, driverId: string, driverSessionVersion: number,
+    passengerId: string, passengerSessionVersion: number): boolean {
+    const driver = this.users.get(driverId);
+    const passenger = this.users.get(passengerId);
+    return !!driver && driver.role === "driver" && driver.sessionVersion === driverSessionVersion &&
+      hasRequiredDriverApproval(driver, REQUIRE_DRIVER_APPROVAL) &&
+      !!passenger && passenger.role === "passenger" && passenger.sessionVersion === passengerSessionVersion &&
+      isActiveDriverLocationOrder(this.orders.get(orderId), driverId, passengerId);
   }
 
   getQueueEntry(driverId: string): QueueEntry | undefined {

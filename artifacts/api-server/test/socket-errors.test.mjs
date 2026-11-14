@@ -121,6 +121,19 @@ async function client(t, role = "passenger", expiresIn) {
   return { socket, user };
 }
 
+async function assignedRide(passenger, driver, status = "en_route_to_c") {
+  const stops = [
+    { id: "socket-c", code: "C", name: "C", sequence: 1, position: 1 },
+    { id: "socket-d", code: "D", name: "D", sequence: 2, position: 2 },
+  ];
+  return store.createOrder({ passengerId: passenger.id, passengerPhone: passenger.phoneNumber,
+    driverId: driver.id, pickupPoint: "C", pickupLocation: { lat: 41.3111, lng: 69.2797, timestamp: 1 },
+    routeStops: stops, fare: { currency: "KZT", routeId: "pyatak", pickupStop: stops[0], destinationStop: stops[1],
+      pickupPosition: 1, destinationPosition: 2, distanceStops: 1, pricePerStopKzt: 500,
+      minimumFareApplied: false, stops, totalKzt: 500, calculatedAt: new Date(0).toISOString() },
+    destination: "D", seats: 1, status });
+}
+
 async function connect(socket) {
   const snapshot = waitForEvent(socket, "queue:snapshot");
   socket.connect();
@@ -160,8 +173,9 @@ for (const method of ["queueSnapshot", "getQueuePosition"]) {
 }
 
 test("Socket driver lookup rejection drops its location and later valid locations still broadcast", { timeout: 15_000 }, async t => {
-  const { socket: observer } = await client(t);
+  const { socket: observer, user: passenger } = await client(t);
   const { socket: driver, user } = await client(t, "driver");
+  await assignedRide(passenger, user);
   await Promise.all([connect(observer), connect(driver)]);
   const locations = [];
   observer.on("driver:location", payload => locations.push(payload));
@@ -189,8 +203,9 @@ test("Socket driver lookup rejection drops its location and later valid location
 });
 
 test("Socket drops malformed driver telemetry, strips untrusted fields, and keeps valid delivery working", { timeout: 15_000 }, async t => {
-  const { socket: observer } = await client(t);
+  const { socket: observer, user: passenger } = await client(t);
   const { socket: driver, user } = await client(t, "driver");
+  await assignedRide(passenger, user);
   await Promise.all([connect(observer), connect(driver)]);
   const locations = [];
   observer.on("driver:location", payload => locations.push(payload));
@@ -232,6 +247,116 @@ test("Socket drops driver telemetry when a blocked account read resumes after se
   assert.deepEqual(locations, []);
   assert.equal(observer.connected, true);
 });
+
+test("Driver telemetry authorization lookup failure drops one event and permits recovery", { timeout: 15_000 }, async t => {
+  const { socket: observer, user: passenger } = await client(t);
+  const { socket: driver, user } = await client(t, "driver");
+  await assignedRide(passenger, user);
+  await Promise.all([connect(observer), connect(driver)]);
+  const locations = [];
+  observer.on("driver:location", payload => locations.push(payload));
+  const authorize = store.canReceiveDriverLocation.bind(store);
+  let failed, failNext = true;
+  const rejected = new Promise(resolve => { failed = resolve; });
+  t.mock.method(store, "canReceiveDriverLocation", async (...args) => {
+    if (failNext) { failNext = false; failed(); throw new Error("private database error"); }
+    return authorize(...args);
+  });
+  driver.emit("driver:location", { lat: 41.3111, lng: 69.2797, timestamp: 1 });
+  await rejected;
+  const location = { lat: 41.3111, lng: 69.2797, timestamp: 2 };
+  const delivered = waitForEvent(observer, "driver:location", payload => payload.location.timestamp === 2);
+  driver.emit("driver:location", location);
+  await delivered;
+  assert.deepEqual(locations, [{ driver_id: user.id, location }]);
+  assert.equal(driver.connected, true);
+});
+
+async function fence(socket) {
+  const delivered = waitForEvent(socket, "test:telemetry-fence");
+  realtime.to(socket.id).emit("test:telemetry-fence", {});
+  await delivered;
+}
+
+test("Driver telemetry reaches only its active assigned passengers, once per passenger", { timeout: 15_000 }, async t => {
+  const { socket: driver, user: driverUser } = await client(t, "driver");
+  const allowed = [], denied = [];
+  for (const status of ["en_route_to_c", "arrived_at_c", "boarded_waiting", "in_transit", "searching", "completed", "cancelled", "offered", "unrelated"]) {
+    const recipient = await client(t);
+    const events = [];
+    recipient.socket.on("driver:location", payload => events.push(payload));
+    if (status !== "unrelated") {
+      const order = await assignedRide(recipient.user, driverUser, status === "offered" ? "searching" : status);
+      if (status === "offered") await store.updateOrder(order.id, { driverId: undefined, offeredDriverId: driverUser.id, offerExpiresAt: Date.now() + 60_000 });
+    }
+    await connect(recipient.socket);
+    (status === "en_route_to_c" || status === "arrived_at_c" || status === "boarded_waiting" || status === "in_transit" ? allowed : denied).push({ ...recipient, events });
+  }
+  // Two matching rides still yield one driver position, not duplicate events.
+  await assignedRide(allowed[0].user, driverUser, "in_transit");
+  for (const role of ["driver", "admin"]) {
+    const recipient = await client(t, role);
+    const events = [];
+    recipient.socket.on("driver:location", payload => events.push(payload));
+    await connect(recipient.socket);
+    denied.push({ ...recipient, events });
+  }
+  await connect(driver);
+  const location = { lat: 41.3111, lng: 69.2797, timestamp: 987654 };
+  const received = Promise.all(allowed.map(({ socket }) => waitForEvent(socket, "driver:location", payload => payload.location.timestamp === location.timestamp)));
+  driver.emit("driver:location", location);
+  await received;
+  for (const { socket, events } of allowed) { await fence(socket); assert.deepEqual(events, [{ driver_id: driverUser.id, location }]); }
+  for (const { socket, events } of denied) { await fence(socket); assert.deepEqual(events, []); }
+});
+
+for (const action of ["cancel", "reassign", "revoke-passenger", "revoke-driver", "revoke-approval"]) {
+  test(`Driver telemetry rechecks ${action} after a delayed recipient socket snapshot`, { timeout: 15_000 }, async t => {
+    const { socket: observer, user: passenger } = await client(t);
+    const { socket: driver, user: driverUser } = await client(t, "driver");
+    const order = await assignedRide(passenger, driverUser);
+    await Promise.all([connect(observer), connect(driver)]);
+    const locations = [];
+    observer.on("driver:location", payload => locations.push(payload));
+    const getUser = store.getUser.bind(store);
+    let release, started, finished;
+    const gate = new Promise(resolve => { release = resolve; });
+    const pending = new Promise(resolve => { started = resolve; });
+    const resumed = new Promise(resolve => { finished = resolve; });
+    // Detached snapshots model SQL reads rather than MemoryStore's live objects.
+    t.mock.method(store, "getUser", async id => structuredClone(await getUser(id)));
+    const inRoom = realtime.in.bind(realtime);
+    t.mock.method(realtime, "in", room => {
+      const operator = inRoom(room);
+      if (room !== `user:${passenger.id}`) return operator;
+      const fetchSockets = operator.fetchSockets.bind(operator);
+      operator.fetchSockets = async () => {
+        const value = await fetchSockets();
+        started();
+        await gate;
+        finished();
+        return value;
+      };
+      return operator;
+    });
+    driver.emit("driver:location", { lat: 41.3111, lng: 69.2797, timestamp: 456 });
+    try {
+      await pending;
+      if (action === "cancel") await store.updateOrder(order.id, { status: "cancelled" });
+      if (action === "reassign") {
+        const other = await store.createUser({ role: "driver", fullName: "Other driver", phoneNumber: randomUUID(), locale: "ru" });
+        await store.updateOrder(order.id, { driverId: other.id });
+      }
+      if (action === "revoke-passenger") await store.invalidateSessions(passenger.id);
+      if (action === "revoke-driver") await store.invalidateSessions(driverUser.id);
+      if (action === "revoke-approval") await store.setDriverApproval(driverUser.id, "rejected");
+    } finally { release(); }
+    await resumed;
+    await new Promise(resolve => setImmediate(resolve));
+    await fence(observer);
+    assert.deepEqual(locations, []);
+  });
+}
 
 for (const action of ["invalidate", "switch", "logout"]) {
   test(`Socket ${action} revokes the previous driver's location access`, { timeout: 15_000 }, async t => {
@@ -289,7 +414,7 @@ test("Socket rejects an already expired JWT at handshake", async t => {
 });
 
 test("Socket expiry drops a driver location whose account lookup finishes after expiry", { timeout: 15_000 }, async t => {
-  const { socket: observer } = await client(t);
+  const { socket: observer, user: passenger } = await client(t);
   const { socket: driver, user } = await client(t, "driver", 3);
   await Promise.all([connect(observer), connect(driver)]);
   const locations = [];
@@ -320,7 +445,8 @@ test("Socket expiry drops a driver location whose account lookup finishes after 
   }
   await finished;
   // A subsequent valid broadcast fences the observer's event stream.
-  const { socket: validDriver } = await client(t, "driver");
+  const { socket: validDriver, user: validUser } = await client(t, "driver");
+  await assignedRide(passenger, validUser);
   await connect(validDriver);
   const delivered = waitForEvent(observer, "driver:location", payload => payload.location.timestamp === 42);
   validDriver.emit("driver:location", { lat: 41.3111, lng: 69.2797, timestamp: 42 });

@@ -140,6 +140,10 @@ export interface Store {
   /** Discard only this failed provider attempt; retain all send/failure budgets. */
   discardOtpDelivery(phoneNumber: string, deliveryId: string): MaybePromise<boolean>;
 
+  /** One current authority snapshot before sending precise ride telemetry. */
+  canReceiveDriverLocation(orderId: string, driverId: string, driverSessionVersion: number,
+    passengerId: string, passengerSessionVersion: number): MaybePromise<boolean>;
+
   getQueueEntry(driverId: string): MaybePromise<QueueEntry | undefined>;
   removeDriverFromFifo(driverId: string): MaybePromise<QueueEntry | undefined>;
   returnDriverToFifo(driverId: string): MaybePromise<QueueEntry | undefined>;
