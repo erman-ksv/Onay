@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-11-14T17:55:40.057838+00:00",
+  "repository": "erman-ksv/Onay",
+  "repositoryPath": "/workspace/onay",
+  "branch": "feat/artifact-auth-ui-v1",
+  "lastVerifiedHead": "2cd511526bf66559be05cfd486c038a6e5cbe449",
+  "pr": {
+    "number": 110,
+    "state": "open",
+    "draft": true,
+    "merged": false,
+    "headMatchesLocal": true
+  },
+  "agents": [
+    {
+      "role": "frontend",
+      "status": "WORKING",
+      "worktree": "/workspace/onay-worktrees/frontend",
+      "task": "Initial audit"
+    },
+    {
+      "role": "uiux",
+      "status": "QUEUED",
+      "worktree": "/workspace/onay-worktrees/uiux",
+      "task": "Initial audit"
+    },
+    {
+      "role": "maps",
+      "status": "WORKING",
+      "worktree": "/workspace/onay-worktrees/maps",
+      "task": "Initial audit"
+    },
+    {
+      "role": "backend",
+      "status": "QUEUED",
+      "worktree": "/workspace/onay-worktrees/backend",
+      "task": "Initial audit"
+    },
+    {
+      "role": "android",
+      "status": "WORKING",
+      "worktree": "/workspace/onay-worktrees/android",
+      "task": "Initial audit"
+    },
+    {
+      "role": "qa",
+      "status": "QUEUED",
+      "worktree": "/workspace/onay-worktrees/qa",
+      "task": "Initial audit"
+    },
+    {
+      "role": "security",
+      "status": "WORKING",
+      "worktree": "/workspace/onay-worktrees/security",
+      "task": "Initial audit"
+    },
+    {
+      "role": "integration",
+      "status": "WORKING",
+      "worktree": "/workspace/onay",
+      "task": "Repository setup, worktree isolation, persistent checkpoint"
+    }
+  ],
+  "limits": {
+    "concurrentSlotsIncludingOrchestrator": 7,
+    "specialistSlots": 6,
+    "tokenUsage": "UNKNOWN",
+    "contextRemaining": "UNKNOWN",
+    "remainingQuota": "UNKNOWN",
+    "apiBudget": "UNKNOWN",
+    "rateLimit": "UNKNOWN"
+  },
+  "ci": {
+    "scope": "PR-triggered workflow runs, first page",
+    "success": 7,
+    "skipped": 3,
+    "failure": 1,
+    "failedRun": {
+      "id": 42492883918,
+      "name": "Onay APK119 compiled resources and Android acceptance (reuse original Gradle APK)",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/42492883918",
+      "diagnosis": {
+        "nativeJob": 128768853636,
+        "nativeConclusion": "success",
+        "buildConclusion": "skipped",
+        "publicationJob": 128770912173,
+        "publicationConclusion": "failure",
+        "reason": "HTTP403 during gh release create",
+        "source": "Parent orchestrator verified with Android agent",
+        "action": "Do not change permissions or publish"
+      }
+    }
+  },
+  "tests": {
+    "application": "NOT RUN by Integration",
+    "setup": [
+      "python3 -m py_compile orchestration/report_snapshot.py PASS",
+      "report_snapshot.py one-shot PASS",
+      "7 worktrees at verified baseline PASS"
+    ]
+  },
+  "commits": [],
+  "changedFiles": [
+    "orchestration/RESUME.md",
+    "orchestration/state.json",
+    "orchestration/report_snapshot.py",
+    "orchestration/TASKS.md",
+    "orchestration/checkpoints/initial.json",
+    "orchestration/reports/2026-11-14T17-55-19Z.md"
+  ],
+  "readinessPercent": "UNKNOWN",
+  "readinessReason": "No confirmed weighted acceptance checklist yet",
+  "reportDelivery": {
+    "channel": "Interactive session chat plus persisted files",
+    "externalScheduler": "NOT CONFIGURED",
+    "deliveryGuarantee": "No post-session execution or timed delivery established",
+    "externalFiveMinuteDelivery": "BLOCKED: available Automations minimum 10 minutes, maximum 6 runs/hour",
+    "externalRunner": "UNCONFIGURED",
+    "snapshotProcess": "NOT STARTED; orchestrator may run report_snapshot.py --watch during this session"
+  },
+  "lastSuccessfulReport": {
+    "path": "orchestration/reports/2026-11-14T17-55-19Z.md",
+    "savedAt": "2026-11-14T17:55:19.246048+00:00",
+    "delivered": false
+  },
+  "blockers": [
+    "APK119 publication HTTP403; native acceptance job succeeded. No permission changes or publication authorized."
+  ],
+  "prohibitions": [
+    "No merge or push to main",
+    "No production release",
+    "No paid services or critical business-rule changes",
+    "No redundant APK119 rebuild",
+    "No disabled tests or security bypass"
+  ]
+}
