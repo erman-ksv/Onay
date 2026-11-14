@@ -1,0 +1,105 @@
+{
+  "status": "passed",
+  "environment": "isolated CI PostgreSQL schema / loopback HTTP",
+  "drivers": 20,
+  "passengers": 80,
+  "maxConcurrency": 20,
+  "serverInstances": 1,
+  "productionCapacityClaim": false,
+  "phases": [
+    {
+      "name": "driver-queue-enrollment",
+      "requests": 40,
+      "durationMs": 654.02,
+      "requestsPerSecond": 61.16,
+      "latencyMs": {
+        "p50": 11.32,
+        "p95": 34.39,
+        "p99": 62.4,
+        "max": 62.4
+      },
+      "statusCounts": {
+        "200": 20,
+        "201": 20
+      }
+    },
+    {
+      "name": "concurrent-availability",
+      "requests": 120,
+      "durationMs": 996.94,
+      "requestsPerSecond": 120.37,
+      "latencyMs": {
+        "p50": 136.68,
+        "p95": 285.45,
+        "p99": 305.38,
+        "max": 306.2
+      },
+      "statusCounts": {
+        "200": 120
+      }
+    },
+    {
+      "name": "concurrent-order-saturation",
+      "requests": 80,
+      "durationMs": 1031.85,
+      "requestsPerSecond": 77.53,
+      "latencyMs": {
+        "p50": 212.42,
+        "p95": 386.7,
+        "p99": 406.71,
+        "max": 406.71
+      },
+      "statusCounts": {
+        "201": 20,
+        "409": 60
+      }
+    },
+    {
+      "name": "concurrent-idempotent-retries",
+      "requests": 40,
+      "durationMs": 394.94,
+      "requestsPerSecond": 101.28,
+      "latencyMs": {
+        "p50": 172.27,
+        "p95": 218.36,
+        "p99": 269.17,
+        "max": 269.17
+      },
+      "statusCounts": {
+        "200": 40
+      }
+    },
+    {
+      "name": "concurrent-driver-acceptance",
+      "requests": 20,
+      "durationMs": 235.94,
+      "requestsPerSecond": 84.77,
+      "latencyMs": {
+        "p50": 234.41,
+        "p95": 234.94,
+        "p99": 235.1,
+        "max": 235.1
+      },
+      "statusCounts": {
+        "200": 20
+      }
+    },
+    {
+      "name": "concurrent-duplicate-cancellations",
+      "requests": 40,
+      "durationMs": 301.89,
+      "requestsPerSecond": 132.5,
+      "latencyMs": {
+        "p50": 104.84,
+        "p95": 297.47,
+        "p99": 297.82,
+        "max": 297.82
+      },
+      "statusCounts": {
+        "200": 20,
+        "409": 20
+      }
+    }
+  ],
+  "requests": 340
+}
