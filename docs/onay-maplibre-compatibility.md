@@ -72,9 +72,19 @@ not evidence of detailed street coverage in ONAY's operating area.
 
 ## Exact smallest implementation scope after integration approval
 
-1. Dependency/config commit: mobile package.json and root pnpm lock only for
-   pinned 11.5.1; mobile app.json plugin addition without new permission entries,
-   existing newArch flag/provenance kept. Do not add reanimated, background
+1. Resolve the mobile dependency/workspace and lock strategy first: current
+   `pnpm-workspace.yaml` excludes `mobile/tezjet-app`, and no mobile lockfile is
+   tracked. A root frozen install therefore does not lock this SDK for mobile.
+   Decide explicitly between reviewed mobile workspace inclusion and a genuinely
+   isolated mobile installation with its own committed lockfile; verify the
+   chosen install command resolves the actual mobile manifest reproducibly in
+   local and Mobile CI environments without weakening existing supply-chain
+   controls. Record the selected workspace/install mode, package-manager version,
+   manifest, actual resolved SDK version and lockfile path in validation evidence.
+   Then pin mobile package.json to 11.5.1 and update the lockfile that demonstrably
+   owns that mobile installation; do not assume root pnpm-lock.yaml covers it.
+   Add the mobile app.json plugin without new permission entries, keeping the
+   existing newArch flag/provenance. Do not add reanimated, background
    geolocation, custom native patches, Google engine, offline packs or secrets.
    Review dependency diff and `expo config`/plugin evaluation before prebuild.
 2. Add `components/PassengerRouteMap.native.tsx` with v11 `Map`, `Camera` and
