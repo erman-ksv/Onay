@@ -1,5 +1,9 @@
 export type DriverDirection = "a_to_b" | "b_to_a";
-export type DriverRouteStop = { id: string; code: string; name: string; sequence: number; position: number };
+export type DriverRouteStop = {
+  id: string; code: string; name: string; sequence: number; position: number;
+  /** Static configured geometry only; not a live driver/device observation. */
+  location?: { lat: number; lng: number };
+};
 export type DriverRouteOption = {
   id: string;
   name: string;
@@ -41,6 +45,16 @@ function record(value: unknown): Record<string, unknown> {
 function text(value: unknown): value is string { return typeof value === "string" && value.trim().length > 0; }
 export function isDriverDirection(value: unknown): value is DriverDirection { return value === "a_to_b" || value === "b_to_a"; }
 
+/** Optional geometry must not make a valid list-only historical route unusable.
+ * Never coerce missing/invalid coordinates or retain telemetry/private fields. */
+function staticStopLocation(value: unknown): DriverRouteStop["location"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const point = value as Record<string, unknown>;
+  if (typeof point.lat !== "number" || !Number.isFinite(point.lat) || Math.abs(point.lat) > 90 ||
+      typeof point.lng !== "number" || !Number.isFinite(point.lng) || Math.abs(point.lng) > 180) return undefined;
+  return { lat: point.lat, lng: point.lng };
+}
+
 export function parseDriverRoute(value: unknown): DriverRouteOption {
   const route = record(value);
   if (!text(route.id) || !text(route.name) || !text(route.updatedAt) || !Array.isArray(route.stops) || route.stops.length < 2) return invalidResponse();
@@ -51,7 +65,9 @@ export function parseDriverRoute(value: unknown): DriverRouteOption {
         typeof stop.position !== "number" || !Number.isSafeInteger(stop.position) || stop.position < 1 ||
         ids.has(stop.id) || codes.has(stop.code) || sequences.has(stop.sequence) || positions.has(stop.position)) return invalidResponse();
     ids.add(stop.id); codes.add(stop.code); sequences.add(stop.sequence); positions.add(stop.position);
-    return { id: stop.id, code: stop.code, name: stop.name, sequence: stop.sequence, position: stop.position };
+    const location = staticStopLocation(stop.location);
+    return { id: stop.id, code: stop.code, name: stop.name, sequence: stop.sequence, position: stop.position,
+      ...(location ? { location } : {}) };
   });
   if (stops.some((stop, index) => index > 0 && (stop.sequence <= stops[index - 1].sequence || stop.position <= stops[index - 1].position))) return invalidResponse();
   const pitaks = record(route.pitaks);
