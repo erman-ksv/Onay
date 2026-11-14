@@ -101,7 +101,7 @@ jobs:
           PY
           "$ANDROID_HOME/emulator/emulator" -accel-check | tee /tmp/accel-check.log
           grep -Eiq 'KVM.*(installed and usable|is usable|is enabled)' /tmp/accel-check.log
-      - name: Native Android APK114 to APK115 QA: chats, status, both Back paths
+      - name: "Native Android APK114 to APK115 QA: chats, status, both Back paths"
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
