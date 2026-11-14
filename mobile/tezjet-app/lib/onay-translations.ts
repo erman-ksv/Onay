@@ -1,6 +1,8 @@
 export type OnayLanguage = "ru" | "kk" | "uz";
 export const ONAY_LANGUAGES = [{ code: "kk", name: "Қазақша" }, { code: "ru", name: "Русский" }, { code: "uz", name: "O‘zbekcha" }] as const;
 const messages: Record<string, readonly [string, string]> = {
+  "Имя и фамилия не сохранены отдельно. Полное ФИО в аккаунте:": ["Аты мен тегі бөлек сақталмаған. Аккаунттағы толық аты-жөні:", "Ism va familiya alohida saqlanmagan. Hisobdagi to‘liq F.I.Sh.:"],
+  "Мы не разделяем его автоматически, чтобы не исказить данные.": ["Деректерді бұрмаламау үшін оны автоматты түрде бөлмейміз.", "Maʼlumotlar buzilmasligi uchun uni avtomatik ajratmaymiz."],
   "Email (необязательно)": ["Email (міндетті емес)", "Email (ixtiyoriy)"],
   "Не хранится отдельно": ["Бөлек сақталмайды", "Alohida saqlanmagan"],
   "Email сохранён на сервере.": ["Email серверде сақталды.", "Email serverda saqlandi."],

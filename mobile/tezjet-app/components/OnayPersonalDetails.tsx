@@ -3,7 +3,8 @@ import TextInput from "./OnayTextInput";
 import OnayScreenFrame, { onayPalette } from "./OnayScreenFrame";
 import { normalizeOnayContactEmail } from "../lib/onay-contact-email";
 import { useEffect, useRef, useState } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, Text as NativeText, View } from "react-native";
+import { useOnayLanguage } from "../lib/onay-language-context";
 
 type Props = {
   theme: "light" | "dark";
@@ -18,6 +19,7 @@ type Props = {
 };
 export default function OnayPersonalDetails({ theme, fullName, givenName, familyName, phoneNumber, email,
   demoMode = false, onBack, onSaveEmail }: Props) {
+  const { t } = useOnayLanguage();
   const c = onayPalette(theme);
   const [draft, setDraft] = useState(email ?? "");
   const [saving, setSaving] = useState(false);
@@ -27,11 +29,11 @@ export default function OnayPersonalDetails({ theme, fullName, givenName, family
   useEffect(() => { setDraft(email ?? ""); setError(""); }, [email]);
   const given = givenName?.trim() || null;
   const family = familyName?.trim() || null;
-  const row = (label: string, value: string, id: string) => <View key={id} style={styles.row}>
+  const row = (label: string, value: string, id: string, fallback = false) => <View key={id} style={styles.row}>
     <Text style={[styles.label, { color: c.muted }]}>{label}</Text>
-    <View testID={id} accessibilityLabel={label + ": " + value}
+    <View testID={id} accessibilityLabel={t(label) + ": " + (fallback ? t(value) : value)}
       style={[styles.readOnly, { backgroundColor: c.cardRaised, borderColor: c.border }]}>
-      <Text style={[styles.value, { color: c.text }]}>{value}</Text>
+      <NativeText style={[styles.value, { color: c.text }]}>{fallback ? t(value) : value}</NativeText>
     </View>
   </View>;
   async function saveEmail() {
@@ -51,9 +53,9 @@ export default function OnayPersonalDetails({ theme, fullName, givenName, family
   }
   return <OnayScreenFrame testID="onay-personal-details-screen" title="Личные данные" theme={theme} onBack={onBack}>
     <View testID="onay-profile-personal-details" style={[styles.card, { backgroundColor: c.card }]}>
-      {row("Имя", given ?? "Не хранится отдельно", "onay-profile-personal-name")}
-      {row("Фамилия", family ?? "Не хранится отдельно", "onay-profile-personal-surname")}
-      {row("Номер телефона", phoneNumber || "Не указан", "onay-profile-personal-phone")}
+      {row("Имя", given ?? "Не хранится отдельно", "onay-profile-personal-name", !given)}
+      {row("Фамилия", family ?? "Не хранится отдельно", "onay-profile-personal-surname", !family)}
+      {row("Номер телефона", phoneNumber || "Не указан", "onay-profile-personal-phone", !phoneNumber)}
       <View style={styles.row}>
         <Text style={[styles.label, { color: c.muted }]}>Email (необязательно)</Text>
         <TextInput testID="onay-profile-personal-email" accessibilityLabel="Email"
@@ -64,7 +66,7 @@ export default function OnayPersonalDetails({ theme, fullName, givenName, family
       </View>
       {!given || !family ? <Text testID="onay-personal-name-storage-note"
         style={[styles.note, { color: c.muted }]}>
-        Имя и фамилия не сохранены отдельно. Полное ФИО в аккаунте: {fullName || "Не указано"}. Мы не разделяем его автоматически, чтобы не исказить данные.
+        {`${t("Имя и фамилия не сохранены отдельно. Полное ФИО в аккаунте:")} ${fullName || t("Не указано")}. ${t("Мы не разделяем его автоматически, чтобы не исказить данные.")}`}
       </Text> : null}
       {demoMode ? <Text testID="onay-personal-email-demo-notice" style={[styles.note, { color: c.muted }]}>
         ДЕМО · Сохранение email на сервере недоступно.
