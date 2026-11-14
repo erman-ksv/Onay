@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { onayDark } from "../lib/onay-auth-ui";
 import { ONAY_PASSENGER_TABS, type OnayPassengerTab } from "../lib/onay-passenger-tabs";
 import { onayTabWidths } from "../lib/onay-tab-layout";
+import { useOnayLanguage } from "../lib/onay-language-context";
 
 // Source icons are traced from the four tabs in the user's Onay.html reference.
 const TAB_ICONS = {
@@ -18,6 +19,7 @@ export default function OnayPassengerTabBar({ active, onSelect, theme = "dark" }
   theme?: "light" | "dark";
   onSelect: (tab: OnayPassengerTab) => void;
 }) {
+  const { t } = useOnayLanguage();
   const light = theme === "light";
   const insets = useSafeAreaInsets();
   const { width: viewportWidth } = useWindowDimensions();
@@ -30,7 +32,7 @@ export default function OnayPassengerTabBar({ active, onSelect, theme = "dark" }
           key={tab.id}
           testID={"onay-tab-" + tab.id}
           accessibilityRole="tab"
-          accessibilityLabel={tab.label}
+          accessibilityLabel={t(tab.label)}
           accessibilityState={{ selected }}
           onPress={() => onSelect(tab.id)}
           style={[styles.tab, selected ? styles.activeTab : styles.inactiveTab, light && !selected && styles.inactiveTabLight, { width: selected ? tabWidths.active : tabWidths.inactive }]}

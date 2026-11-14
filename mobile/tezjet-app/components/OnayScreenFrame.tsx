@@ -5,6 +5,7 @@ import { BackHandler, KeyboardAvoidingView, Platform, Pressable, ScrollView, Sty
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { onayDark } from "../lib/onay-auth-ui";
+import { useOnayLanguage } from "../lib/onay-language-context";
 export function onayPalette(theme: "light" | "dark") {
  return theme === "light" ? { ...onayDark, background: "#f1f7f3", card: "#ffffff", cardRaised: "#e6f0ea", border: "#d3e3d9", text: "#0a1d15", muted: "#5a7366" } : onayDark;
 }
@@ -12,6 +13,7 @@ export function onayPalette(theme: "light" | "dark") {
 export default function OnayScreenFrame({ children, title, onBack, theme = "dark", footer, testID }: {
  children: ReactNode; title?: string; onBack?: () => void; theme?: "light" | "dark"; footer?: ReactNode; testID?: string;
 }) {
+ const { t } = useOnayLanguage();
  const insets = useSafeAreaInsets(), c = onayPalette(theme);
  useEffect(() => {
   if (!onBack || Platform.OS !== "android") return;
@@ -21,7 +23,7 @@ export default function OnayScreenFrame({ children, title, onBack, theme = "dark
  return <OnayThemeContext.Provider value={theme}><KeyboardAvoidingView testID={testID} style={[s.root, { backgroundColor: c.background, paddingTop: insets.top, paddingBottom: insets.bottom }]} behavior={Platform.OS === "ios" ? "padding" : undefined}>
  <StatusBar style={theme === "dark" ? "light" : "dark"} backgroundColor={c.background}/>
  <View style={s.width}>
- {title ? <View style={s.header}>{onBack ? <Pressable testID="onay-screen-back" accessibilityRole="button" accessibilityLabel="Назад" onPress={onBack} style={[s.back, { backgroundColor: c.card }]}><Text style={[s.chevron, { color: c.text }]}>‹</Text></Pressable> : null}<Text accessibilityRole="header" style={[s.title, { color: c.text }]}>{title}</Text></View> : null}
+ {title ? <View style={s.header}>{onBack ? <Pressable testID="onay-screen-back" accessibilityRole="button" accessibilityLabel={t("Назад")} onPress={onBack} style={[s.back, { backgroundColor: c.card }]}><Text style={[s.chevron, { color: c.text }]}>‹</Text></Pressable> : null}<Text accessibilityRole="header" style={[s.title, { color: c.text }]}>{title}</Text></View> : null}
  <ScrollView style={s.scroll} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">{children}</ScrollView>
  {footer ? <View style={s.footer}>{footer}</View> : null}
  </View></KeyboardAvoidingView></OnayThemeContext.Provider>;
