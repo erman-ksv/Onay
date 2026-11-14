@@ -1,0 +1,28 @@
+# Passenger frontend acceptance evidence
+
+Audit date: 2026-11-14 UTC. Source: `2cd511526bf66559be05cfd486c038a6e5cbe449`, plus phone-input fix `28ff3b038cb1cd1a40fae4feb1b6ed636ce36b3b`. This checklist covers passenger navigation/forms only; maps, localization and backend readiness have separate owners. No overall percentage is inferred.
+
+`VERIFIED (source/unit)` means the implementation and stated automated checks were inspected and executed. It does **not** mean a device or browser interaction was observed in this session. Runtime acceptance below remains `UNVERIFIED` until its evidence is inspected at the relevant source SHA.
+
+| Acceptance criterion | Evidence checked | Current status / remaining acceptance |
+| --- | --- | --- |
+| Approved reference is identifiable and unchanged | `design/onay/reference.json`; wrapper SHA256 `f6af6a8e9f43b7035496f8a02091872572165d91108c710813133429cf8d7543`; decoded passenger and driver hashes matched metadata in a local Python check | VERIFIED (reference integrity). Visual fidelity remains UNVERIFIED; hash equality does not establish UI equivalence. |
+| Cold start waits for session restoration; unconfigured API has settings/recovery paths | `lib/onay-auth-ui.ts`, `app/index.tsx`; `test/onay-auth-ui.test.mjs`, `test/onay-startup-loading.test.mjs` | VERIFIED (source/unit). Android cold start, interrupted storage and endpoint recovery runtime remain UNVERIFIED. |
+| OTP form requires complete phone/name and six-digit code; preserves international recipient | `components/OnayAuthScreen.tsx`, `lib/onay-auth-ui.ts`; focused auth tests cover UZ, +7, +1, +44, maximum E.164 length and native input length | VERIFIED (source/unit). Real SMS delivery and native paste/keyboard interaction remain UNVERIFIED; no OTP was sent. |
+| Four tabs have independent mounted scroll containers; hidden pages reject input/accessibility focus | `components/OnayPassengerScreens.tsx`; `test/onay-independent-screen-navigation.test.mjs` | VERIFIED (source/static assertions). Native focus traversal and retained scroll/form state remain UNVERIFIED. |
+| Home choices open booking; active-ride banner opens existing Trips without creating an order | `app/index.tsx`, `components/OnayPassengerHome.tsx`; `test/onay-home-modes.test.mjs`, `test/onay-home-active-order-navigation.test.mjs` | VERIFIED (source/unit). Runtime Home → booking → confirmed order → Trips remains UNVERIFIED locally. |
+| Booking blocks stale quotes, duplicate/uncertain submissions and unresolved recovery | `components/PassengerRouteOrder.tsx`, booking-gate/recovery libraries; `test/passenger-booking-gate.test.mjs`, `test/route-booking-recovery.test.mjs`, `test/route-booking-resolution.test.mjs` | VERIFIED (source/unit behavior). End-to-end API persistence/restart and native geolocation remain UNVERIFIED locally. |
+| Trips use real active orders; Profile history opens authenticated archive and returns to its origin | `app/index.tsx`, `components/PassengerHistory.tsx`; `test/onay-profile-history-navigation.test.mjs`, `test/onay-passenger-trips-view.test.mjs` | VERIFIED (source/static assertions and history-library checks). Runtime history/back behavior remains UNVERIFIED. `OnayPassengerTrips.onShowHistory` is presently not rendered as a control; its unused callback is not counted as an observed user bug. |
+| Profile personal details, support/about and driver overview use existing navigation | `components/OnayPassengerProfile.tsx`, `components/OnayPersonalDetails.tsx`; profile/personal-email/driver-overview tests | VERIFIED (source/unit). Actual email PATCH, failure retry, nested modal dismissal and driver role transition remain UNVERIFIED locally. |
+| Logout clears token-bound views before server revocation; stale reads are scoped | `app/index.tsx`; `test/onay-logout-vehicle-race.test.mjs`; request-scope tests | VERIFIED (source/unit). Offline logout, failed storage deletion and relaunch behavior remain UNVERIFIED on device. |
+| Android Back dismisses booking/nested profile screens or returns from history/tabs | `app/index.tsx`, `components/OnayPassengerProfile.tsx`; `test/onay-home-android-back.test.mjs`, independent-screen tests | VERIFIED (source/static assertions). Native BackHandler ordering and Android Modal dismissal remain UNVERIFIED. |
+
+## Executed checks and limits
+
+- Full existing mobile Node suite: 331 tests passed, 0 failed, using `node --experimental-strip-types --test test/*.test.mjs` after the phone fix. A final additional native-input-length assertion was subsequently added; focused auth suite then passed 9/9. The full suite was not repeated after that test-only addition.
+- Initial sandbox run failed the offline-demo test because its icon generator's `spawnSync` received `EPERM`. The same complete suite passed with the approved sandbox escalation; tests were not disabled or altered to bypass the restriction.
+- `git diff --check` passed for the phone change. Typecheck was NOT RUN in this isolated worktree because dependencies were absent.
+- `scripts/onay-v2-browser-qa.py` defines API-backed OTP/navigation, profile/history, theme persistence and 320/390px checks plus isolated reference captures. Its existence is test coverage design, not proof of a current passing run; it was NOT RUN in this audit.
+- No browser E2E, emulator session, APK build, production operation or SMS request was started. Existing historical Android CI is not credited as acceptance of the new phone fix.
+
+Next evidence needed: independent review and QA of the phone commit; integrated typecheck/CI; existing source-matched runtime receipts; native interaction acceptance when the project's agreed readiness gate permits it.
