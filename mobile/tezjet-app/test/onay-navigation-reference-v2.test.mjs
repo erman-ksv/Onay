@@ -33,7 +33,7 @@ test("UI changes retain four backend-safe tab navigation handlers, selected stat
   for (const term of [
     'accessibilityRole="tablist"',
     'accessibilityRole="tab"',
-    'accessibilityLabel={tab.label}',
+    'accessibilityLabel={t(tab.label)}',
     'accessibilityState={{ selected }}',
     'onPress={() => onSelect(tab.id)}',
     'testID={"onay-tab-" + tab.id}',

@@ -17,7 +17,7 @@ test("design repair retains source icon assets, tab actions, selection and light
   assert.ok(nav.includes('source={TAB_ICONS[tab.id]}'));
   assert.ok(nav.includes('onPress={() => onSelect(tab.id)}'));
   assert.ok(nav.includes('accessibilityState={{ selected }}'));
-  assert.ok(nav.includes('accessibilityLabel={tab.label}'));
+  assert.ok(nav.includes('accessibilityLabel={t(tab.label)}'));
   assert.ok(nav.includes('light && styles.pillLight'));
   assert.ok(nav.includes('light && !selected && styles.inactiveTabLight'));
 });
