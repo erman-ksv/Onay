@@ -122,7 +122,7 @@ export default function OnayAuthScreen(props: Props) {
                   textContentType="telephoneNumber"
                   autoComplete="tel"
                   editable={!props.busy}
-                  maxLength={14}
+                  maxLength={16}
                 />
               </View>
               <Pressable

@@ -38,7 +38,9 @@ export function toOnayApiPhone(value: string): string {
 
 /** The displayed prefix tracks the country when pasting a full international number. */
 export function onayPhonePrefix(value: string): string {
-  return value.startsWith("+7") ? "+7" : ONAY_COUNTRY_CODE;
+  if (value.startsWith("+7")) return "+7";
+  if (value.startsWith("+") && !value.startsWith(ONAY_COUNTRY_CODE)) return "+";
+  return ONAY_COUNTRY_CODE;
 }
 
 export function onayPhoneInput(value: string): string {
