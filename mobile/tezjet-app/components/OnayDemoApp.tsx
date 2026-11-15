@@ -63,7 +63,9 @@ export default function OnayDemoApp({ initialRole, onExit }: { initialRole: Demo
   const demoTrip = state.ride ? <OnayPassengerRide order={state.ride} theme={theme}>
     <View style={{ backgroundColor: c.card, padding: 16, borderRadius: 20, marginTop: 16, gap: 10 }}><DemoNotice color={c.muted}/>{state.ride.offered_driver_id || state.ride.driver_id
       ? <><Text style={{ color: c.text, fontSize: 18, fontWeight: "700" }}>Демо-водитель</Text><Text style={{ color: c.muted }}>{car} · {plate}</Text><Text style={{ color: c.muted }}>Звонки и сообщения в демо не отправляются.</Text></>
-      : <Text style={{ color: c.muted }}>Водитель пока не на линии. Предложение ему не отправлено.</Text>}</View>
+      : <Text style={{ color: c.muted }}>{state.declinedRideId === state.ride.id
+          ? "Демо-водитель отказался. Заказ остаётся активным; ищем другого водителя."
+          : state.online ? "Пока нет доступного демо-водителя. Заказ остаётся в поиске." : "Водитель пока не на линии. Предложение ему не отправлено."}</Text>}</View>
     {button("onay-demo-passenger-cancel", "Отменить учебную поездку", () => { if (state.ride) dispatch({ type: "cancel", expectedStatus: state.ride.status }); }, true)}
   </OnayPassengerRide> : null;
   const chooseBooking = (isReverse = false) => { setReverse(isReverse); setPopup("booking"); };
@@ -86,9 +88,15 @@ export default function OnayDemoApp({ initialRole, onExit }: { initialRole: Demo
         {button("onay-demo-driver-route", "Маршрут и направление", () => setPopup("route"), true)}
         {canDemoDriverSeeOffer(state) && state.ride ? <View testID="onay-demo-driver-order" style={{ backgroundColor: c.card, borderRadius: 20, padding: 16, gap: 8, marginTop: 12 }}><Text style={{ color: c.accent, fontWeight: "700" }}>Учебный заказ</Text><Text style={{ color: c.text }}>{statusLabels[state.ride.status]}</Text><Text style={{ color: c.muted }}>Демо-пассажир · {state.ride.seats} мест · {formatFareMoney(state.ride.fare)}</Text>
           {button("onay-demo-driver-progress", state.ride.status === "searching" ? "Принять (демо)" : state.ride.status === "en_route_to_c" ? "Прибыл (демо)" : state.ride.status === "arrived_at_c" ? "Пассажир сел (демо)" : state.ride.status === "boarded_waiting" ? "Начать поездку (демо)" : "Завершить (демо)", () => { if (state.ride) dispatch({ type: "advance", expectedStatus: state.ride.status }); })}
-          {button("onay-demo-driver-cancel", "Отменить учебный заказ", () => { if (state.ride) dispatch({ type: "cancel", expectedStatus: state.ride.status }); }, true)}</View> : state.online && !state.ride
+          {button("onay-demo-driver-cancel",
+            state.ride.status === "searching" ? "Отказаться от предложения (демо)" : "Прекратить участие в поездке (демо)",
+            () => { if (state.ride) dispatch({ type: "withdraw", expectedStatus: state.ride.status }); }, true)}</View> : state.online && !state.ride
           ? button("onay-demo-driver-example", "Показать пример заказа", () => dispatch({ type: "start", seats: 1, reverse }))
-          : <View testID="onay-demo-driver-no-offer" style={{ backgroundColor: c.card, borderRadius: 20, padding: 16, marginTop: 12 }}><Text style={{ color: c.muted }}>{state.online ? "Новых учебных предложений нет" : "Вы не на линии. Учебные заказы водителю не поступают."}</Text></View>}</>,
+          : <View testID="onay-demo-driver-no-offer" style={{ backgroundColor: c.card, borderRadius: 20, padding: 16, marginTop: 12 }}><Text style={{ color: c.muted }}>{!state.online
+            ? "Вы не на линии. Учебные заказы водителю не поступают."
+            : state.ride && state.declinedRideId === state.ride.id
+            ? "Вы отказались от предложения. Заказ остаётся у пассажира; повторно вам не предлагается."
+            : "Новых учебных предложений нет"}</Text></View>}</>,
       queue: <><DemoNotice color={c.muted}/>{button("onay-demo-queue-route", "Выбрать учебный маршрут", () => setPopup("route"), true)}<View style={{ backgroundColor: c.card, borderRadius: 20, padding: 16, marginTop: 12, gap: 8 }}><Text style={{ color: c.text, fontSize: 18 }}>{state.online ? "1 · Демо-водитель" : "Демо-водитель не на линии"}</Text><Text style={{ color: c.muted }}>Пример очереди. К реальной очереди не подключено.</Text><Text style={{ color: c.muted }}>Учебных свободных мест: {capacity}</Text></View></>,
       chats: <OnayPassengerChatsEmpty theme={theme} role="driver" showHeading={false}/>, history,
       profile: <OnayDriverProfile demoMode fullName="Демо-водитель" vehicle={{ make: car, model: "", plate_number: plate, seat_capacity: capacity }} theme={theme} onTheme={setTheme} busy={false} onVehicle={() => setPopup("vehicle")} onSupport={() => setPopup("support")} onAbout={() => setPopup("about")} onPassenger={() => role("passenger")} onServer={() => setPopup("server")} onLogout={onExit}/>,
