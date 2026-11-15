@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-11-15T04:06:07.708227+00:00",
+  "updatedAt": "2026-11-15T04:25:14.257443+00:00",
   "repository": "erman-ksv/Onay",
   "repositoryPath": "/workspace/onay",
   "branch": "feat/artifact-auth-ui-v1",
-  "lastVerifiedHead": "1c426fcd0dcd5e4566885ba15d60b6004a70b788",
+  "lastVerifiedHead": "c44b1248a61d1a8c405fa3fc015c2c0b233b05eb",
   "pr": {
     "number": 110,
     "state": "open",
     "draft": true,
     "merged": false,
     "headMatchesLocal": false,
-    "headSha": "71ecf1aa66838d5ac6a4ca5a48d7871b4115ba44"
+    "headSha": "c44b1248a61d1a8c405fa3fc015c2c0b233b05eb"
   },
   "agents": [
     {
@@ -58,9 +58,9 @@
     },
     {
       "role": "integration",
-      "status": "WORKING",
+      "status": "REVIEW",
       "worktree": "/workspace/onay",
-      "task": "Reviewed Ubuntu24 browser runner + historical115 contract fixes integrated; oldCI complete; normal followup push next"
+      "task": "Current PRc44 allCIgreen; isolatedmobilelockd807cf3 ready ROOTreview before integration"
     }
   ],
   "limits": {
@@ -97,14 +97,15 @@
         "action": "Do not change permissions or publish"
       }
     },
-    "currentIntegratedHead": "NOT RUN before reviewed followup push",
+    "currentIntegratedHead": "NOT RUN for new dependency lock; previous c44 all green",
     "failureDiagnosis": {
       "adminRun": 43674504174,
       "driverRun": 43674504165,
       "cause": "ubuntu-latest moved to ubuntu26.04 unsupported by pinned Playwright1.56.0",
       "browserScenarios": "NOT RUN; installation failed",
       "existingCiChecks": "Kept enabled",
-      "next": "Narrow supported runner pin under review"
+      "next": "Narrow supported runner pin under review",
+      "status": "RESOLVED by reviewed followups; current remote CI all green"
     },
     "previousPushedHead": {
       "sha": "71ecf1aa66838d5ac6a4ca5a48d7871b4115ba44",
@@ -115,7 +116,138 @@
       "running": 0,
       "diagnosis": "2 browser setup failures unsupported Ubuntu26.04; 1 historical APK115 script contract mismatch",
       "apk119": "SUCCESS; original artifact reused; build skipped"
-    }
+    },
+    "currentSha": "c44b1248a61d1a8c405fa3fc015c2c0b233b05eb",
+    "currentRunCounts": {
+      "success": 9,
+      "failure": 0,
+      "skipped": 3,
+      "in_progress": 0
+    },
+    "currentRuns": [
+      {
+        "id": 43675290970,
+        "name": "Deliver existing APK118 as a direct Android download",
+        "status": "completed",
+        "conclusion": "skipped",
+        "run_number": 11,
+        "jobs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290970/jobs",
+        "logs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290970/logs",
+        "workflow_id": 411090446
+      },
+      {
+        "id": 43675290992,
+        "name": "Onay APK117 one build and Android About native acceptance",
+        "status": "completed",
+        "conclusion": "skipped",
+        "run_number": 45,
+        "jobs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290992/jobs",
+        "logs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290992/logs",
+        "workflow_id": 410987186
+      },
+      {
+        "id": 43675290921,
+        "name": "Onay final passenger details and driver overview APK116",
+        "status": "completed",
+        "conclusion": "skipped",
+        "run_number": 60,
+        "jobs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290921/jobs",
+        "logs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290921/logs",
+        "workflow_id": 410853809
+      },
+      {
+        "id": 43675290914,
+        "name": "Onay APK116 native QA - already published artifact only",
+        "status": "completed",
+        "conclusion": "success",
+        "run_number": 58,
+        "jobs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290914/jobs",
+        "logs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290914/logs",
+        "workflow_id": 410858404
+      },
+      {
+        "id": 43675290889,
+        "name": "Admin route layout browser QA",
+        "status": "completed",
+        "conclusion": "success",
+        "run_number": 166,
+        "jobs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290889/jobs",
+        "logs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290889/logs",
+        "workflow_id": 384078994
+      },
+      {
+        "id": 43675290893,
+        "name": "Onay APK113 -> APK114 Android reproduction (existing artifacts only)",
+        "status": "completed",
+        "conclusion": "success",
+        "run_number": 75,
+        "jobs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290893/jobs",
+        "logs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290893/logs",
+        "workflow_id": 410512405
+      },
+      {
+        "id": 43675290986,
+        "name": "Onay APK115 native UI acceptance from published artifact only",
+        "status": "completed",
+        "conclusion": "success",
+        "run_number": 67,
+        "jobs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290986/jobs",
+        "logs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290986/logs",
+        "workflow_id": 410613163
+      },
+      {
+        "id": 43675290890,
+        "name": "Onay APK119 compiled resources and Android acceptance (reuse original Gradle APK)",
+        "status": "completed",
+        "conclusion": "success",
+        "run_number": 12,
+        "jobs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290890/jobs",
+        "logs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290890/logs",
+        "workflow_id": 411060600
+      },
+      {
+        "id": 43675290918,
+        "name": "Driver route planning browser QA",
+        "status": "completed",
+        "conclusion": "success",
+        "run_number": 300,
+        "jobs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290918/jobs",
+        "logs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290918/logs",
+        "workflow_id": 384405161
+      },
+      {
+        "id": 43675290932,
+        "name": "Onay staging runtime smoke",
+        "status": "completed",
+        "conclusion": "success",
+        "run_number": 95,
+        "jobs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290932/jobs",
+        "logs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290932/logs",
+        "workflow_id": 395334415
+      },
+      {
+        "id": 43675290902,
+        "name": "TezJet Mobile CI",
+        "status": "completed",
+        "conclusion": "success",
+        "run_number": 262,
+        "jobs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290902/jobs",
+        "logs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290902/logs",
+        "workflow_id": 379509584
+      },
+      {
+        "id": 43675290915,
+        "name": "CI",
+        "status": "completed",
+        "conclusion": "success",
+        "run_number": 507,
+        "jobs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290915/jobs",
+        "logs_url": "https://api.github.com/repos/erman-ksv/Onay/actions/runs/43675290915/logs",
+        "workflow_id": 377839073
+      }
+    ],
+    "finalObservedAt": "2026-11-15T04:15:08Z",
+    "finalEvidenceSource": "Orchestrator independently fetched actual GitHub workflow runs"
   },
   "tests": {
     "application": "NOT RUN by Integration",
@@ -188,9 +320,10 @@
     "channel": "Current session commentary 2026-11-14T18:08:49Z (posted; read receipt unavailable)"
   },
   "blockers": [
-    "Interactive map renderer/native acceptance not implemented",
-    "Readiness UNKNOWN; new deferred heavy E2E remains gated",
-    "Prior concurrent OTP child-process exit cause UNKNOWN; complete sequential suite PASS"
+    "Interactive map/native SDK not implemented",
+    "Overall readiness UNKNOWN",
+    "Existing dependency advisories: 0 critical,5 high,6 moderate,1 low; scoped remediation next; no production acceptance",
+    "Prior concurrent OTP child failure root cause UNKNOWN; complete suite subsequently PASS"
   ],
   "prohibitions": [
     "No merge or push to main",
@@ -305,7 +438,7 @@
     "privateQueuePath": "orchestration/onenote-queue/",
     "privateQueueIgnored": true,
     "privateIdentifiersStoredInGit": false,
-    "verifiedReceipts": 11,
+    "verifiedReceipts": 23,
     "significantStepDelivery": "Root appends and reads back; retry locally if unavailable"
   },
   "processState": {
@@ -317,13 +450,12 @@
   },
   "push": {
     "status": "SUCCESS",
-    "sha": "71ecf1aa66838d5ac6a4ca5a48d7871b4115ba44",
-    "previousRemoteSha": "2cd511526bf66559be05cfd486c038a6e5cbe449",
-    "method": "normal git push origin HEAD:refs/heads/feat/artifact-auth-ui-v1",
-    "force": false,
+    "sha": "c44b1248a61d1a8c405fa3fc015c2c0b233b05eb",
+    "previousRemoteSha": "71ecf1aa66838d5ac6a4ca5a48d7871b4115ba44",
+    "method": "normal git push, no force",
     "remotePrReadback": "PASS",
-    "observedAt": "2026-11-15T03:56:15.076216+00:00",
-    "next": "Normal feature push after remote compare; all prior CI completed"
+    "priorCiAllCompleted": true,
+    "next": "Normal feature push after remote comparec44; prior CI all completed"
   },
   "cleanup": {
     "observedAt": "2026-11-15T04:05:16Z",
@@ -331,5 +463,40 @@
     "disposableContainer": "onay-backend-regression-pg already absent",
     "privateQaEnv": "Removed and absence verified",
     "productionOrOtherContainers": "Untouched"
+  },
+  "isolatedMobileDependencyTask": {
+    "status": "INTEGRATED_LOCAL",
+    "branch": "onay-agent/mobile-lock",
+    "worktree": "/workspace/onay-worktrees/mobile-lock",
+    "base": "c44b1248a61d1a8c405fa3fc015c2c0b233b05eb",
+    "commit": "d807cf37a37f73bd319bd0fb8ae10895a00e657c",
+    "changedFiles": 7,
+    "directDependencyVersionsUnchanged": 20,
+    "lockIntegrityPackages": 696,
+    "lockSha256": "243e57c03ac4d80e81d0efe515e7dc290cd67ed59c921b51906d138ba37ed8a1",
+    "frozenCleanInstalls": 2,
+    "frozenInstallsIgnoreScripts": false,
+    "effectiveMinReleaseAgeMinutes": 1440,
+    "unreviewedLifecycleHookNegative": "PASS",
+    "manifestDriftNegative": "PASS",
+    "mobileTestsPassed": 356,
+    "mobileTypecheck": "PASS",
+    "jsExports": [
+      "Android Hermes PASS",
+      "iOS Hermes PASS",
+      "Web PASS"
+    ],
+    "rootWorkspaceAndLock": "UNCHANGED",
+    "nativeSdkOrBuild": "NONE",
+    "rootReview": "APPROVED",
+    "integratedCommit": "6090b8c995e762acd00653c562a71d020e49b7a2",
+    "securityReview": "APPROVED reproducibility boundary; existing advisories recorded",
+    "auditCounts": {
+      "critical": 0,
+      "high": 5,
+      "moderate": 6,
+      "low": 1
+    },
+    "productionApproved": false
   }
 }
