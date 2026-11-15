@@ -39,7 +39,7 @@
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION"
       ],
-      "versionCode": 119,
+      "versionCode": 120,
       "adaptiveIcon": {
         "foregroundImage": "./assets/onay-adaptive-foreground.png",
         "backgroundColor": "#ffffff"
