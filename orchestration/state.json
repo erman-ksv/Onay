@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-11-15T03:55:10.280089+00:00",
+  "updatedAt": "2026-11-15T04:06:07.708227+00:00",
   "repository": "erman-ksv/Onay",
   "repositoryPath": "/workspace/onay",
   "branch": "feat/artifact-auth-ui-v1",
-  "lastVerifiedHead": "d77e509d08d2f7cca8ba7f11419caa76a72abad8",
+  "lastVerifiedHead": "1c426fcd0dcd5e4566885ba15d60b6004a70b788",
   "pr": {
     "number": 110,
     "state": "open",
     "draft": true,
     "merged": false,
     "headMatchesLocal": false,
-    "headSha": "2cd511526bf66559be05cfd486c038a6e5cbe449"
+    "headSha": "71ecf1aa66838d5ac6a4ca5a48d7871b4115ba44"
   },
   "agents": [
     {
@@ -60,7 +60,7 @@
       "role": "integration",
       "status": "WORKING",
       "worktree": "/workspace/onay",
-      "task": "Integrated reviewed commits; exactQA tree match; remote compare and normalfeaturepush next"
+      "task": "Reviewed Ubuntu24 browser runner + historical115 contract fixes integrated; oldCI complete; normal followup push next"
     }
   ],
   "limits": {
@@ -97,7 +97,25 @@
         "action": "Do not change permissions or publish"
       }
     },
-    "currentIntegratedHead": "NOT RUN before push"
+    "currentIntegratedHead": "NOT RUN before reviewed followup push",
+    "failureDiagnosis": {
+      "adminRun": 43674504174,
+      "driverRun": 43674504165,
+      "cause": "ubuntu-latest moved to ubuntu26.04 unsupported by pinned Playwright1.56.0",
+      "browserScenarios": "NOT RUN; installation failed",
+      "existingCiChecks": "Kept enabled",
+      "next": "Narrow supported runner pin under review"
+    },
+    "previousPushedHead": {
+      "sha": "71ecf1aa66838d5ac6a4ca5a48d7871b4115ba44",
+      "status": "COMPLETED",
+      "success": 6,
+      "failure": 3,
+      "skipped": 3,
+      "running": 0,
+      "diagnosis": "2 browser setup failures unsupported Ubuntu26.04; 1 historical APK115 script contract mismatch",
+      "apk119": "SUCCESS; original artifact reused; build skipped"
+    }
   },
   "tests": {
     "application": "NOT RUN by Integration",
@@ -123,6 +141,9 @@
     "qaTypecheck": "Mobile, API, lib, scripts, mockup-sandbox PASS"
   },
   "commits": [
+    "1c426fcd0dcd5e4566885ba15d60b6004a70b788 test(android): verify personal details against pinned APK version",
+    "180d2cf7a65858ebf8c5e870fce638d2d957b1aa fix(ci): pin browser QA to Playwright-supported Ubuntu 24.04",
+    "71ecf1aa66838d5ac6a4ca5a48d7871b4115ba44 docs(orchestration): checkpoint verified integration and private journal boundary",
     "d77e509d08d2f7cca8ba7f11419caa76a72abad8 docs(onay): preserve independent integration QA and review evidence",
     "87ba4b922c288bec7370db2e248aa749a9427d62 docs(onay): clarify mobile dependency lock strategy prerequisite",
     "c63323b272e1b20a263b39f0619096bc14f0d1ed docs(onay): verify MapLibre native renderer candidate and gates",
@@ -257,6 +278,11 @@
       "qaCommit": "87f7558",
       "integratedCommit": "d77e509d08d2f7cca8ba7f11419caa76a72abad8",
       "scope": "All application, workflow and documentation files identical; orchestration and private ignore differ"
+    },
+    "followup": {
+      "runnerPin": "ROOT APPROVED; 13 YAML parse and exact semantic/text preservation PASS",
+      "historicalApkContract": "ROOT APPROVED; 5 deterministic tests PASS; Python compile PASS",
+      "unchangedApplicationChecks": "Not repeated; application source unchanged"
     }
   },
   "pushPolicyAudit": {
@@ -279,7 +305,7 @@
     "privateQueuePath": "orchestration/onenote-queue/",
     "privateQueueIgnored": true,
     "privateIdentifiersStoredInGit": false,
-    "verifiedReceipts": 1,
+    "verifiedReceipts": 11,
     "significantStepDelivery": "Root appends and reads back; retry locally if unavailable"
   },
   "processState": {
@@ -288,5 +314,22 @@
     "apiTests": "COMPLETED before time jump; no running-test claim",
     "reportWatcher": "NOT STARTED",
     "externalRunner": "UNCONFIGURED"
+  },
+  "push": {
+    "status": "SUCCESS",
+    "sha": "71ecf1aa66838d5ac6a4ca5a48d7871b4115ba44",
+    "previousRemoteSha": "2cd511526bf66559be05cfd486c038a6e5cbe449",
+    "method": "normal git push origin HEAD:refs/heads/feat/artifact-auth-ui-v1",
+    "force": false,
+    "remotePrReadback": "PASS",
+    "observedAt": "2026-11-15T03:56:15.076216+00:00",
+    "next": "Normal feature push after remote compare; all prior CI completed"
+  },
+  "cleanup": {
+    "observedAt": "2026-11-15T04:05:16Z",
+    "localNodeTests": 0,
+    "disposableContainer": "onay-backend-regression-pg already absent",
+    "privateQaEnv": "Removed and absence verified",
+    "productionOrOtherContainers": "Untouched"
   }
 }
