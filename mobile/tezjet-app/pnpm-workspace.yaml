@@ -1,1 +1,11 @@
+# The mobile app is an isolated workspace with its own committed lockfile.
 packages: []
+
+# Match the repository supply-chain delay; mobile needs no trusted exemptions.
+minimumReleaseAge: 1440
+autoInstallPeers: false
+strictPeerDependencies: false
+
+# Dependency lifecycle hooks require an explicit reviewed allowlist addition.
+onlyBuiltDependencies: []
+strictDepBuilds: true

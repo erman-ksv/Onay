@@ -51,7 +51,7 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 10.34.9
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -60,7 +60,7 @@ jobs:
         if: env.ONAY_DEMO_PREVIEW == 'true'
         run: echo 'EXPO_PUBLIC_API_URL=' >> "$GITHUB_ENV"
       - name: Install mobile dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
       - name: Record checked-out source identity
         run: |
           node <<'NODE'
