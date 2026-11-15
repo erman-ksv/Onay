@@ -13,7 +13,10 @@ test("launcher is white, adaptive foreground transparent and all logo pixels ins
   icons.generate();
   assert.equal(config.name, "Onay");
   assert.equal(config.android.package, "uz.tezjet.app");
-  assert.equal(config.android.versionCode, 119);
+  // Keep the released APK119 as the minimum safe Android upgrade baseline.
+  // QA previews can increment versionCode without weakening icon safety checks.
+  assert.ok(Number.isSafeInteger(config.android.versionCode) && config.android.versionCode >= 119,
+    "Android versionCode must not regress below approved APK119");
   assert.equal(config.android.adaptiveIcon.backgroundColor, "#ffffff");
   const regular = icons.decodePng(readFileSync(join(root, config.icon)));
   const adaptive = icons.decodePng(readFileSync(join(root, config.android.adaptiveIcon.foregroundImage)));
