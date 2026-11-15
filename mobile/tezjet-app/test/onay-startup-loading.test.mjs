@@ -17,7 +17,10 @@ test("native splash stays dark while launcher has padded white adaptive artwork"
  assert.equal(config.android.adaptiveIcon.backgroundColor,"#ffffff");
  assert.equal(config.icon,"./assets/onay-launcher-icon.png");
  assert.equal(props.imageWidth,160);
- assert.equal(config.android.versionCode,119);
+ // Each debug preview must remain installable over the approved APK119.
+ // Do not hardcode the previous build number: preserve a monotonic safe baseline.
+ assert.ok(Number.isSafeInteger(config.android.versionCode) && config.android.versionCode >= 119,
+   "Android versionCode must not regress below approved APK119");
  assert.equal(config.android.package,"uz.tezjet.app");
 });
 test("brand startup uses saved language, not a speculative first Russian frame", () => {
