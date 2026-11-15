@@ -9,3 +9,8 @@ strictPeerDependencies: false
 # Dependency lifecycle hooks require an explicit reviewed allowlist addition.
 onlyBuiltDependencies: []
 strictDepBuilds: true
+
+# Reviewed Metro-only compatibility exception: fixes four PostCSS advisories.
+# Expo declares ~8.4.32; preserve every other parent and package version.
+overrides:
+  "@expo/metro-config@54.0.17>postcss": "8.5.23"
