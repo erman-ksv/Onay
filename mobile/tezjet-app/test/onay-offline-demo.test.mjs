@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { createDemoRide, createDemoState, onayDemoReducer, onayDemoPreviewEnabled } from "../lib/onay-demo.ts";
+import { canDemoDriverSeeOffer, createDemoRide, createDemoState, onayDemoReducer, onayDemoPreviewEnabled } from "../lib/onay-demo.ts";
 import buildConfig from "../app.config.ts";
 
 test("offline preview needs an explicit boolean flag; ordinary builds remain live-auth only", t => {
@@ -30,6 +30,7 @@ test("demo examples are clearly labelled, bounded and independent on every entry
 
 test("demo ride transitions stay local, ignore duplicate clicks and preserve history once", () => {
   let state = createDemoState("driver");
+  state = onayDemoReducer(state, { type: "online" });
   state = onayDemoReducer(state, { type: "start", seats: 2 });
   const first = state;
   assert.equal(onayDemoReducer(state, { type: "start", seats: 1 }), first);
@@ -43,6 +44,47 @@ test("demo ride transitions stay local, ignore duplicate clicks and preserve his
   state = onayDemoReducer(state, { type: "cancel", expectedStatus: "searching" });
   assert.equal(state.ride, null); assert.equal(state.history[0].status, "cancelled");
   assert.equal(state.history.filter(row => row.id === "onay-demo-ride").length, 1);
+});
+
+test("offline drivers never receive or accept offers, while online drivers can finish safely", () => {
+  let state = createDemoState("passenger");
+  state = onayDemoReducer(state, { type: "start", seats: 2 });
+  assert.equal(state.online, false);
+  assert.equal(state.ride?.status, "searching");
+  assert.equal(state.ride?.offered_driver_id, undefined);
+  assert.equal(canDemoDriverSeeOffer(state), false);
+  assert.strictEqual(onayDemoReducer(state, { type: "advance", expectedStatus: "searching" }), state);
+
+  state = onayDemoReducer(state, { type: "role", role: "driver" });
+  assert.equal(canDemoDriverSeeOffer(state), false);
+  state = onayDemoReducer(state, { type: "online" });
+  assert.equal(state.ride?.offered_driver_id, "onay-demo-driver");
+  assert.equal(canDemoDriverSeeOffer(state), true);
+  state = onayDemoReducer(state, { type: "online" });
+  assert.equal(state.online, false);
+  assert.equal(state.ride?.offered_driver_id, undefined);
+  assert.equal(canDemoDriverSeeOffer(state), false);
+  assert.strictEqual(onayDemoReducer(state, { type: "advance", expectedStatus: "searching" }), state);
+
+  state = onayDemoReducer(state, { type: "online" });
+  state = onayDemoReducer(state, { type: "advance", expectedStatus: "searching" });
+  assert.equal(state.ride?.status, "en_route_to_c");
+  assert.strictEqual(onayDemoReducer(state, { type: "online" }), state, "cannot go offline during an accepted ride");
+  for (const step of ["en_route_to_c", "arrived_at_c", "boarded_waiting", "in_transit"]) {
+    state = onayDemoReducer(state, { type: "advance", expectedStatus: step });
+  }
+  assert.equal(state.ride, null);
+  assert.equal(state.history[0].status, "completed");
+  state = onayDemoReducer(state, { type: "online" });
+  assert.equal(state.online, false);
+});
+
+test("driver UI does not render offer or sample action while off line", () => {
+  const source = readFileSync(new URL("../components/OnayDemoApp.tsx", import.meta.url), "utf8");
+  assert.match(source, /canDemoDriverSeeOffer\(state\) && state\.ride/);
+  assert.match(source, /onay-demo-driver-no-offer/);
+  assert.match(source, /state\.online && !state\.ride/);
+  assert.match(source, /disabled=\{!!state\.ride && state\.ride\.status !== "searching"\}/);
 });
 
 test("preview reducer and UI contain no auth transport or credential persistence", () => {
