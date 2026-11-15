@@ -40,6 +40,7 @@ test("demo ride transitions stay local, ignore duplicate clicks and preserve his
   }
   assert.equal(state.ride, null); assert.equal(state.history.length, 2);
   assert.equal(state.history[0].status, "completed");
+  state = onayDemoReducer(state, { type: "role", role: "passenger" });
   state = onayDemoReducer(state, { type: "start", seats: 1 });
   state = onayDemoReducer(state, { type: "cancel", expectedStatus: "searching" });
   assert.equal(state.ride, null); assert.equal(state.history[0].status, "cancelled");
@@ -77,6 +78,62 @@ test("offline drivers never receive or accept offers, while online drivers can f
   assert.equal(state.history[0].status, "completed");
   state = onayDemoReducer(state, { type: "online" });
   assert.equal(state.online, false);
+});
+
+test("driver decline preserves passenger booking and does not offer the same ride again", () => {
+  let state = createDemoState("passenger");
+  state = onayDemoReducer(state, { type: "start", seats: 2 });
+  state = onayDemoReducer(state, { type: "role", role: "driver" });
+  // A driver offline cannot reject or accept anything.
+  assert.strictEqual(onayDemoReducer(state, { type: "withdraw", expectedStatus: "searching" }), state);
+  state = onayDemoReducer(state, { type: "online" });
+  assert.equal(canDemoDriverSeeOffer(state), true);
+  const historicalCount = state.history.length;
+  state = onayDemoReducer(state, { type: "withdraw", expectedStatus: "searching" });
+  assert.equal(state.ride?.status, "searching");
+  assert.equal(state.ride?.offered_driver_id, undefined);
+  assert.equal(state.ride?.driver_id, undefined);
+  assert.equal(state.declinedRideId, "onay-demo-ride");
+  assert.equal(state.history.length, historicalCount, "driver decline cannot cancel the passenger's ride");
+  assert.equal(canDemoDriverSeeOffer(state), false);
+  assert.strictEqual(onayDemoReducer(state, { type: "advance", expectedStatus: "searching" }), state);
+  assert.strictEqual(onayDemoReducer(state, { type: "withdraw", expectedStatus: "searching" }), state);
+  assert.strictEqual(onayDemoReducer(state, { type: "cancel", expectedStatus: "searching" }), state);
+  state = onayDemoReducer(state, { type: "online" });
+  state = onayDemoReducer(state, { type: "online" });
+  assert.equal(state.online, true);
+  assert.equal(canDemoDriverSeeOffer(state), false, "turning shift back on must not resend a declined offer");
+  state = onayDemoReducer(state, { type: "role", role: "passenger" });
+  assert.equal(state.ride?.status, "searching", "passenger should still see active pending ride");
+  state = onayDemoReducer(state, { type: "cancel", expectedStatus: "searching" });
+  assert.equal(state.ride, null);
+  assert.equal(state.history[0].status, "cancelled");
+  assert.equal(state.declinedRideId, null);
+  state = onayDemoReducer(state, { type: "start", seats: 1 });
+  assert.equal(state.ride?.offered_driver_id, "onay-demo-driver", "a new ride may be offered");
+});
+
+test("driver ending accepted demo participation returns passenger to search without cancellation", () => {
+  let state = createDemoState("driver");
+  state = onayDemoReducer(state, { type: "online" });
+  state = onayDemoReducer(state, { type: "start", seats: 1 });
+  state = onayDemoReducer(state, { type: "advance", expectedStatus: "searching" });
+  const count = state.history.length;
+  state = onayDemoReducer(state, { type: "withdraw", expectedStatus: "en_route_to_c" });
+  assert.equal(state.ride?.status, "searching");
+  assert.equal(state.ride?.driver_id, undefined);
+  assert.equal(state.history.length, count);
+  assert.equal(canDemoDriverSeeOffer(state), false);
+  assert.strictEqual(onayDemoReducer(state, { type: "advance", expectedStatus: "searching" }), state);
+});
+
+test("demo driver reject control never cancels passenger booking", () => {
+  const source = readFileSync(new URL("../components/OnayDemoApp.tsx", import.meta.url), "utf8");
+  assert.match(source, /Отказаться от предложения \(демо\)/);
+  assert.match(source, /type: "withdraw"/);
+  assert.match(source, /Вы отказались от предложения/);
+  assert.match(source, /Заказ остаётся активным/);
+  assert.doesNotMatch(source, /onay-demo-driver-cancel", "Отменить учебный заказ"/);
 });
 
 test("driver UI does not render offer or sample action while off line", () => {
