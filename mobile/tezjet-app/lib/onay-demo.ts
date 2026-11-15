@@ -3,10 +3,18 @@ import type { RideOrder, RideStatus } from "./orders";
 
 export type DemoRole = "passenger" | "driver";
 export type DemoRide = RideOrder & { fare: FareMoney & NonNullable<RideOrder["fare"]> };
-export type DemoState = { role: DemoRole; ride: DemoRide | null; history: DemoRide[]; online: boolean };
+export type DemoState = {
+  role: DemoRole;
+  ride: DemoRide | null;
+  history: DemoRide[];
+  online: boolean;
+  /** The single sample driver has declined this pending ride. It must not be offered again. */
+  declinedRideId: string | null;
+};
 export type DemoAction = { type: "role"; role: DemoRole } | { type: "online" } |
   { type: "start"; seats: number; reverse?: boolean } | { type: "advance"; expectedStatus: RideStatus } |
-  { type: "cancel"; expectedStatus: RideStatus };
+  { type: "cancel"; expectedStatus: RideStatus } |
+  { type: "withdraw"; expectedStatus: RideStatus };
 
 /** Explicit preview-build flag. It never changes authentication or API admission. */
 export function onayDemoPreviewEnabled(extra: unknown): boolean {
@@ -24,7 +32,7 @@ export function createDemoRide(seats: number, status: RideStatus = "searching", 
 }
 
 export function createDemoState(role: DemoRole): DemoState {
-  return { role, ride: null, online: false, history: [{ ...createDemoRide(2, "completed"), id: "onay-demo-history" }] };
+  return { role, ride: null, online: false, declinedRideId: null, history: [{ ...createDemoRide(2, "completed"), id: "onay-demo-history" }] };
 }
 const next: Partial<Record<RideStatus, RideStatus>> = { searching: "en_route_to_c", en_route_to_c: "arrived_at_c", arrived_at_c: "boarded_waiting", boarded_waiting: "in_transit", in_transit: "completed" };
 
@@ -42,19 +50,29 @@ export function onayDemoReducer(state: DemoState, action: DemoAction): DemoState
     if (state.online && state.ride && state.ride.status !== "searching") return state;
     const online = !state.online;
     const ride = state.ride?.status === "searching"
-      ? { ...state.ride, offered_driver_id: online ? "onay-demo-driver" : undefined }
+      ? { ...state.ride, offered_driver_id: online && state.declinedRideId !== state.ride.id ? "onay-demo-driver" : undefined }
       : state.ride;
     return { ...state, online, ride };
   }
   if (action.type === "start") return state.ride ? state :
-    { ...state, ride: createDemoRide(action.seats, "searching", action.reverse, state.online) };
+    { ...state, declinedRideId: null, ride: createDemoRide(action.seats, "searching", action.reverse, state.online) };
   const current = state.ride;
   if (!current || current.status !== action.expectedStatus) return state;
-  // UI hiding is not enough: reject an offline driver's attempted acceptance in the reducer too.
-  if (action.type === "advance" && !canDemoDriverSeeOffer(state)) return state;
+  if (action.type === "withdraw") {
+    // Declining an offer, or releasing an accepted demo trip, is NOT passenger cancellation.
+    // There is only one demo driver: keep the passenger searching, without inventing a replacement.
+    if (state.role !== "driver" || !state.online) return state;
+    if (current.status === "searching" && current.offered_driver_id !== "onay-demo-driver") return state;
+    if (current.status !== "searching" && current.driver_id !== "onay-demo-driver") return state;
+    const ride: DemoRide = { ...current, status: "searching", offered_driver_id: undefined, driver_id: undefined };
+    return { ...state, ride, declinedRideId: current.id };
+  }
+  // UI hiding is not enough: reject unauthorized acceptance in the reducer too.
+  if (action.type === "advance" && (state.role !== "driver" || !canDemoDriverSeeOffer(state))) return state;
+  if (action.type === "cancel" && state.role !== "passenger") return state;
   const status = action.type === "cancel" ? "cancelled" : next[current.status];
   if (!status) return state;
   const ride = { ...current, status, ...(status !== "searching" ? { driver_id: "onay-demo-driver" } : {}) };
-  if (status === "completed" || status === "cancelled") return { ...state, ride: null, history: [ride, ...state.history.filter(row => row.id !== ride.id)] };
+  if (status === "completed" || status === "cancelled") return { ...state, ride: null, declinedRideId: null, history: [ride, ...state.history.filter(row => row.id !== ride.id)] };
   return { ...state, ride };
 }
