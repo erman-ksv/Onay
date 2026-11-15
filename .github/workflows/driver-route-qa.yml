@@ -49,7 +49,7 @@ concurrency:
 jobs:
   browser-qa:
     name: Real driver route and direction planning QA
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     defaults:
       run:
