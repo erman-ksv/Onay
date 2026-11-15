@@ -1,0 +1,125 @@
+{
+  "recordedAt": "2026-11-15T09:01:06.694936+00:00",
+  "head": "b2720c2e87c2ef2e4e2e0358c4f8b1af881ffbf1",
+  "pr": "https://github.com/erman-ksv/Onay/pull/110",
+  "branch": "feat/artifact-auth-ui-v1",
+  "activeAgents": [
+    "/root",
+    "/root/integration",
+    "/root/maps"
+  ],
+  "agentObservation": "Measured live messages/list at current resume; no continuity assumed during inactive gap.",
+  "roles": {
+    "Integration": "ScopedPostCSS7regressions/363mobile/typecheckPASS;3exports/finalauditRUNNING;WIPnotintegrated",
+    "Maps": "2newnativepermissions sourceverified;ownerproposalpending;noSDKpermissionchanges",
+    "OtherSpecialists": "Not currently running; completed prior evidence preserved inGit/reviewdocs"
+  },
+  "readinessPercent": "UNKNOWN",
+  "limits": {
+    "budget": "UNKNOWN",
+    "quota": "UNKNOWN",
+    "rateLimits": "UNKNOWN",
+    "previousIncident": "Integration usage limit; message gave8:49AM without confirmedtimezone. Later normal continuation tools AVAILABLE measured08:57:22; no budget amount claimed."
+  },
+  "journal": {
+    "target": "My Notebook / Onay / ONAY — полный план 0–100%, 151 задача и журнал продолжения",
+    "priorReceiptsVerified": 28,
+    "verification": "Graph full HTML visible own entries, quote-aware parser; structured text limit200000",
+    "privateQueue": "orchestration/onenote-queue/ (ignored)",
+    "externalScheduler": "UNCONFIGURED",
+    "timingGuarantee": "Interactive reports only; exact5min delivery notguaranteed"
+  },
+  "knownBlockers": [
+    "Interactive map absent",
+    "ActualnativeMapLibre13.6.1 addsACCESS_NETWORK_STATE andACCESS_WIFI_STATE versusverifiedAPK119; do not addpermissionswithoutownerdecision/provenalternative",
+    "Currentaudit0critical5high6moderate1low; PostCSScandidatependingfinalchecks/review",
+    "CurrentnativeUI and physicalacceptanceUNVERIFIED"
+  ],
+  "ci": [
+    {
+      "id": 43676735075,
+      "name": "Onay APK115 native UI acceptance from published artifact only",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676735075"
+    },
+    {
+      "id": 43676735123,
+      "name": "Admin route layout browser QA",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676735123"
+    },
+    {
+      "id": 43676735119,
+      "name": "Onay final passenger details and driver overview APK116",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676735119"
+    },
+    {
+      "id": 43676735104,
+      "name": "Deliver existing APK118 as a direct Android download",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676735104"
+    },
+    {
+      "id": 43676735014,
+      "name": "Onay APK113 -> APK114 Android reproduction (existing artifacts only)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676735014"
+    },
+    {
+      "id": 43676735032,
+      "name": "Onay APK116 native QA - already published artifact only",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676735032"
+    },
+    {
+      "id": 43676734995,
+      "name": "TezJet Mobile CI",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676734995"
+    },
+    {
+      "id": 43676735012,
+      "name": "Onay APK119 compiled resources and Android acceptance (reuse original Gradle APK)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676735012"
+    },
+    {
+      "id": 43676735031,
+      "name": "Driver route planning browser QA",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676735031"
+    },
+    {
+      "id": 43676734992,
+      "name": "Onay APK117 one build and Android About native acceptance",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676734992"
+    },
+    {
+      "id": 43676735013,
+      "name": "Onay staging runtime smoke",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676735013"
+    },
+    {
+      "id": 43676735022,
+      "name": "CI",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676735022"
+    }
+  ],
+  "resume": "Read RESUME/state/current checkpoint; compare actualheads andworktreechanges; do not replay existingpatch. Resume same assignedtasks without duplicateaudit/commits; no main/deployment/newpermissions."
+}
