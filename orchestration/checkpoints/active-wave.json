@@ -1,0 +1,292 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-11-15T03:55:10.280089+00:00",
+  "repository": "erman-ksv/Onay",
+  "repositoryPath": "/workspace/onay",
+  "branch": "feat/artifact-auth-ui-v1",
+  "lastVerifiedHead": "d77e509d08d2f7cca8ba7f11419caa76a72abad8",
+  "pr": {
+    "number": 110,
+    "state": "open",
+    "draft": true,
+    "merged": false,
+    "headMatchesLocal": false,
+    "headSha": "2cd511526bf66559be05cfd486c038a6e5cbe449"
+  },
+  "agents": [
+    {
+      "role": "frontend",
+      "status": "IDLE",
+      "worktree": "/workspace/onay-worktrees/frontend",
+      "task": "Phone fix reviewed; readiness doc queued for integration"
+    },
+    {
+      "role": "uiux",
+      "status": "REVIEW",
+      "worktree": "/workspace/onay-worktrees/uiux",
+      "task": "PersonalDetails771bfcd reviewed; combined mobile356PASS"
+    },
+    {
+      "role": "maps",
+      "status": "REVIEW",
+      "worktree": "/workspace/onay-worktrees/maps",
+      "task": "MapLibre compatibility doc120d114 semantic GO; native/build unverified; minor doc correction"
+    },
+    {
+      "role": "backend",
+      "status": "REVIEW",
+      "worktree": "/workspace/onay-worktrees/backend",
+      "task": "Privacy8d0b19c ready25socket+1recovery+83PGPASS; independent review/finalQA"
+    },
+    {
+      "role": "android",
+      "status": "REVIEW",
+      "worktree": "/workspace/onay-worktrees/android",
+      "task": "YAMLscalar060a0e0 originalRED all13parseGREEN; previous CIboundaryreviewed"
+    },
+    {
+      "role": "qa",
+      "status": "VERIFIED",
+      "worktree": "/workspace/onay-worktrees/qa",
+      "task": "Independent API656/mobile356/load1/admin60/typechecks5/YAML13 PASS; reviewedwave ready"
+    },
+    {
+      "role": "security",
+      "status": "IDLE",
+      "worktree": "/workspace/onay-worktrees/security",
+      "task": "Final exact source review APPROVED; durable snapshot235f4ef"
+    },
+    {
+      "role": "integration",
+      "status": "WORKING",
+      "worktree": "/workspace/onay",
+      "task": "Integrated reviewed commits; exactQA tree match; remote compare and normalfeaturepush next"
+    }
+  ],
+  "limits": {
+    "concurrentSlotsIncludingOrchestrator": 7,
+    "specialistSlots": 6,
+    "tokenUsage": "UNKNOWN",
+    "contextRemaining": "UNKNOWN",
+    "remainingQuota": "UNKNOWN",
+    "apiBudget": "UNKNOWN",
+    "rateLimit": "UNKNOWN",
+    "observedThreadLimit": "Additional QA thread rejected; role QA reuses Integration thread",
+    "executionBudget": "UNKNOWN",
+    "usedBudget": "UNKNOWN",
+    "stopRisk": "UNKNOWN",
+    "continuation": "In-session available; external runner UNCONFIGURED"
+  },
+  "ci": {
+    "scope": "PR-triggered workflow runs, first page",
+    "success": 7,
+    "skipped": 3,
+    "failure": 1,
+    "failedRun": {
+      "id": 42492883918,
+      "name": "Onay APK119 compiled resources and Android acceptance (reuse original Gradle APK)",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/42492883918",
+      "diagnosis": {
+        "nativeJob": 128768853636,
+        "nativeConclusion": "success",
+        "buildConclusion": "skipped",
+        "publicationJob": 128770912173,
+        "publicationConclusion": "failure",
+        "reason": "HTTP403 during gh release create",
+        "source": "Parent orchestrator verified with Android agent",
+        "action": "Do not change permissions or publish"
+      }
+    },
+    "currentIntegratedHead": "NOT RUN before push"
+  },
+  "tests": {
+    "application": "NOT RUN by Integration",
+    "setup": [
+      "python3 -m py_compile orchestration/report_snapshot.py PASS",
+      "report_snapshot.py one-shot PASS",
+      "7 worktrees at verified baseline PASS"
+    ],
+    "independentSecurity": {
+      "maps": "4/4 PASS",
+      "android": "3/3 PASS",
+      "frontend": "9/9 PASS",
+      "uiux": "6/6 PASS"
+    },
+    "qaCombinedMobile": "356/356 PASS incl personal details, map parser",
+    "backendAuthor": {
+      "controllerRace": "3RED→3GREEN",
+      "postgresRegression": "121/121PASS",
+      "authCache": "9/9PASS",
+      "apiBuildTypecheck": "PASS"
+    },
+    "qaApi": "642/642 PASS against isolated PostgreSQL16 before socket followups",
+    "qaTypecheck": "Mobile, API, lib, scripts, mockup-sandbox PASS"
+  },
+  "commits": [
+    "d77e509d08d2f7cca8ba7f11419caa76a72abad8 docs(onay): preserve independent integration QA and review evidence",
+    "87ba4b922c288bec7370db2e248aa749a9427d62 docs(onay): clarify mobile dependency lock strategy prerequisite",
+    "c63323b272e1b20a263b39f0619096bc14f0d1ed docs(onay): verify MapLibre native renderer candidate and gates",
+    "194dbdfbeaa680306f60dabc3e07208e5681b3ca fix(ci): quote Android acceptance step name containing colon",
+    "d0eca38a5be3c8f8c809c30f57f7c7dcb2946a0b fix(api): scope driver telemetry to current ride passengers",
+    "e55c4c40e1a2d1b1fe6c81249bde4c6ee7d423fb fix(api): validate driver socket location payloads",
+    "552be94560449617e404c77e6f927ccde1c85e82 fix(mobile): localize personal details without translating account values",
+    "2c60a83f328e9445a58e05b47d7d3361039a7650 fix(mobile): preserve validated optional route stop geometry",
+    "94b5e015366baf9eaff8486a26ecdfc00da23c16 test(mobile): retain layout guards with localized navigation labels",
+    "59819a697f6c7dd807a10d3546590ea52e8a0f0e fix(api): reject revoked sessions in queue mutations",
+    "3e895442f3595b92e30ccb2da9632ea7efc84e22 docs(onay): record grounded interactive map delivery plan",
+    "d1c7d96410dd2527b03e6bd387f43995c20a5803 docs: record passenger frontend acceptance evidence",
+    "8809123bd31f3451049cbdb3a36110432a41bc30 fix(mobile): localize native navigation accessibility labels",
+    "3ae05c06bf768f450a7a21f1a1cee545619172b9 fix(mobile): preserve pasted international phone recipients",
+    "ee1820c04b6927840ab910db2c8a4771bf07931f fix(mobile): bound passenger GPS wait before route booking",
+    "04a8fe00a533d9147ac30afe44ecad8436513c50 fix(ci): keep APK119 release delivery outside pull request QA",
+    "f9f5e789dbacb2531bda62bc037e3ffdbda66524 docs(orchestration): establish isolated team checkpoint and session reports"
+  ],
+  "changedFiles": [
+    "orchestration/RESUME.md",
+    "orchestration/state.json",
+    "orchestration/report_snapshot.py",
+    "orchestration/TASKS.md",
+    "orchestration/checkpoints/initial.json",
+    "orchestration/reports/2026-11-14T17-55-19Z.md"
+  ],
+  "readinessPercent": "UNKNOWN",
+  "readinessReason": "No confirmed weighted acceptance checklist yet",
+  "reportDelivery": {
+    "channel": "Interactive session chat plus persisted files",
+    "externalScheduler": "NOT CONFIGURED",
+    "deliveryGuarantee": "No post-session execution or timed delivery established",
+    "externalFiveMinuteDelivery": "BLOCKED: available Automations minimum 10 minutes, maximum 6 runs/hour",
+    "externalRunner": "UNCONFIGURED",
+    "snapshotProcess": "NOT STARTED; orchestrator may run report_snapshot.py --watch during this session",
+    "timingLimitation": "Observed session report interval 5m19s; exact5min delivery cannot be guaranteed by interactive interface."
+  },
+  "lastSuccessfulReport": {
+    "path": "orchestration/reports/2026-11-14T18-08-49Z.md",
+    "savedAt": "2026-11-14T18:08:49.038201+00:00",
+    "delivered": true,
+    "channel": "Current session commentary 2026-11-14T18:08:49Z (posted; read receipt unavailable)"
+  },
+  "blockers": [
+    "Interactive map renderer/native acceptance not implemented",
+    "Readiness UNKNOWN; new deferred heavy E2E remains gated",
+    "Prior concurrent OTP child-process exit cause UNKNOWN; complete sequential suite PASS"
+  ],
+  "prohibitions": [
+    "No merge or push to main",
+    "No production release",
+    "No paid services or critical business-rule changes",
+    "No redundant APK119 rebuild",
+    "No disabled tests or security bypass"
+  ],
+  "localHead": "f9f5e789dbacb2531bda62bc037e3ffdbda66524",
+  "reviews": {
+    "723a866": "APPROVE Security",
+    "73ac938": "APPROVE Security",
+    "28ff3b0": "APPROVE Security (prefix display/truncation diagnosis corrected)",
+    "9ce7b6c": "APPROVE Security",
+    "a322c1d": "APPROVE Security",
+    "8f4dcfa": "APPROVE Security",
+    "afe033a": "APPROVE Security",
+    "771bfcd": "APPROVE Security",
+    "62d8af1": "APPROVE Security, validation19PASS author; privacy fix still pending"
+  },
+  "runningResources": [
+    {
+      "name": "onay-backend-regression-pg",
+      "type": "disposable PostgreSQL16 container",
+      "status": "RUNNING for independent QA",
+      "cleanup": "Backend/QA remove after tests; no credentials checkpointed"
+    }
+  ],
+  "mapRendererInvestigation": {
+    "candidate": "@maplibre/maplibre-react-native11.5.1",
+    "compatibility": "Declared peers Expo>=54 React>=19.1 RN>=0.80 new architecture; native runtime/compile UNVERIFIED",
+    "status": "Maps checking free tile source attribution/cache/header constraints",
+    "implementation": "NOT STARTED; needs native rebuild/testing boundary"
+  },
+  "pushGateReview": "RESOLVED: repository audit found no designation of existing CI as deferred E2E; ordinary PR feature push authorized. Existing original APK tests run; new builds/publication are not triggered by changed paths.",
+  "singleWriter": "Integration agent after orchestrator handoff",
+  "qa": {
+    "worktreeHead": "87f75583a3adab850e6d1d36dc2dc872a13a974d",
+    "mobile": {
+      "pass": 356,
+      "fail": 0
+    },
+    "apiFirstWave": {
+      "pass": 642,
+      "fail": 0
+    },
+    "apiFinalFirstAttempt": {
+      "pass": 655,
+      "fail": 1,
+      "reason": "otp-limits child API process exited with empty output; cause UNKNOWN"
+    },
+    "otpIsolatedRerun": {
+      "pass": 23,
+      "fail": 0
+    },
+    "apiFinalSequential": {
+      "status": "PASS",
+      "pass": 656,
+      "fail": 0,
+      "command": "node --test --test-concurrency=1 test/*.test.mjs",
+      "completedBeforeEnvironmentTimeJump": true
+    },
+    "boundedQueueLoad": {
+      "pass": 1,
+      "fail": 0
+    },
+    "adminDeploy": {
+      "pass": 60,
+      "fail": 0
+    },
+    "typechecks": {
+      "libs": "PASS",
+      "api": "PASS",
+      "scripts": "PASS",
+      "mockupSandbox": "PASS",
+      "mobile": "PASS"
+    },
+    "workflowYaml": {
+      "parsed": 13,
+      "result": "PASS"
+    },
+    "security": "APPROVED exact source commits; final review snapshot235f4ef7190c9c48ce5f3b43fe1f4a60f943d0cd",
+    "integrationTreeComparison": {
+      "result": "PASS",
+      "qaCommit": "87f7558",
+      "integratedCommit": "d77e509d08d2f7cca8ba7f11419caa76a72abad8",
+      "scope": "All application, workflow and documentation files identical; orchestration and private ignore differ"
+    }
+  },
+  "pushPolicyAudit": {
+    "ordinaryFeaturePush": "AUTHORIZED after QA/review",
+    "deferredHeavyE2E": "No new deferred tools run; baseline repo has no designation of existing CI as deferred",
+    "newApkBuildExpected": false,
+    "newPublicationExpected": false,
+    "evidence": [
+      "APK119 build pinned historical e61c32b SHA",
+      "Mobile Gradle build gated workflow_dispatch build_apk",
+      "APK119 publisher push paths only own workflow, unchanged",
+      "Existing PR CI remains enabled"
+    ]
+  },
+  "journal": {
+    "provider": "OneNote",
+    "status": "CONNECTED_VERIFIED_BY_ORCHESTRATOR",
+    "writer": "root only",
+    "destinationTitle": "ONAY — полный план0–100%,151задачаижурналпродолжения",
+    "privateQueuePath": "orchestration/onenote-queue/",
+    "privateQueueIgnored": true,
+    "privateIdentifiersStoredInGit": false,
+    "verifiedReceipts": 1,
+    "significantStepDelivery": "Root appends and reads back; retry locally if unavailable"
+  },
+  "processState": {
+    "observedAt": "2026-11-15T03:55:10.280089+00:00",
+    "agentContinuityAcrossTimeJump": "NOT ASSUMED",
+    "apiTests": "COMPLETED before time jump; no running-test claim",
+    "reportWatcher": "NOT STARTED",
+    "externalRunner": "UNCONFIGURED"
+  }
+}
