@@ -10,12 +10,46 @@ h=importlib.util.module_from_spec(spec);spec.loader.exec_module(h)
 def record(out,name):
  h.screenshot(out,name);h.xml_snapshot(out,name)
 
+def verify_personal_details(version_code,out):
+ # APK115 source5c9f940 has the static identity modal; standalone/email was
+ # introduced later for APK116. Never accept a legacy page for APK116.
+ if version_code == 115:
+  h.await_node("onay-profile-personal-details","id")
+  name=h.await_node("onay-profile-personal-name","id")
+  if name.attrib.get("text") != "Демо-пассажир" or name.attrib.get("class") != "android.widget.TextView":
+   raise AssertionError("APK115 must show its read-only demo account name")
+  h.await_node("Данные сохранены при регистрации. Если их нужно изменить, обратитесь в поддержку.","text")
+  support=h.await_node("onay-personal-support","id")
+  if support.attrib.get("clickable") != "true":
+   raise AssertionError("APK115 personal support action is unavailable")
+  record(out,"android-personal-data-apk115-readonly-identity")
+ elif version_code == 116:
+  h.await_node("onay-personal-details-screen","id")
+  h.await_node("onay-profile-personal-email","id")
+  h.await_node("Не хранится отдельно")
+  record(out,"android-personal-data-readonly-email")
+ else:
+  raise ValueError("No verified personal-details contract for APK"+str(version_code))
+
+def verify_personal_navigation(version_code,out):
+ if version_code not in (115,116):
+  raise ValueError("No verified personal-details contract for APK"+str(version_code))
+ h.click("onay-profile-personal-data","id")
+ verify_personal_details(version_code,out)
+ h.click("onay-screen-back","id")
+ h.await_node("onay-passenger-profile-panel","id")
+ h.click("onay-profile-personal-data","id")
+ h.adb("shell","input","keyevent","4")
+ h.await_node("onay-passenger-profile-panel","id")
+ record(out,"android-personal-data-android-back")
+ return "APK115 read-only identity/support and both Back paths" if version_code == 115 else "Personal details read-only identity, disabled demo email and both Back paths"
+
 def main():
  parser=argparse.ArgumentParser()
  parser.add_argument("--old-apk",type=Path,required=True)
  parser.add_argument("--new-apk",type=Path,required=True)
  parser.add_argument("--old-version-code",type=int,default=114)
- parser.add_argument("--version-code",type=int,required=True)
+ parser.add_argument("--version-code",type=int,choices=(115,116),required=True)
  parser.add_argument("--output",type=Path,required=True)
  a=parser.parse_args();a.output.mkdir(parents=True,exist_ok=True)
  result={"status":"failed","checks":[],"failures":[]}
@@ -30,24 +64,13 @@ def main():
   h.click("onay-profile-personal-data","id")
   h.await_node("onay-profile-personal-details","id")
   record(a.output,f"android-legacy-personal-apk{a.old_version_code}")
-  # Upgrade in place and only now expect the new standalone details and driver overview.
+  # Upgrade in place; assert only the pinned artifact version's personal-data contract.
   h.install_exact(a.new_apk,a.version_code,a.output,f"apk{a.version_code}")
   result["checks"].append(f"Upgraded to versionCode={a.version_code} via ADB")
   h.open_demo()
   h.click("onay-tab-profile","id")
   h.await_node("onay-passenger-profile-panel","id")
-  h.click("onay-profile-personal-data","id")
-  h.await_node("onay-personal-details-screen","id")
-  h.await_node("onay-profile-personal-email","id")
-  h.await_node("Не хранится отдельно")
-  record(a.output,"android-personal-data-readonly-email")
-  h.click("onay-screen-back","id")
-  h.await_node("onay-passenger-profile-panel","id")
-  h.click("onay-profile-personal-data","id")
-  h.adb("shell","input","keyevent","4")
-  h.await_node("onay-passenger-profile-panel","id")
-  record(a.output,"android-personal-data-android-back")
-  result["checks"].append("Personal details read-only identity, disabled demo email and both Back paths")
+  result["checks"].append(verify_personal_navigation(a.version_code,a.output))
   h.click("onay-profile-driver","id")
   h.await_node("onay-driver-mode-overview","id")
   h.await_node("Учебные статусы")
