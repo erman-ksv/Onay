@@ -8,8 +8,10 @@ tests or heavy E2E executed. Research baseline maps HEAD:
 
 **Decision: conditional GO for implementation using supported APIs; native
 request/cache/attribution acceptance remains UNVERIFIED.** There is no proven
-need for a new paid service, secret or OS permission to implement a foreground
-configured-stop map. Do not enable public OSM tiles as an accepted native
+need for a new paid service or secret for the raster format. **Superseded
+permission assumption:** subsequent native AAR inspection proves two new Android
+permissions versus APK119; SDK addition is BLOCKED pending owner decision (see
+`onay-maplibre-permissions-preflight.md`). Do not enable public OSM tiles as an accepted native
 integration until the verification below passes. Production availability remains
 best-effort, not an SLA. This document does not authorize a build.
 

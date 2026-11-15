@@ -11,6 +11,13 @@ stack. Actual generated-project compile/link/runtime compatibility still needs
 verification; peer ranges are not a successful Android build. **NO-GO for native
 acceptance/production claims or production tile reliance at this stage.**
 
+**2026-11-15 permission gate:** the wrapper-only manifest check below is not a
+complete permission delta. Published native Android 13.6.1 adds
+`ACCESS_NETWORK_STATE` and `ACCESS_WIFI_STATE` absent from preserved APK119.
+SDK addition is BLOCKED pending the owner's decision on these new permissions;
+see `onay-maplibre-permissions-preflight.md` and its pinned evidence. No grant,
+manifest removal workaround or SDK addition is authorized by semantic GO.
+
 ## Version-specific evidence
 
 - [Published package metadata](https://registry.npmjs.org/@maplibre/maplibre-react-native/11.5.1)
@@ -34,9 +41,11 @@ acceptance/production claims or production tile reliance at this stage.**
   selects native 6.31.0 via SPM.
 - [Tagged Android manifest](https://github.com/maplibre/maplibre-react-native/blob/v11.5.1/package/android/src/main/AndroidManifest.xml)
   declares INTERNET and coarse/fine location only. ONAY already declares
-  foreground coarse/fine and uses network APIs. No background/service permission
-  is required for static stop rendering. Verify the generated merged manifest
-  before accepting the dependency; do not add permissions to resolve build errors.
+  foreground coarse/fine and uses network APIs. This covers the wrapper only:
+  native transitive permissions include the two new permissions above. The
+  inspected manifests do not add background/service permissions, but the future
+  complete resolved merged manifest remains UNVERIFIED. Do not add or remove
+  permissions to resolve build errors without the required review/authorization.
 - [Wrapper license](https://github.com/maplibre/maplibre-react-native/blob/v11.5.1/LICENSE.md)
   is MIT. Retain copyright/license notices and audit transitive native notices
   in the actual dependency graph; SDK licensing does not license hosted tiles.

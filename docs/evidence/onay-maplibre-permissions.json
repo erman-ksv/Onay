@@ -1,0 +1,81 @@
+{
+  "measuredAtUtc": "2026-11-15T08:59:55Z",
+  "scope": "Read-only preserved APK119 QA evidence and published candidate AAR manifests; not a new resolved Gradle merge",
+  "baseline": {
+    "repository": "erman-ksv/Onay",
+    "originalApkRunId": 42486987509,
+    "originalApkSourceSha": "e61c32b6ec09fd73cb0f49e71211020a6ce1c1e9",
+    "qaRunId": 42488949212,
+    "qaArtifactId": 13621137108,
+    "qaArtifactName": "onay-apk119-startup-android-qa",
+    "qaArtifactZipSha256": "9fcecd4e062501862595eec294bd26281df693aba28ca4812587cac7125900c8",
+    "badgingPathInZip": "badging-aapt2.txt",
+    "badgingSha256": "f62866a410bbd5f2303a5373e0dd19d605f9c0e2fe4240ae971877b051578271",
+    "resourceReceiptPathInZip": "apk119-resource-verification.json",
+    "apkSha256FromReceipt": "ae8216170a72077fa589c22570544e369b4391b6f8da6f811f0f17885dfdb06f",
+    "package": "uz.tezjet.app",
+    "versionCode": 119,
+    "minSdk": 24,
+    "targetSdk": 36,
+    "permissions": [
+      "android.permission.SYSTEM_ALERT_WINDOW",
+      "android.permission.ACCESS_COARSE_LOCATION",
+      "android.permission.ACCESS_FINE_LOCATION",
+      "android.permission.INTERNET",
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.VIBRATE",
+      "android.permission.WRITE_EXTERNAL_STORAGE",
+      "uz.tezjet.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+    ],
+    "featuresReportedByBadging": [
+      "android.hardware.faketouch",
+      "android.hardware.location",
+      "android.hardware.screen.portrait"
+    ],
+    "limitations": "Artifact-generated badging and SHA-pinned resource receipt verified, original APK bytes not downloaded again; full baseline binary XML not decoded in this task"
+  },
+  "candidate": {
+    "wrapper": "@maplibre/maplibre-react-native@11.5.1",
+    "native": "org.maplibre.gl:android-sdk-opengl:13.6.1",
+    "wrapperMinSdkFallback": 24,
+    "nativeAarMinSdk": 23,
+    "nativeAarSha256": "0a8ea4f5bfd268e050c72025d0f2952b60861863eba6caf84e19b8da583f3a42",
+    "nativeAarUrl": "https://repo.maven.apache.org/maven2/org/maplibre/gl/android-sdk-opengl/13.6.1/android-sdk-opengl-13.6.1.aar",
+    "nativeAarPermissions": [
+      "android.permission.INTERNET",
+      "android.permission.ACCESS_NETWORK_STATE",
+      "android.permission.ACCESS_WIFI_STATE",
+      "android.permission.ACCESS_COARSE_LOCATION",
+      "android.permission.ACCESS_FINE_LOCATION"
+    ],
+    "nativeAarFeatures": [
+      { "name": "android.hardware.wifi", "required": false }
+    ],
+    "knownNewPermissionsVs119": [
+      "android.permission.ACCESS_NETWORK_STATE",
+      "android.permission.ACCESS_WIFI_STATE"
+    ],
+    "otherInspectedAars": [
+      { "coordinate": "org.maplibre.gl:android-plugin-annotation-v9:3.0.2", "sha256": "6b848482def1815f2b01ed5740c934838f167028846c5451a72ebc92bdb4031e", "minSdk": 21, "permissions": [], "features": [] },
+      { "coordinate": "org.maplibre.gl:android-plugin-scalebar-v9:3.0.2", "sha256": "0b82821d1c165c1b923c50f92dfb4edc05e99ec91385906d28d4831555fd7c59", "minSdk": 21, "permissions": [], "features": [] },
+      { "coordinate": "org.maplibre.gl:maplibre-android-gestures:0.0.4", "sha256": "44ff4fc2dd8bfbcf54a06f219e7ab40a2062eb6b4a10dcbf1f4e02b4a30c61af", "minSdk": 21, "permissions": [], "features": [] },
+      { "coordinate": "androidx.fragment:fragment:1.8.9", "sha256": "12de5b89ab6641c1d8da82b63dc816652622b06d2781b949b6fbd2dff9fac492", "minSdk": 21, "permissions": [], "features": [] },
+      { "coordinate": "androidx.appcompat:appcompat:1.7.1", "sha256": "2ad334a323b28046e89b738c77d184cb3dcca32a551ab048851b2fda23a3ba26", "minSdk": 21, "permissions": [], "features": [] },
+      { "coordinate": "androidx.vectordrawable:vectordrawable:1.2.0", "sha256": "4f44b94817ad266ed8641b0b8fab4e6d038902a62840bb6528473222e1cdcfc9", "minSdk": 19, "permissions": [], "features": [] }
+    ],
+    "inspectedManifestsDeclareBackgroundLocationForegroundServiceOrStorage": false,
+    "inspectedManifestsDeclareRequiredOpenGlFeature": false,
+    "sourceCallsite": "MapView initialization -> MapLibre.isConnected() -> ConnectivityReceiver.isNetworkActive() -> ConnectivityManager.getActiveNetworkInfo(); no local SecurityException catch",
+    "wifiUsageEvidence": "Manifest declares permission; native AAR classes.jar scan found no WifiManager/getWifiState/getConnectionInfo references. This is not whole-graph proof of safe removal.",
+    "fullFutureGradleGraphAndMergedApk": "UNVERIFIED",
+    "safePermissionExclusion": "NOT PROVEN; do not remove permissions or bypass connectivity validation",
+    "sdkAdditionStatus": "BLOCKED_OWNER_NEW_PERMISSION_DECISION"
+  },
+  "actions": {
+    "sdkInstalled": false,
+    "manifestOrPermissionChanged": false,
+    "apkRebuilt": false,
+    "nativeTestsRun": false,
+    "newPaidServiceOrSecret": false
+  }
+}
