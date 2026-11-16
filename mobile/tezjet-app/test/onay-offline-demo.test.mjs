@@ -127,6 +127,27 @@ test("driver ending accepted demo participation returns passenger to search with
   assert.strictEqual(onayDemoReducer(state, { type: "advance", expectedStatus: "searching" }), state);
 });
 
+
+test("demo decline messages are localized in Russian, Kazakh and Uzbek", async () => {
+  const { translateOnay } = await import("../lib/onay-translations.ts");
+  const messages = [
+    "Вы отказались от предложения. Заказ остаётся у пассажира; повторно вам не предлагается.",
+    "Демо-водитель отказался. Заказ остаётся активным; ищем другого водителя.",
+    "Отказаться от предложения (демо)",
+    "Вы не на линии. Учебные заказы водителю не поступают.",
+    "Новых учебных предложений нет",
+    "Прекратить участие в поездке (демо)",
+  ];
+  for (const message of messages) {
+    assert.equal(translateOnay(message, "ru"), message);
+    for (const language of ["kk", "uz"]) {
+      const localized = translateOnay(message, language);
+      assert.notEqual(localized, message, `No ${language} translation: ${message}`);
+      assert.ok(localized.length > 0);
+    }
+  }
+});
+
 test("demo driver reject control never cancels passenger booking", () => {
   const source = readFileSync(new URL("../components/OnayDemoApp.tsx", import.meta.url), "utf8");
   assert.match(source, /Отказаться от предложения \(демо\)/);
