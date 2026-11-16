@@ -351,11 +351,18 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
         <View style={[themeStyles.stepper, { justifyContent: "space-between" }]}>
           <Pressable testID="route-seats-minus" accessibilityRole="button" accessibilityLabel="Уменьшить количество мест"
             disabled={seats <= 1 || submitting} onPress={() => setSeats(Math.max(1, seats - 1))}
-            style={[themeStyles.step, { width: 48, height: 48, borderRadius: 24, borderWidth: 1, borderColor: onayPalette(theme).border }, (seats <= 1 || submitting) && themeStyles.disabled]}><Text style={themeStyles.stepText}>−</Text></Pressable>
+            style={[themeStyles.step, { width: 48, height: 48, borderRadius: 24, borderWidth: 1, borderColor: onayPalette(theme).border }, (seats <= 1 || submitting) && themeStyles.disabled]}>
+              <View accessible={false} style={themeStyles.stepGlyph}><View style={[themeStyles.stepHorizontal, theme === "light" && lightStyles.stepStroke]} /></View>
+            </Pressable>
           <Text style={themeStyles.count}>{seats}</Text>
           <Pressable testID="route-seats-plus" accessibilityRole="button" accessibilityLabel="Увеличить количество мест"
             disabled={seats >= 8 || submitting} onPress={() => setSeats(Math.min(8, seats + 1))}
-            style={[themeStyles.step, { width: 48, height: 48, borderRadius: 24, borderWidth: 1, borderColor: onayPalette(theme).border }, (seats >= 8 || submitting) && themeStyles.disabled]}><Text style={themeStyles.stepText}>+</Text></Pressable>
+            style={[themeStyles.step, { width: 48, height: 48, borderRadius: 24, borderWidth: 1, borderColor: onayPalette(theme).border }, (seats >= 8 || submitting) && themeStyles.disabled]}>
+              <View accessible={false} style={themeStyles.stepGlyph}>
+                <View style={[themeStyles.stepHorizontal, theme === "light" && lightStyles.stepStroke]} />
+                <View style={[themeStyles.stepVertical, theme === "light" && lightStyles.stepStroke]} />
+              </View>
+            </Pressable>
         </View>
       </View>
       <Text style={[themeStyles.seatsTitle, { marginTop: 20 }]}>Когда</Text><View style={{ alignSelf: "flex-start", marginTop: 10, padding: 12, borderRadius: 16, borderWidth: 1, borderColor: onayPalette(theme).accent }}><Text style={{ color: onayPalette(theme).accent, fontWeight: "700" }}>Сейчас</Text></View>
@@ -417,7 +424,10 @@ const v = StyleSheet.create({
   seatsTitle:{color:"#f2faf6",fontSize:14,fontWeight:"800"},seatsDescription:{color:"#9bb3a6",fontSize:11,marginTop:3},
   stepper:{flexDirection:"row",gap:12,alignItems:"center"},
   step:{height:34,width:34,alignItems:"center",justifyContent:"center",borderRadius:17,backgroundColor:"#12291f"},
-  stepText:{color:"#5bd62f",fontSize:22,fontWeight:"700"},
+  // Geometric glyphs avoid Android Text font-padding/baseline offsets outside 48px circles.
+  stepGlyph:{width:20,height:20,alignItems:"center",justifyContent:"center"},
+  stepHorizontal:{width:16,height:2,borderRadius:1,backgroundColor:"#5bd62f"},
+  stepVertical:{position:"absolute",width:2,height:16,borderRadius:1,backgroundColor:"#5bd62f"},
   count:{color:"#f2faf6",fontWeight:"800",fontSize:17,minWidth:18,textAlign:"center"},
   button:{minHeight:54,borderRadius:18,padding:13,alignItems:"center",justifyContent:"center",marginTop:12},
   buttonPrimary:{backgroundColor:"#5bd62f"},buttonSecondary:{backgroundColor:"#0a1d15",borderWidth:1,borderColor:"#1f3d2f"},
@@ -463,7 +473,7 @@ const vLight = StyleSheet.create({
   seatsTitle: { color: "#0e1a14" },
   seatsDescription: { color: "#5a7366" },
   step: { backgroundColor: "#e5f0e9" },
-  stepText: { color: "#175444" },
+  stepStroke: { backgroundColor: "#175444" },
   count: { color: "#0e1a14" },
   buttonPrimary: { backgroundColor: "#5bd62f" },
   buttonSecondary: { backgroundColor: "#edf8f2", borderColor: "#dce8e1" },
