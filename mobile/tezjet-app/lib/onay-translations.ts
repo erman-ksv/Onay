@@ -1540,6 +1540,12 @@ const messages: Record<string, readonly [string, string]> = {
     "Бағыт бойынша",
     "Yo‘nalish bo‘yicha"
   ]
+  "Вы отказались от предложения. Заказ остаётся у пассажира; повторно вам не предлагается.": ["Ұсыныстан бас тарттыңыз. Тапсырыс жолаушыда қалады; сізге қайта ұсынылмайды.", "Taklifni rad etdingiz. Buyurtma yo‘lovchida qoladi; sizga qayta taklif qilinmaydi."],
+  "Демо-водитель отказался. Заказ остаётся активным; ищем другого водителя.": ["Демо-жүргізуші бас тартты. Тапсырыс белсенді күйінде қалады; басқа жүргізушіні іздеп жатырмыз.", "Demo haydovchi rad etdi. Buyurtma faol qoladi; boshqa haydovchi qidirilmoqda."],
+  "Отказаться от предложения (демо)": ["Ұсыныстан бас тарту (демо)", "Taklifni rad etish (demo)"],
+  "Вы не на линии. Учебные заказы водителю не поступают.": ["Сіз желіде емессіз. Жүргізушіге оқу тапсырыстары келмейді.", "Siz liniyada emassiz. Haydovchiga o‘quv buyurtmalari kelmaydi."],
+  "Новых учебных предложений нет": ["Жаңа оқу ұсыныстары жоқ", "Yangi o‘quv takliflari yo‘q"],
+  "Прекратить участие в поездке (демо)": ["Сапарға қатысуды тоқтату (демо)", "Safarda ishtirok etishni to‘xtatish (demo)"],
 };
 export function translateOnay(text: string, language: OnayLanguage): string {
   if (language === "ru") return text;
