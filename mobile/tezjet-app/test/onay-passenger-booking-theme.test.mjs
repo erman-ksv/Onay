@@ -16,9 +16,10 @@ test("booking form receives Onay passenger theme and preserves original dark mod
 });
 test("light palette covers booking surfaces, buttons, disabled and fare states", () => {
   const lightBlock = booking.slice(booking.indexOf("const vLight = StyleSheet.create({"));
-  for (const name of ["card","eyebrow","title","subtitle","hint","route","routeActive","indicator","indicatorActive","routeName","routeInfo","chevron","sectionHeading","direction","directionActive","directionText","directionTextActive","trip","originDot","tripLine","destinationDot","tripName","stopPicker","stopOption","stopOptionSelected","stopOptionName","tripCaption","seatsTitle","seatsDescription","step","stepText","count","buttonPrimary","buttonSecondary","primaryText","secondaryText","priceCard","price","availability","availabilityPositive","notice","error"]) {
+  for (const name of ["card","eyebrow","title","subtitle","hint","route","routeActive","indicator","indicatorActive","routeName","routeInfo","chevron","sectionHeading","direction","directionActive","directionText","directionTextActive","trip","originDot","tripLine","destinationDot","tripName","stopPicker","stopOption","stopOptionSelected","stopOptionName","tripCaption","seatsTitle","seatsDescription","step","stepStroke","count","buttonPrimary","buttonSecondary","primaryText","secondaryText","priceCard","price","availability","availabilityPositive","notice","error"]) {
     assert.ok(lightBlock.includes("  " + name + ": {"), name + " missing in light palette");
   }
+  assert.ok(booking.includes('theme === "light" && vLight.stepStroke'));
   assert.ok(booking.includes("bookingGate.canSubmit()"));
   assert.ok(booking.includes("saveRouteBookingRecovery(AsyncStorage, recoveryKey"));
   assert.ok(booking.includes("isFreshPassengerRouteQuote(availability, key, now)"));
