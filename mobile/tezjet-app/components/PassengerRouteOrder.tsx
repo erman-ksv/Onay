@@ -352,15 +352,15 @@ export default function PassengerRouteOrder({ token, endpoint, userId, busy, act
           <Pressable testID="route-seats-minus" accessibilityRole="button" accessibilityLabel="Уменьшить количество мест"
             disabled={seats <= 1 || submitting} onPress={() => setSeats(Math.max(1, seats - 1))}
             style={[themeStyles.step, { width: 48, height: 48, borderRadius: 24, borderWidth: 1, borderColor: onayPalette(theme).border }, (seats <= 1 || submitting) && themeStyles.disabled]}>
-              <View accessible={false} style={themeStyles.stepGlyph}><View style={[themeStyles.stepHorizontal, theme === "light" && lightStyles.stepStroke]} /></View>
+              <View accessible={false} style={themeStyles.stepGlyph}><View style={[themeStyles.stepHorizontal, theme === "light" && vLight.stepStroke]} /></View>
             </Pressable>
           <Text style={themeStyles.count}>{seats}</Text>
           <Pressable testID="route-seats-plus" accessibilityRole="button" accessibilityLabel="Увеличить количество мест"
             disabled={seats >= 8 || submitting} onPress={() => setSeats(Math.min(8, seats + 1))}
             style={[themeStyles.step, { width: 48, height: 48, borderRadius: 24, borderWidth: 1, borderColor: onayPalette(theme).border }, (seats >= 8 || submitting) && themeStyles.disabled]}>
               <View accessible={false} style={themeStyles.stepGlyph}>
-                <View style={[themeStyles.stepHorizontal, theme === "light" && lightStyles.stepStroke]} />
-                <View style={[themeStyles.stepVertical, theme === "light" && lightStyles.stepStroke]} />
+                <View style={[themeStyles.stepHorizontal, theme === "light" && vLight.stepStroke]} />
+                <View style={[themeStyles.stepVertical, theme === "light" && vLight.stepStroke]} />
               </View>
             </Pressable>
         </View>
