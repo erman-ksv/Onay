@@ -1,0 +1,134 @@
+{
+  "task": "R03: close S1 queue data exposure",
+  "createdAt": "2026-11-17T10:21:20.240667+00:00",
+  "baseSourceCommit": "135d849afeb6ee226a1531b822041cf13d6f5c36",
+  "sourceCommit": "47064307fcaa4923e8f7becb69fd262838f25641",
+  "branch": "phase1-backend",
+  "testCommits": [
+    {
+      "origin": "cf7b2dc79fb902fc19cd48afaa264793c3556343",
+      "local": "0828257",
+      "purpose": "R02 original HTTP/Socket/PostgreSQL negative matrix"
+    },
+    {
+      "origin": "203b2422daf7c8528f1fe5104b34f6a38efe84af",
+      "local": "a78e25c",
+      "purpose": "R02 same-session current-lane authority tests"
+    }
+  ],
+  "contract": {
+    "genericPublicQueueFields": [
+      "driverId",
+      "position",
+      "availableSeats",
+      "status"
+    ],
+    "appliesTo": "All generic queue HTTP, initial socket and queue event row payloads, including administrator generic views.",
+    "privateOwnEntry": "Preserved only for the currently authenticated driver owner; role/session rechecked after durable reads.",
+    "adminMonitoring": "Existing /api/admin/queue DTO and role restrictions unchanged.",
+    "recipientFreshness": "Current token, role, session and socket-driver approval; same-session saved lane identity is fenced before delivery.",
+    "staleLane": "HTTP 409 ROUTE_CHANGED; stale initial socket disconnects; an event retry keeps the current valid session connected.",
+    "positionCompatibility": "Only an actual own enrollment supplies position.route_context; a saved route choice alone never proves enrollment."
+  },
+  "protectedSemantics": {
+    "storeFilesChanged": false,
+    "fifoAllocationChanged": false,
+    "seatReservationChanged": false,
+    "matchingChanged": false,
+    "geofenceChanged": false,
+    "scenarioAssertions": "Private reservation/current-order assertions moved to the authenticated owner entry, with public omissions and seat/FIFO assertions retained."
+  },
+  "verification": {
+    "originalRed": {
+      "tests": 22,
+      "passed": 3,
+      "failed": 19,
+      "skipped": 0,
+      "environmentFailures": 0,
+      "source": "R02 tests against unchanged base application source"
+    },
+    "sameSessionRed": {
+      "tests": 3,
+      "passed": 1,
+      "failed": 2,
+      "skipped": 0,
+      "environmentFailures": 0,
+      "source": "Initial R03 implementation before the lane identity fence; this intermediate source was not committed."
+    },
+    "privacyGreen": {
+      "tests": 25,
+      "passed": 25,
+      "failed": 0,
+      "skipped": 0,
+      "exitCode": 0
+    },
+    "targetedRegression": {
+      "tests": 161,
+      "passed": 161,
+      "failed": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "exitCode": 0,
+      "durationMs": 22114.463054,
+      "files": [
+        "queue-privacy.test.mjs",
+        "route-queue.test.mjs",
+        "postgres-offers.test.mjs",
+        "postgres-seat-lock.test.mjs",
+        "socket-errors.test.mjs",
+        "assigned-driver.test.mjs",
+        "scenarios.test.mjs",
+        "line-collection.test.mjs"
+      ]
+    },
+    "apiBuild": {
+      "status": "PASS",
+      "exitCode": 0
+    },
+    "apiTypecheck": {
+      "status": "PASS",
+      "exitCode": 0
+    },
+    "gitDiffCheck": {
+      "status": "PASS",
+      "exitCode": 0
+    },
+    "testTree": "The final source/test tree was committed unchanged immediately after successful verification."
+  },
+  "environment": {
+    "node": "v24.22.1",
+    "packageManager": "pnpm 10.34.9",
+    "dependencies": "Frozen existing lockfile; API plus required libraries only; build policy retained.",
+    "database": "Disposable local PostgreSQL 16; tests use private random schemas and migrated real tables, with no production data or SQL result substitutions.",
+    "databaseLifecycle": "Shared with independent Security/Integration verification; must be stopped by its last user."
+  },
+  "logs": {
+    "original_privacy_red": {
+      "localPath": "/tmp/onay-r03-pre-fix-privacy.log",
+      "sha256": "bd798f9980ec7fc92ca1f3fd9b08e71f8e8f129a82d1ac36f3664ceaf3c9cada"
+    },
+    "same_session_lane_red": {
+      "localPath": "/tmp/onay-r03-lane-pre-fix.log",
+      "sha256": "d423cffff1b4f8a0ad0ca5c2fd93c8ed4a133d2f86ffdaeeeb4e10bca193f33a"
+    },
+    "final_privacy_green": {
+      "localPath": "/tmp/onay-r03-final-privacy.log",
+      "sha256": "69889d8b71f5cad1e56c16fc22820b7209c253b7354ab7e8606a630c91c35420"
+    },
+    "final_regression_green": {
+      "localPath": "/tmp/onay-r03-targeted-regression-final.log",
+      "sha256": "4d83df11c04e7c4582ec6f8b2ed3265a0830e2ae07098e290f2ad85bacca7fc0"
+    },
+    "api_build": {
+      "localPath": "/tmp/onay-r03-api-build.log",
+      "sha256": "e5a3e2d68faf738f5a1acbd20f5961e68602c8df26e2704332e0527616b5a8d4"
+    }
+  },
+  "notRun": [
+    "Native Android QA",
+    "APK build",
+    "Production actions"
+  ],
+  "integrationStatus": "PENDING independent exact-SHA Security review and Integration QA; no push or merge performed.",
+  "sanitization": "No connection strings, secrets, tokens, real user data, or raw queue payloads are included in this receipt."
+}
