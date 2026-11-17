@@ -1,0 +1,31 @@
+diff --git a/src/Assets.js b/src/Assets.js
+--- a/src/Assets.js
++++ b/src/Assets.js
+@@ -17 +17,2 @@
+-var _imageSize = _interopRequireDefault(require("image-size"));
++var _imageSize = require("image-size");
++var _fromFile = require("image-size/fromFile");
+@@ -68 +69 @@
+-  const { width, height } = (0, _imageSize.default)(content);
++  const { width, height } = (0, _imageSize.imageSize)(content);
+@@ -173 +174,5 @@
+-  const dimensions = isImage ? (0, _imageSize.default)(isImageInput) : null;
++  const dimensions = isImage
++    ? typeof isImageInput === "string"
++      ? await (0, _fromFile.imageSizeFromFile)(isImageInput)
++      : (0, _imageSize.imageSize)(isImageInput)
++    : null;
+diff --git a/src/Assets.js.flow b/src/Assets.js.flow
+--- a/src/Assets.js.flow
++++ b/src/Assets.js.flow
+@@ -18 +18,2 @@
+-import getImageSize from 'image-size';
++import {imageSize as getImageSize} from 'image-size';
++import {imageSizeFromFile} from 'image-size/fromFile';
+@@ -223 +224,5 @@
+-  const dimensions = isImage ? getImageSize(isImageInput) : null;
++  const dimensions = isImage
++    ? typeof isImageInput === 'string'
++      ? await imageSizeFromFile(isImageInput)
++      : getImageSize(isImageInput)
++    : null;

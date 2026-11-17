@@ -1,0 +1,2136 @@
+{
+  "baseline": "query-string7.1.3 + decode-uri-component0.2.2",
+  "intentionalDifference": "x=%25C2%FF: old U+FFFD%FF; fixed literal %C2%FF; no rescan of decoded output",
+  "cases": [
+    {
+      "query": "x=ASCII",
+      "options": {},
+      "expectedJson": "{\"x\":\"ASCII\"}"
+    },
+    {
+      "query": "x=ASCII",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"x\":\"ASCII\"}"
+    },
+    {
+      "query": "x=ASCII",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"x\":\"ASCII\"}"
+    },
+    {
+      "query": "x=ASCII",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"x\":\"ASCII\"}"
+    },
+    {
+      "query": "x=ASCII",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"x\":\"ASCII\"}"
+    },
+    {
+      "query": "x=ASCII",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"x\":\"ASCII\"}"
+    },
+    {
+      "query": "x=ASCII",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"ASCII\"}"
+    },
+    {
+      "query": "x=ASCII",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"x\":\"ASCII\"}"
+    },
+    {
+      "query": "x=ASCII",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"ASCII\"}"
+    },
+    {
+      "query": "x=ASCII",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"x\":\"ASCII\"}"
+    },
+    {
+      "query": "x=hello+world",
+      "options": {},
+      "expectedJson": "{\"x\":\"hello world\"}"
+    },
+    {
+      "query": "x=hello+world",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"x\":\"hello+world\"}"
+    },
+    {
+      "query": "x=hello+world",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"x\":\"hello world\"}"
+    },
+    {
+      "query": "x=hello+world",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"x\":\"hello world\"}"
+    },
+    {
+      "query": "x=hello+world",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"x\":\"hello world\"}"
+    },
+    {
+      "query": "x=hello+world",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"x\":\"hello world\"}"
+    },
+    {
+      "query": "x=hello+world",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"hello world\"}"
+    },
+    {
+      "query": "x=hello+world",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"x\":\"hello world\"}"
+    },
+    {
+      "query": "x=hello+world",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"hello world\"}"
+    },
+    {
+      "query": "x=hello+world",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"x\":\"hello world\"}"
+    },
+    {
+      "query": "x=a%2Bb+c",
+      "options": {},
+      "expectedJson": "{\"x\":\"a+b c\"}"
+    },
+    {
+      "query": "x=a%2Bb+c",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"x\":\"a%2Bb+c\"}"
+    },
+    {
+      "query": "x=a%2Bb+c",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"x\":\"a+b c\"}"
+    },
+    {
+      "query": "x=a%2Bb+c",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"x\":\"a+b c\"}"
+    },
+    {
+      "query": "x=a%2Bb+c",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"x\":\"a+b c\"}"
+    },
+    {
+      "query": "x=a%2Bb+c",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"x\":\"a+b c\"}"
+    },
+    {
+      "query": "x=a%2Bb+c",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"a+b c\"}"
+    },
+    {
+      "query": "x=a%2Bb+c",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"x\":\"a+b c\"}"
+    },
+    {
+      "query": "x=a%2Bb+c",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"a+b c\"}"
+    },
+    {
+      "query": "x=a%2Bb+c",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"x\":\"a+b c\"}"
+    },
+    {
+      "query": "x=%D0%98%D0%BC%D1%8F",
+      "options": {},
+      "expectedJson": "{\"x\":\"Имя\"}"
+    },
+    {
+      "query": "x=%D0%98%D0%BC%D1%8F",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"x\":\"%D0%98%D0%BC%D1%8F\"}"
+    },
+    {
+      "query": "x=%D0%98%D0%BC%D1%8F",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"x\":\"Имя\"}"
+    },
+    {
+      "query": "x=%D0%98%D0%BC%D1%8F",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"x\":\"Имя\"}"
+    },
+    {
+      "query": "x=%D0%98%D0%BC%D1%8F",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"x\":\"Имя\"}"
+    },
+    {
+      "query": "x=%D0%98%D0%BC%D1%8F",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"x\":\"Имя\"}"
+    },
+    {
+      "query": "x=%D0%98%D0%BC%D1%8F",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"Имя\"}"
+    },
+    {
+      "query": "x=%D0%98%D0%BC%D1%8F",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"x\":\"Имя\"}"
+    },
+    {
+      "query": "x=%D0%98%D0%BC%D1%8F",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"Имя\"}"
+    },
+    {
+      "query": "x=%D0%98%D0%BC%D1%8F",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"x\":\"Имя\"}"
+    },
+    {
+      "query": "x=%E2%82%AC",
+      "options": {},
+      "expectedJson": "{\"x\":\"€\"}"
+    },
+    {
+      "query": "x=%E2%82%AC",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"x\":\"%E2%82%AC\"}"
+    },
+    {
+      "query": "x=%E2%82%AC",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"x\":\"€\"}"
+    },
+    {
+      "query": "x=%E2%82%AC",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"x\":\"€\"}"
+    },
+    {
+      "query": "x=%E2%82%AC",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"x\":\"€\"}"
+    },
+    {
+      "query": "x=%E2%82%AC",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"x\":\"€\"}"
+    },
+    {
+      "query": "x=%E2%82%AC",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"€\"}"
+    },
+    {
+      "query": "x=%E2%82%AC",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"x\":\"€\"}"
+    },
+    {
+      "query": "x=%E2%82%AC",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"€\"}"
+    },
+    {
+      "query": "x=%E2%82%AC",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"x\":\"€\"}"
+    },
+    {
+      "query": "x=%F0%9F%98%80",
+      "options": {},
+      "expectedJson": "{\"x\":\"😀\"}"
+    },
+    {
+      "query": "x=%F0%9F%98%80",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"x\":\"%F0%9F%98%80\"}"
+    },
+    {
+      "query": "x=%F0%9F%98%80",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"x\":\"😀\"}"
+    },
+    {
+      "query": "x=%F0%9F%98%80",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"x\":\"😀\"}"
+    },
+    {
+      "query": "x=%F0%9F%98%80",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"x\":\"😀\"}"
+    },
+    {
+      "query": "x=%F0%9F%98%80",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"x\":\"😀\"}"
+    },
+    {
+      "query": "x=%F0%9F%98%80",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"😀\"}"
+    },
+    {
+      "query": "x=%F0%9F%98%80",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"x\":\"😀\"}"
+    },
+    {
+      "query": "x=%F0%9F%98%80",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"😀\"}"
+    },
+    {
+      "query": "x=%F0%9F%98%80",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"x\":\"😀\"}"
+    },
+    {
+      "query": "x=%",
+      "options": {},
+      "expectedJson": "{\"x\":\"%\"}"
+    },
+    {
+      "query": "x=%",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"x\":\"%\"}"
+    },
+    {
+      "query": "x=%",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"x\":\"%\"}"
+    },
+    {
+      "query": "x=%",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"x\":\"%\"}"
+    },
+    {
+      "query": "x=%",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"x\":\"%\"}"
+    },
+    {
+      "query": "x=%",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"x\":\"%\"}"
+    },
+    {
+      "query": "x=%",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"%\"}"
+    },
+    {
+      "query": "x=%",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"x\":\"%\"}"
+    },
+    {
+      "query": "x=%",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"%\"}"
+    },
+    {
+      "query": "x=%",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"x\":\"%\"}"
+    },
+    {
+      "query": "x=%A",
+      "options": {},
+      "expectedJson": "{\"x\":\"%A\"}"
+    },
+    {
+      "query": "x=%A",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"x\":\"%A\"}"
+    },
+    {
+      "query": "x=%A",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"x\":\"%A\"}"
+    },
+    {
+      "query": "x=%A",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"x\":\"%A\"}"
+    },
+    {
+      "query": "x=%A",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"x\":\"%A\"}"
+    },
+    {
+      "query": "x=%A",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"x\":\"%A\"}"
+    },
+    {
+      "query": "x=%A",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"%A\"}"
+    },
+    {
+      "query": "x=%A",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"x\":\"%A\"}"
+    },
+    {
+      "query": "x=%A",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"%A\"}"
+    },
+    {
+      "query": "x=%A",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"x\":\"%A\"}"
+    },
+    {
+      "query": "x=%G0",
+      "options": {},
+      "expectedJson": "{\"x\":\"%G0\"}"
+    },
+    {
+      "query": "x=%G0",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"x\":\"%G0\"}"
+    },
+    {
+      "query": "x=%G0",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"x\":\"%G0\"}"
+    },
+    {
+      "query": "x=%G0",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"x\":\"%G0\"}"
+    },
+    {
+      "query": "x=%G0",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"x\":\"%G0\"}"
+    },
+    {
+      "query": "x=%G0",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"x\":\"%G0\"}"
+    },
+    {
+      "query": "x=%G0",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"%G0\"}"
+    },
+    {
+      "query": "x=%G0",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"x\":\"%G0\"}"
+    },
+    {
+      "query": "x=%G0",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"%G0\"}"
+    },
+    {
+      "query": "x=%G0",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"x\":\"%G0\"}"
+    },
+    {
+      "query": "x=%C2",
+      "options": {},
+      "expectedJson": "{\"x\":\"�\"}"
+    },
+    {
+      "query": "x=%C2",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"x\":\"%C2\"}"
+    },
+    {
+      "query": "x=%C2",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"x\":\"�\"}"
+    },
+    {
+      "query": "x=%C2",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"x\":\"�\"}"
+    },
+    {
+      "query": "x=%C2",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"x\":\"�\"}"
+    },
+    {
+      "query": "x=%C2",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"x\":\"�\"}"
+    },
+    {
+      "query": "x=%C2",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"�\"}"
+    },
+    {
+      "query": "x=%C2",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"x\":\"�\"}"
+    },
+    {
+      "query": "x=%C2",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"�\"}"
+    },
+    {
+      "query": "x=%C2",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"x\":\"�\"}"
+    },
+    {
+      "query": "x=%E0%A4%A",
+      "options": {},
+      "expectedJson": "{\"x\":\"%E0%A4%A\"}"
+    },
+    {
+      "query": "x=%E0%A4%A",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"x\":\"%E0%A4%A\"}"
+    },
+    {
+      "query": "x=%E0%A4%A",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"x\":\"%E0%A4%A\"}"
+    },
+    {
+      "query": "x=%E0%A4%A",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"x\":\"%E0%A4%A\"}"
+    },
+    {
+      "query": "x=%E0%A4%A",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"x\":\"%E0%A4%A\"}"
+    },
+    {
+      "query": "x=%E0%A4%A",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"x\":\"%E0%A4%A\"}"
+    },
+    {
+      "query": "x=%E0%A4%A",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"%E0%A4%A\"}"
+    },
+    {
+      "query": "x=%E0%A4%A",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"x\":\"%E0%A4%A\"}"
+    },
+    {
+      "query": "x=%E0%A4%A",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"%E0%A4%A\"}"
+    },
+    {
+      "query": "x=%E0%A4%A",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"x\":\"%E0%A4%A\"}"
+    },
+    {
+      "query": "x=%E0%80%AF",
+      "options": {},
+      "expectedJson": "{\"x\":\"%E0%80%AF\"}"
+    },
+    {
+      "query": "x=%E0%80%AF",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"x\":\"%E0%80%AF\"}"
+    },
+    {
+      "query": "x=%E0%80%AF",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"x\":\"%E0%80%AF\"}"
+    },
+    {
+      "query": "x=%E0%80%AF",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"x\":\"%E0%80%AF\"}"
+    },
+    {
+      "query": "x=%E0%80%AF",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"x\":\"%E0%80%AF\"}"
+    },
+    {
+      "query": "x=%E0%80%AF",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"x\":\"%E0%80%AF\"}"
+    },
+    {
+      "query": "x=%E0%80%AF",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"%E0%80%AF\"}"
+    },
+    {
+      "query": "x=%E0%80%AF",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"x\":\"%E0%80%AF\"}"
+    },
+    {
+      "query": "x=%E0%80%AF",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"%E0%80%AF\"}"
+    },
+    {
+      "query": "x=%E0%80%AF",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"x\":\"%E0%80%AF\"}"
+    },
+    {
+      "query": "x=%ED%A0%80",
+      "options": {},
+      "expectedJson": "{\"x\":\"%ED%A0%80\"}"
+    },
+    {
+      "query": "x=%ED%A0%80",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"x\":\"%ED%A0%80\"}"
+    },
+    {
+      "query": "x=%ED%A0%80",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"x\":\"%ED%A0%80\"}"
+    },
+    {
+      "query": "x=%ED%A0%80",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"x\":\"%ED%A0%80\"}"
+    },
+    {
+      "query": "x=%ED%A0%80",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"x\":\"%ED%A0%80\"}"
+    },
+    {
+      "query": "x=%ED%A0%80",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"x\":\"%ED%A0%80\"}"
+    },
+    {
+      "query": "x=%ED%A0%80",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"%ED%A0%80\"}"
+    },
+    {
+      "query": "x=%ED%A0%80",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"x\":\"%ED%A0%80\"}"
+    },
+    {
+      "query": "x=%ED%A0%80",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"%ED%A0%80\"}"
+    },
+    {
+      "query": "x=%ED%A0%80",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"x\":\"%ED%A0%80\"}"
+    },
+    {
+      "query": "x=%FE%FF",
+      "options": {},
+      "expectedJson": "{\"x\":\"��\"}"
+    },
+    {
+      "query": "x=%FE%FF",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"x\":\"%FE%FF\"}"
+    },
+    {
+      "query": "x=%FE%FF",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"x\":\"��\"}"
+    },
+    {
+      "query": "x=%FE%FF",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"x\":\"��\"}"
+    },
+    {
+      "query": "x=%FE%FF",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"x\":\"��\"}"
+    },
+    {
+      "query": "x=%FE%FF",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"x\":\"��\"}"
+    },
+    {
+      "query": "x=%FE%FF",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"��\"}"
+    },
+    {
+      "query": "x=%FE%FF",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"x\":\"��\"}"
+    },
+    {
+      "query": "x=%FE%FF",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"��\"}"
+    },
+    {
+      "query": "x=%FE%FF",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"x\":\"��\"}"
+    },
+    {
+      "query": "x=%fe%ff",
+      "options": {},
+      "expectedJson": "{\"x\":\"%fe%ff\"}"
+    },
+    {
+      "query": "x=%fe%ff",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"x\":\"%fe%ff\"}"
+    },
+    {
+      "query": "x=%fe%ff",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"x\":\"%fe%ff\"}"
+    },
+    {
+      "query": "x=%fe%ff",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"x\":\"%fe%ff\"}"
+    },
+    {
+      "query": "x=%fe%ff",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"x\":\"%fe%ff\"}"
+    },
+    {
+      "query": "x=%fe%ff",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"x\":\"%fe%ff\"}"
+    },
+    {
+      "query": "x=%fe%ff",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"%fe%ff\"}"
+    },
+    {
+      "query": "x=%fe%ff",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"x\":\"%fe%ff\"}"
+    },
+    {
+      "query": "x=%fe%ff",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"%fe%ff\"}"
+    },
+    {
+      "query": "x=%fe%ff",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"x\":\"%fe%ff\"}"
+    },
+    {
+      "query": "x=%FF%FE",
+      "options": {},
+      "expectedJson": "{\"x\":\"��\"}"
+    },
+    {
+      "query": "x=%FF%FE",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"x\":\"%FF%FE\"}"
+    },
+    {
+      "query": "x=%FF%FE",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"x\":\"��\"}"
+    },
+    {
+      "query": "x=%FF%FE",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"x\":\"��\"}"
+    },
+    {
+      "query": "x=%FF%FE",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"x\":\"��\"}"
+    },
+    {
+      "query": "x=%FF%FE",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"x\":\"��\"}"
+    },
+    {
+      "query": "x=%FF%FE",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"��\"}"
+    },
+    {
+      "query": "x=%FF%FE",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"x\":\"��\"}"
+    },
+    {
+      "query": "x=%FF%FE",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"��\"}"
+    },
+    {
+      "query": "x=%FF%FE",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"x\":\"��\"}"
+    },
+    {
+      "query": "x=%EF%BB%BFname",
+      "options": {},
+      "expectedJson": "{\"x\":\"﻿name\"}"
+    },
+    {
+      "query": "x=%EF%BB%BFname",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"x\":\"%EF%BB%BFname\"}"
+    },
+    {
+      "query": "x=%EF%BB%BFname",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"x\":\"﻿name\"}"
+    },
+    {
+      "query": "x=%EF%BB%BFname",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"x\":\"﻿name\"}"
+    },
+    {
+      "query": "x=%EF%BB%BFname",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"x\":\"﻿name\"}"
+    },
+    {
+      "query": "x=%EF%BB%BFname",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"x\":\"﻿name\"}"
+    },
+    {
+      "query": "x=%EF%BB%BFname",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"﻿name\"}"
+    },
+    {
+      "query": "x=%EF%BB%BFname",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"x\":\"﻿name\"}"
+    },
+    {
+      "query": "x=%EF%BB%BFname",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"﻿name\"}"
+    },
+    {
+      "query": "x=%EF%BB%BFname",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"x\":\"﻿name\"}"
+    },
+    {
+      "query": "x=%25C2%FF",
+      "options": {},
+      "expectedJson": "{\"x\":\"%C2%FF\"}"
+    },
+    {
+      "query": "x=%25C2%FF",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"x\":\"%25C2%FF\"}"
+    },
+    {
+      "query": "x=%25C2%FF",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"x\":\"%C2%FF\"}"
+    },
+    {
+      "query": "x=%25C2%FF",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"x\":\"%C2%FF\"}"
+    },
+    {
+      "query": "x=%25C2%FF",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"x\":\"%C2%FF\"}"
+    },
+    {
+      "query": "x=%25C2%FF",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"x\":\"%C2%FF\"}"
+    },
+    {
+      "query": "x=%25C2%FF",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"%C2%FF\"}"
+    },
+    {
+      "query": "x=%25C2%FF",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"x\":\"%C2%FF\"}"
+    },
+    {
+      "query": "x=%25C2%FF",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"%C2%FF\"}"
+    },
+    {
+      "query": "x=%25C2%FF",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"x\":\"%C2%FF\"}"
+    },
+    {
+      "query": "x=%2520%FF",
+      "options": {},
+      "expectedJson": "{\"x\":\"%20%FF\"}"
+    },
+    {
+      "query": "x=%2520%FF",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"x\":\"%2520%FF\"}"
+    },
+    {
+      "query": "x=%2520%FF",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"x\":\"%20%FF\"}"
+    },
+    {
+      "query": "x=%2520%FF",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"x\":\"%20%FF\"}"
+    },
+    {
+      "query": "x=%2520%FF",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"x\":\"%20%FF\"}"
+    },
+    {
+      "query": "x=%2520%FF",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"x\":\"%20%FF\"}"
+    },
+    {
+      "query": "x=%2520%FF",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"%20%FF\"}"
+    },
+    {
+      "query": "x=%2520%FF",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"x\":\"%20%FF\"}"
+    },
+    {
+      "query": "x=%2520%FF",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"%20%FF\"}"
+    },
+    {
+      "query": "x=%2520%FF",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"x\":\"%20%FF\"}"
+    },
+    {
+      "query": "x=%41%C0%AF%42",
+      "options": {},
+      "expectedJson": "{\"x\":\"A%C0%AFB\"}"
+    },
+    {
+      "query": "x=%41%C0%AF%42",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"x\":\"%41%C0%AF%42\"}"
+    },
+    {
+      "query": "x=%41%C0%AF%42",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"x\":\"A%C0%AFB\"}"
+    },
+    {
+      "query": "x=%41%C0%AF%42",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"x\":\"A%C0%AFB\"}"
+    },
+    {
+      "query": "x=%41%C0%AF%42",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"x\":\"A%C0%AFB\"}"
+    },
+    {
+      "query": "x=%41%C0%AF%42",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"x\":\"A%C0%AFB\"}"
+    },
+    {
+      "query": "x=%41%C0%AF%42",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"A%C0%AFB\"}"
+    },
+    {
+      "query": "x=%41%C0%AF%42",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"x\":\"A%C0%AFB\"}"
+    },
+    {
+      "query": "x=%41%C0%AF%42",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"x\":\"A%C0%AFB\"}"
+    },
+    {
+      "query": "x=%41%C0%AF%42",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"x\":\"A%C0%AFB\"}"
+    },
+    {
+      "query": "a=1&a=2&empty=&flag",
+      "options": {},
+      "expectedJson": "{\"a\":[\"1\",\"2\"],\"empty\":\"\",\"flag\":null}"
+    },
+    {
+      "query": "a=1&a=2&empty=&flag",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"a\":[\"1\",\"2\"],\"empty\":\"\",\"flag\":null}"
+    },
+    {
+      "query": "a=1&a=2&empty=&flag",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"a\":[1,2],\"empty\":\"\",\"flag\":null}"
+    },
+    {
+      "query": "a=1&a=2&empty=&flag",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"a\":\"2\",\"empty\":\"\",\"flag\":null}"
+    },
+    {
+      "query": "a=1&a=2&empty=&flag",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"a\":\"2\",\"empty\":\"\",\"flag\":null}"
+    },
+    {
+      "query": "a=1&a=2&empty=&flag",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"a\":\"2\",\"empty\":\"\",\"flag\":null}"
+    },
+    {
+      "query": "a=1&a=2&empty=&flag",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"a\":\"2\",\"empty\":\"\",\"flag\":null}"
+    },
+    {
+      "query": "a=1&a=2&empty=&flag",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"a\":\"2\",\"empty\":\"\",\"flag\":null}"
+    },
+    {
+      "query": "a=1&a=2&empty=&flag",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"a\":\"2\",\"empty\":\"\",\"flag\":null}"
+    },
+    {
+      "query": "a=1&a=2&empty=&flag",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"a\":[\"1\",\"2\"],\"empty\":\"\",\"flag\":null}"
+    },
+    {
+      "query": "a[]=1&a[]=2",
+      "options": {},
+      "expectedJson": "{\"a[]\":[\"1\",\"2\"]}"
+    },
+    {
+      "query": "a[]=1&a[]=2",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"a[]\":[\"1\",\"2\"]}"
+    },
+    {
+      "query": "a[]=1&a[]=2",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"a[]\":[1,2]}"
+    },
+    {
+      "query": "a[]=1&a[]=2",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"a\":[\"1\",\"2\"]}"
+    },
+    {
+      "query": "a[]=1&a[]=2",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"a\":[\"2\"]}"
+    },
+    {
+      "query": "a[]=1&a[]=2",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"a[]\":\"2\"}"
+    },
+    {
+      "query": "a[]=1&a[]=2",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"a[]\":\"2\"}"
+    },
+    {
+      "query": "a[]=1&a[]=2",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"a[]\":\"2\"}"
+    },
+    {
+      "query": "a[]=1&a[]=2",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"a\":[\"1\",\"2\"]}"
+    },
+    {
+      "query": "a[]=1&a[]=2",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"a[]\":[\"1\",\"2\"]}"
+    },
+    {
+      "query": "a[1]=x&a[0]=y",
+      "options": {},
+      "expectedJson": "{\"a[0]\":\"y\",\"a[1]\":\"x\"}"
+    },
+    {
+      "query": "a[1]=x&a[0]=y",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"a[0]\":\"y\",\"a[1]\":\"x\"}"
+    },
+    {
+      "query": "a[1]=x&a[0]=y",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"a[0]\":\"y\",\"a[1]\":\"x\"}"
+    },
+    {
+      "query": "a[1]=x&a[0]=y",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"a[0]\":\"y\",\"a[1]\":\"x\"}"
+    },
+    {
+      "query": "a[1]=x&a[0]=y",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"a\":[\"y\",\"x\"]}"
+    },
+    {
+      "query": "a[1]=x&a[0]=y",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"a[0]\":\"y\",\"a[1]\":\"x\"}"
+    },
+    {
+      "query": "a[1]=x&a[0]=y",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"a[0]\":\"y\",\"a[1]\":\"x\"}"
+    },
+    {
+      "query": "a[1]=x&a[0]=y",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"a[0]\":\"y\",\"a[1]\":\"x\"}"
+    },
+    {
+      "query": "a[1]=x&a[0]=y",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"a[0]\":\"y\",\"a[1]\":\"x\"}"
+    },
+    {
+      "query": "a[1]=x&a[0]=y",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"a[1]\":\"x\",\"a[0]\":\"y\"}"
+    },
+    {
+      "query": "a=1,2%2C3",
+      "options": {},
+      "expectedJson": "{\"a\":\"1,2,3\"}"
+    },
+    {
+      "query": "a=1,2%2C3",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"a\":\"1,2%2C3\"}"
+    },
+    {
+      "query": "a=1,2%2C3",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"a\":\"1,2,3\"}"
+    },
+    {
+      "query": "a=1,2%2C3",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"a\":\"1,2,3\"}"
+    },
+    {
+      "query": "a=1,2%2C3",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"a\":\"1,2,3\"}"
+    },
+    {
+      "query": "a=1,2%2C3",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"a\":[\"1\",\"2,3\"]}"
+    },
+    {
+      "query": "a=1,2%2C3",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"a\":\"1,2,3\"}"
+    },
+    {
+      "query": "a=1,2%2C3",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"a\":\"1,2,3\"}"
+    },
+    {
+      "query": "a=1,2%2C3",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"a\":\"1,2,3\"}"
+    },
+    {
+      "query": "a=1,2%2C3",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"a\":\"1,2,3\"}"
+    },
+    {
+      "query": "a=1|2%7C3",
+      "options": {},
+      "expectedJson": "{\"a\":\"1|2|3\"}"
+    },
+    {
+      "query": "a=1|2%7C3",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"a\":\"1|2%7C3\"}"
+    },
+    {
+      "query": "a=1|2%7C3",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"a\":\"1|2|3\"}"
+    },
+    {
+      "query": "a=1|2%7C3",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"a\":\"1|2|3\"}"
+    },
+    {
+      "query": "a=1|2%7C3",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"a\":\"1|2|3\"}"
+    },
+    {
+      "query": "a=1|2%7C3",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"a\":\"1|2|3\"}"
+    },
+    {
+      "query": "a=1|2%7C3",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"a\":[\"1\",\"2|3\"]}"
+    },
+    {
+      "query": "a=1|2%7C3",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"a\":\"1|2|3\"}"
+    },
+    {
+      "query": "a=1|2%7C3",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"a\":\"1|2|3\"}"
+    },
+    {
+      "query": "a=1|2%7C3",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"a\":\"1|2|3\"}"
+    },
+    {
+      "query": "a:list=1&a:list=2",
+      "options": {},
+      "expectedJson": "{\"a:list\":[\"1\",\"2\"]}"
+    },
+    {
+      "query": "a:list=1&a:list=2",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"a:list\":[\"1\",\"2\"]}"
+    },
+    {
+      "query": "a:list=1&a:list=2",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"a:list\":[1,2]}"
+    },
+    {
+      "query": "a:list=1&a:list=2",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"a:list\":\"2\"}"
+    },
+    {
+      "query": "a:list=1&a:list=2",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"a:list\":\"2\"}"
+    },
+    {
+      "query": "a:list=1&a:list=2",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"a:list\":\"2\"}"
+    },
+    {
+      "query": "a:list=1&a:list=2",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"a:list\":\"2\"}"
+    },
+    {
+      "query": "a:list=1&a:list=2",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"a\":[\"1\",\"2\"]}"
+    },
+    {
+      "query": "a:list=1&a:list=2",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"a:list\":\"2\"}"
+    },
+    {
+      "query": "a:list=1&a:list=2",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"a:list\":[\"1\",\"2\"]}"
+    },
+    {
+      "query": "a[]=1|2",
+      "options": {},
+      "expectedJson": "{\"a[]\":\"1|2\"}"
+    },
+    {
+      "query": "a[]=1|2",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"a[]\":\"1|2\"}"
+    },
+    {
+      "query": "a[]=1|2",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"a[]\":\"1|2\"}"
+    },
+    {
+      "query": "a[]=1|2",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"a\":[\"1|2\"]}"
+    },
+    {
+      "query": "a[]=1|2",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"a\":[\"1|2\"]}"
+    },
+    {
+      "query": "a[]=1|2",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"a[]\":\"1|2\"}"
+    },
+    {
+      "query": "a[]=1|2",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"a[]\":[\"1\",\"2\"]}"
+    },
+    {
+      "query": "a[]=1|2",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"a[]\":\"1|2\"}"
+    },
+    {
+      "query": "a[]=1|2",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"a\":[\"1\",\"2\"]}"
+    },
+    {
+      "query": "a[]=1|2",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"a[]\":\"1|2\"}"
+    },
+    {
+      "query": "__proto__=x&constructor=y&prototype=z",
+      "options": {},
+      "expectedJson": "{\"__proto__\":\"x\",\"constructor\":\"y\",\"prototype\":\"z\"}"
+    },
+    {
+      "query": "__proto__=x&constructor=y&prototype=z",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"__proto__\":\"x\",\"constructor\":\"y\",\"prototype\":\"z\"}"
+    },
+    {
+      "query": "__proto__=x&constructor=y&prototype=z",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"__proto__\":\"x\",\"constructor\":\"y\",\"prototype\":\"z\"}"
+    },
+    {
+      "query": "__proto__=x&constructor=y&prototype=z",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"__proto__\":\"x\",\"constructor\":\"y\",\"prototype\":\"z\"}"
+    },
+    {
+      "query": "__proto__=x&constructor=y&prototype=z",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"__proto__\":\"x\",\"constructor\":\"y\",\"prototype\":\"z\"}"
+    },
+    {
+      "query": "__proto__=x&constructor=y&prototype=z",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"__proto__\":\"x\",\"constructor\":\"y\",\"prototype\":\"z\"}"
+    },
+    {
+      "query": "__proto__=x&constructor=y&prototype=z",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"__proto__\":\"x\",\"constructor\":\"y\",\"prototype\":\"z\"}"
+    },
+    {
+      "query": "__proto__=x&constructor=y&prototype=z",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"__proto__\":\"x\",\"constructor\":\"y\",\"prototype\":\"z\"}"
+    },
+    {
+      "query": "__proto__=x&constructor=y&prototype=z",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"__proto__\":\"x\",\"constructor\":\"y\",\"prototype\":\"z\"}"
+    },
+    {
+      "query": "__proto__=x&constructor=y&prototype=z",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"__proto__\":\"x\",\"constructor\":\"y\",\"prototype\":\"z\"}"
+    },
+    {
+      "query": "z=false&n=1.5&yes=TRUE&empty=&flag",
+      "options": {},
+      "expectedJson": "{\"empty\":\"\",\"flag\":null,\"n\":\"1.5\",\"yes\":\"TRUE\",\"z\":\"false\"}"
+    },
+    {
+      "query": "z=false&n=1.5&yes=TRUE&empty=&flag",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"empty\":\"\",\"flag\":null,\"n\":\"1.5\",\"yes\":\"TRUE\",\"z\":\"false\"}"
+    },
+    {
+      "query": "z=false&n=1.5&yes=TRUE&empty=&flag",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"empty\":\"\",\"flag\":null,\"n\":1.5,\"yes\":true,\"z\":false}"
+    },
+    {
+      "query": "z=false&n=1.5&yes=TRUE&empty=&flag",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"empty\":\"\",\"flag\":null,\"n\":\"1.5\",\"yes\":\"TRUE\",\"z\":\"false\"}"
+    },
+    {
+      "query": "z=false&n=1.5&yes=TRUE&empty=&flag",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"empty\":\"\",\"flag\":null,\"n\":\"1.5\",\"yes\":\"TRUE\",\"z\":\"false\"}"
+    },
+    {
+      "query": "z=false&n=1.5&yes=TRUE&empty=&flag",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"empty\":\"\",\"flag\":null,\"n\":\"1.5\",\"yes\":\"TRUE\",\"z\":\"false\"}"
+    },
+    {
+      "query": "z=false&n=1.5&yes=TRUE&empty=&flag",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"empty\":\"\",\"flag\":null,\"n\":\"1.5\",\"yes\":\"TRUE\",\"z\":\"false\"}"
+    },
+    {
+      "query": "z=false&n=1.5&yes=TRUE&empty=&flag",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"empty\":\"\",\"flag\":null,\"n\":\"1.5\",\"yes\":\"TRUE\",\"z\":\"false\"}"
+    },
+    {
+      "query": "z=false&n=1.5&yes=TRUE&empty=&flag",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"empty\":\"\",\"flag\":null,\"n\":\"1.5\",\"yes\":\"TRUE\",\"z\":\"false\"}"
+    },
+    {
+      "query": "z=false&n=1.5&yes=TRUE&empty=&flag",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"z\":\"false\",\"n\":\"1.5\",\"yes\":\"TRUE\",\"empty\":\"\",\"flag\":null}"
+    },
+    {
+      "query": "%61=1&x=%2b%2B",
+      "options": {},
+      "expectedJson": "{\"a\":\"1\",\"x\":\"++\"}"
+    },
+    {
+      "query": "%61=1&x=%2b%2B",
+      "options": {
+        "decode": false
+      },
+      "expectedJson": "{\"%61\":\"1\",\"x\":\"%2b%2B\"}"
+    },
+    {
+      "query": "%61=1&x=%2b%2B",
+      "options": {
+        "parseNumbers": true,
+        "parseBooleans": true
+      },
+      "expectedJson": "{\"a\":1,\"x\":\"++\"}"
+    },
+    {
+      "query": "%61=1&x=%2b%2B",
+      "options": {
+        "arrayFormat": "bracket"
+      },
+      "expectedJson": "{\"a\":\"1\",\"x\":\"++\"}"
+    },
+    {
+      "query": "%61=1&x=%2b%2B",
+      "options": {
+        "arrayFormat": "index"
+      },
+      "expectedJson": "{\"a\":\"1\",\"x\":\"++\"}"
+    },
+    {
+      "query": "%61=1&x=%2b%2B",
+      "options": {
+        "arrayFormat": "comma"
+      },
+      "expectedJson": "{\"a\":\"1\",\"x\":\"++\"}"
+    },
+    {
+      "query": "%61=1&x=%2b%2B",
+      "options": {
+        "arrayFormat": "separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"a\":\"1\",\"x\":\"++\"}"
+    },
+    {
+      "query": "%61=1&x=%2b%2B",
+      "options": {
+        "arrayFormat": "colon-list-separator"
+      },
+      "expectedJson": "{\"a\":\"1\",\"x\":\"++\"}"
+    },
+    {
+      "query": "%61=1&x=%2b%2B",
+      "options": {
+        "arrayFormat": "bracket-separator",
+        "arrayFormatSeparator": "|"
+      },
+      "expectedJson": "{\"a\":\"1\",\"x\":\"++\"}"
+    },
+    {
+      "query": "%61=1&x=%2b%2B",
+      "options": {
+        "sort": false
+      },
+      "expectedJson": "{\"a\":\"1\",\"x\":\"++\"}"
+    }
+  ]
+}
