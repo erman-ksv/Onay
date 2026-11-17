@@ -8,6 +8,8 @@ on:
       - "scripts/onay-apk119-resources-qa.py"
       - "scripts/onay-android-apk-smoke.py"
       - "scripts/onay-apk118-startup-android-qa.py"
+      - "scripts/provision-android-emulator.py"
+      - "scripts/test_provision_android_emulator.py"
 
 permissions:
   contents: read
@@ -221,7 +223,17 @@ jobs:
         run: |
           set -euo pipefail
           sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
-          "$sdk_root/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$sdk_root" --install "emulator"
+          test -n "$sdk_root"
+          python3 -m unittest discover -s scripts -p test_provision_android_emulator.py
+          python3 scripts/provision-android-emulator.py --sdk-root "$sdk_root" --receipt artifacts/apk119-startup-native/emulator-provisioning.json
+          "$sdk_root/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$sdk_root" --list_installed > artifacts/apk119-startup-native/sdk-installed.txt
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          revision=json.loads(Path('artifacts/apk119-startup-native/emulator-provisioning.json').read_text())['revision']
+          rows=[list(map(str.strip,line.split('|'))) for line in Path('artifacts/apk119-startup-native/sdk-installed.txt').read_text().splitlines()]
+          assert any(len(row)>1 and row[0]=='emulator' and row[1]==revision for row in rows), 'sdkmanager must recognize the verified emulator revision'
+          PY
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libpulse0 ffmpeg
           test -x "$sdk_root/emulator/qemu/linux-x86_64/qemu-system-x86_64"
