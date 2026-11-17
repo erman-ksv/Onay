@@ -1,0 +1,7 @@
+{
+  "version": "v22.23.5",
+  "url": "https://nodejs.org/dist/v22.23.5/node-v22.23.5-linux-x64.tar.xz",
+  "archiveSha256": "cdeb8670a0c81f51b4dc4ac61919f9b1ad917b304bf8221eb939570663d240f8",
+  "checksumSource": "https://nodejs.org/dist/v22.23.5/SHASUMS256.txt",
+  "binarySha256": "2f822d544601dfff107f57d945b649d15c5bf6302595735a6bd9cdc7ee9669bd"
+}

@@ -1,0 +1,113 @@
+{
+  "green": true,
+  "red": true,
+  "workerOldGenerationMb": 32,
+  "wallTimeBoundMs": 500,
+  "results": [
+    {
+      "name": "invalid-run",
+      "size": 128,
+      "version": "baseline0.2.2",
+      "inputLength": 384,
+      "completed": true,
+      "elapsedMs": 146.543891,
+      "outputLength": 384
+    },
+    {
+      "name": "invalid-run",
+      "size": 128,
+      "version": "candidate0.5.1",
+      "inputLength": 384,
+      "completed": true,
+      "elapsedMs": 0.39761500000000183,
+      "outputLength": 384
+    },
+    {
+      "name": "invalid-run",
+      "size": 512,
+      "version": "baseline0.2.2",
+      "inputLength": 1536,
+      "timeout": true,
+      "boundMs": 500
+    },
+    {
+      "name": "invalid-run",
+      "size": 512,
+      "version": "candidate0.5.1",
+      "inputLength": 1536,
+      "completed": true,
+      "elapsedMs": 0.5053070000000162,
+      "outputLength": 1536
+    },
+    {
+      "name": "invalid-run",
+      "size": 2048,
+      "version": "baseline0.2.2",
+      "inputLength": 6144,
+      "timeout": true,
+      "boundMs": 500
+    },
+    {
+      "name": "invalid-run",
+      "size": 2048,
+      "version": "candidate0.5.1",
+      "inputLength": 6144,
+      "completed": true,
+      "elapsedMs": 0.8315159999999651,
+      "outputLength": 6144
+    },
+    {
+      "name": "mixed-run",
+      "size": 128,
+      "version": "baseline0.2.2",
+      "inputLength": 768,
+      "timeout": true,
+      "boundMs": 500
+    },
+    {
+      "name": "mixed-run",
+      "size": 128,
+      "version": "candidate0.5.1",
+      "inputLength": 768,
+      "completed": true,
+      "elapsedMs": 0.4783660000000509,
+      "outputLength": 512
+    },
+    {
+      "name": "mixed-run",
+      "size": 512,
+      "version": "baseline0.2.2",
+      "inputLength": 3072,
+      "timeout": true,
+      "boundMs": 500
+    },
+    {
+      "name": "mixed-run",
+      "size": 512,
+      "version": "candidate0.5.1",
+      "inputLength": 3072,
+      "completed": true,
+      "elapsedMs": 0.7159619999997631,
+      "outputLength": 2048
+    },
+    {
+      "name": "mixed-run",
+      "size": 2048,
+      "version": "baseline0.2.2",
+      "inputLength": 12288,
+      "error": "Worker terminated due to reaching memory limit: JS heap out of memory"
+    },
+    {
+      "name": "mixed-run",
+      "size": 2048,
+      "version": "candidate0.5.1",
+      "inputLength": 12288,
+      "completed": true,
+      "elapsedMs": 1.4420490000002246,
+      "outputLength": 8192
+    }
+  ],
+  "limitation": "Observed bounded parent-parser behavior, not a formal complexity proof or device timing SLA",
+  "sourceSha": "73104935ab588d833d2230cfa63218a4e0d1b2c1",
+  "runtime": "Node v22.23.5"
+}
