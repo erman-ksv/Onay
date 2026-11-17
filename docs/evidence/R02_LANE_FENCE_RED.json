@@ -1,0 +1,34 @@
+{
+  "task": "R02 follow-up: same-session route choice fencing",
+  "applicationBaselineSha": "135d849afeb6ee226a1531b822041cf13d6f5c36",
+  "priorTestCommit": "cf7b2dc79fb902fc19cd48afaa264793c3556343",
+  "observedAtUtc": "2026-11-17T10:17:48Z",
+  "observedAtAsiaTashkent": "2026-11-17T15:17:48+05:00",
+  "testPath": "artifacts/api-server/test/queue-privacy.test.mjs",
+  "testSha256": "8a0a6510ce2f6ad3aee0b98f221ab97996296e5863008375f5f2d0f908b7c953",
+  "command": "node --test --test-reporter=spec --test-name-pattern=same-session test/queue-privacy.test.mjs",
+  "result": {
+    "tests": 3,
+    "passed": 0,
+    "failed": 3,
+    "skipped": 0,
+    "cancelled": 0,
+    "exitCode": 1,
+    "classification": "BASELINE_RED_PRIVACY_ASSERTIONS_NO_ENV_FAILURE"
+  },
+  "fixture": "Actual PostgreSQL-backed approved driver without enrollment changes its saved configured route direction within the same session while original durable snapshot read is gated; no fake SQL results",
+  "confirmedFailures": [
+    "HTTP returns earlier view HTTP200 rather than retryable409 ROUTE_CHANGED",
+    "initial socket receives a stale snapshot instead of disconnect",
+    "broadcast returns legacy driver IDs outside the current configured lane"
+  ],
+  "contract": "Capture current route-choice authority as well as role/session before awaited reads; reject stale view on same-session choice change. A notification rebuilt after the change may deliver the current new lane safely; otherwise drop stale notification and preserve recovery on the next event.",
+  "limits": [
+    "No app/store/FIFO/reservation/seat implementation edited",
+    "Original22-case baseline remains recorded separately in R02_QUEUE_PRIVACY_RED.json; this record covers only three new targeted cases",
+    "Final suite now contains25 cases; no combined25-case baseline result is inferred from these two runs",
+    "No raw GPS, token, database URL or fixture identifiers retained",
+    "No native/CI/push/merge action"
+  ],
+  "budget": "UNKNOWN"
+}
