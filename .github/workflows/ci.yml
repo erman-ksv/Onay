@@ -64,6 +64,58 @@ jobs:
         run: pnpm --filter @workspace/api-server run test
 
 
+      - name: R06 prepare and exercise a fresh isolated test environment
+        run: |
+          set -euo pipefail
+          r06_directory="$RUNNER_TEMP/onay-r06-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          r06_database="$(node -e "process.stdout.write('onay_r06_' + require('node:crypto').randomBytes(12).toString('hex'))")"
+          echo "ONAY_R06_RUN_DIRECTORY=$r06_directory" >> "$GITHUB_ENV"
+          node --test deploy/onay/test-environment-guards.test.mjs
+          node deploy/onay/test-environment.mjs prepare \
+            --ack=ONAY_R06_TEST_ONLY --admin-env=DATABASE_URL \
+            --database="$r06_database" --run-directory="$r06_directory" \
+            --test-price-per-stop=12000
+          node deploy/onay/test-environment.mjs exercise --run-directory="$r06_directory"
+
+      - name: R06 restart only this job's PostgreSQL service and verify retained state
+        env:
+          ONAY_R06_SERVICE_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          [[ "$ONAY_R06_SERVICE_CONTAINER_ID" =~ ^[a-f0-9]{64}$ ]]
+          docker restart "$ONAY_R06_SERVICE_CONTAINER_ID" >/dev/null
+          ready=false
+          for attempt in $(seq 1 30); do
+            if docker exec "$ONAY_R06_SERVICE_CONTAINER_ID" pg_isready -U postgres -d tezjet_test >/dev/null 2>&1; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = true
+          node deploy/onay/test-environment.mjs probe \
+            --run-directory="$ONAY_R06_RUN_DIRECTORY" --require-postgres-restart=true
+
+      - name: R06 remove only the owned isolated fixture database
+        if: always() && env.ONAY_R06_RUN_DIRECTORY != ''
+        run: |
+          set -euo pipefail
+          if test -f "$ONAY_R06_RUN_DIRECTORY/environment.private.json"; then
+            node deploy/onay/test-environment.mjs destroy \
+              --run-directory="$ONAY_R06_RUN_DIRECTORY" --ack=DROP_OWNED_R06_TEST_DATABASE
+          fi
+
+      - name: R06 preserve only sanitized test environment receipts
+        if: always() && env.ONAY_R06_RUN_DIRECTORY != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: onay-r06-test-environment
+          path: |
+            ${{ env.ONAY_R06_RUN_DIRECTORY }}/receipt.json
+            ${{ env.ONAY_R06_RUN_DIRECTORY }}/lifecycle-receipt.json
+            ${{ env.ONAY_R06_RUN_DIRECTORY }}/retained-state-receipt.json
+          if-no-files-found: warn
+
       - name: Bounded API and driver queue load
         run: pnpm --filter @workspace/api-server run test:load
 
