@@ -1,5 +1,6 @@
 name: Onay APK119 compiled resources and Android acceptance (reuse original Gradle APK)
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - ".github/workflows/onay-apk118-startup-release.yml"
@@ -16,7 +17,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: onay-apk119-one-build-${{ github.event.pull_request.number }}
+  group: onay-apk119-one-build-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -158,13 +159,13 @@ jobs:
 
   android-acceptance:
     name: Verify saved APK119, Android QA and native screenshots without rebuilding
-    if: github.event_name == 'pull_request' && github.event.pull_request.number == 110
+    if: (github.event_name == 'pull_request' && github.event.pull_request.number == 110) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/ci/onay-r01-r04-validation')
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Download published APK118 baseline
         uses: actions/download-artifact@v4
         with:

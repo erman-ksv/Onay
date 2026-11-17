@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -16,6 +17,7 @@ concurrency:
 jobs:
   verify:
     name: Typecheck and API tests
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/ci/onay-r01-r04-validation'
     runs-on: ubuntu-latest
     services:
       postgres:
