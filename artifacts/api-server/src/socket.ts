@@ -5,9 +5,9 @@ import { store } from "./store";
 import { readSocketToken } from "./middleware/auth";
 import { verifyAccessToken } from "./utils/token";
 import { logger } from "./lib/logger";
-import { PYATAK_ZONE, REQUIRE_DRIVER_APPROVAL } from "./utils/config";
+import { REQUIRE_DRIVER_APPROVAL } from "./utils/config";
 import { emitIncomingOrder } from "./utils/realtime";
-import { queueStatusView } from "./services/queueView";
+import { queueSocketStatusView } from "./services/queueView";
 import { isActiveDriverLocationOrder, readDriverLocation } from "./utils/driverLocation";
 
 export function createRealtimeServer(httpServer: HttpServer): Server {
@@ -77,7 +77,6 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
     scheduleExpiry();
     if (!socket.connected) return;
     socket.join(`user:${userId}`);
-    socket.join(`queue:${PYATAK_ZONE.id}`);
     socket.emit("connected", {
       user_id: userId,
       events: [
@@ -103,7 +102,7 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
         return;
       }
       socket.emit("queue:snapshot", {
-        ...await queueStatusView(user),
+        ...await queueSocketStatusView(socket.data),
         updated_at: new Date().toISOString(),
       });
       if (socket.data.role === "driver") {
