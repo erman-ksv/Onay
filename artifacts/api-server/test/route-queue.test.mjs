@@ -47,6 +47,7 @@ before(async () => {
         'export { store as runtimeStore } from "./src/store";',
         'export { createAccessToken } from "./src/utils/token";',
         'export { createRealtimeServer } from "./src/socket";',
+        'export { emitQueueUpdate } from "./src/utils/realtime";',
       ].join("\n"),
       resolveDir: apiRoot, loader: "ts",
     },
@@ -527,4 +528,41 @@ test("admin lane opt-in preserves the exact legacy response and validates the bo
     const result = await request("/admin/queue?include_lanes=" + query, { token: admin.token });
     assertError(result, 400, "VALIDATION_ERROR");
   }
+});
+
+
+test("queue position events do not turn a saved route choice into an enrollment", { timeout: 20_000 }, async t => {
+  const f = await fixture(t), route = await f.configured();
+  const observer = await planned(f, route), enrolled = await planned(f, route);
+  await store.joinQueue(enrollment(f, enrolled.user, route), enrolled.user.sessionVersion, choiceInput(route));
+  if (!realtime) {
+    realtime = production.createRealtimeServer(server);
+    production.app.locals.io = realtime;
+  }
+  const socket = createSocket(new URL(baseUrl).origin, {
+    path: "/api/socket.io", auth: { token: observer.token }, transports: ["websocket"], autoConnect: false, reconnection: false,
+  });
+  sockets.add(socket);
+  t.after(() => { socket.disconnect(); sockets.delete(socket); });
+  function event(name) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { socket.off(name, received); reject(new Error("Missing " + name)); }, 5_000);
+      function received(payload) { clearTimeout(timer); socket.off(name, received); resolve(payload); }
+      socket.once(name, received);
+    });
+  }
+  const initial = event("queue:snapshot");
+  socket.connect();
+  assert.equal((await initial).your_entry, null);
+  const position = event("queue:position");
+  const update = event("queue:update");
+  await production.emitQueueUpdate(realtime, { type: "joined", driverId: enrolled.user.id });
+  const payload = await position;
+  assert.equal(payload.position, null);
+  assert.equal(payload.status, "not_in_queue");
+  assert.equal(payload.route_context, null, "A saved choice is not an enrolled route: mobile treats non-null position context as membership");
+  const view = await update;
+  assert.equal(view.your_entry, null);
+  assert.deepEqual(view.queue.map(entry => entry.driverId), [enrolled.user.id]);
+  assert.equal(await store.getQueueEntry(observer.user.id), undefined);
 });

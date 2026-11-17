@@ -340,7 +340,7 @@ test("covers OTP auth, FIFO offers, Point C locks, Point D pooling, and realtime
   const afterRejectQueue = await request("/queue", { token: driverOneToken });
   const releasedDriver = afterRejectQueue.body.queue.find(entry => entry.driverId === firstJoin.body.entry.driverId);
   assert.equal(releasedDriver.availableSeats, 3);
-  assert.equal(releasedDriver.pendingOfferOrderId, undefined);
+  assert.equal(afterRejectQueue.body.your_entry.pendingOfferOrderId, undefined);
   const declinedCancelled = await request(`/orders/${declinedOrder.id}/cancel`, { method: "POST", token: passengerLoginToken });
   assert.equal(declinedCancelled.response.status, 200);
 
@@ -359,7 +359,11 @@ test("covers OTP auth, FIFO offers, Point C locks, Point D pooling, and realtime
   assert.ok(pointCOrder.offer_expires_at <= Date.now() + 60_000);
   assert.notEqual(incoming.order.passenger_phone, currentMe.body.user.phone_number);
   const queueDuringOffer = await request("/queue", { token: driverOneToken });
-  const offeredEntry = queueDuringOffer.body.queue.find(entry => entry.driverId === firstJoin.body.entry.driverId);
+  const offeredEntry = queueDuringOffer.body.your_entry;
+  assert.equal(offeredEntry.driverId, firstJoin.body.entry.driverId);
+  const publicOffer = queueDuringOffer.body.queue.find(entry => entry.driverId === offeredEntry.driverId);
+  assert.equal(publicOffer.availableSeats, offeredEntry.availableSeats);
+  assert.equal(publicOffer.pendingOfferOrderId, undefined, "A public lane row cannot disclose a reservation ID.");
   assert.equal(offeredEntry.availableSeats, 1, "Seats are reserved when the offer is delivered.");
   assert.equal(offeredEntry.pendingOfferOrderId, pointCOrder.id);
   assert.ok(!offeredEntry.activeOrderIds.includes(pointCOrder.id));
@@ -409,9 +413,8 @@ test("covers OTP auth, FIFO offers, Point C locks, Point D pooling, and realtime
   assert.equal(pointCAccepted.body.seat_lock_minutes, 7);
 
   const queueAfterLock = await request("/queue", { token: driverOneToken });
-  const lockedEntry = queueAfterLock.body.queue.find(
-    (entry) => entry.driverId === firstJoin.body.entry.driverId,
-  );
+  const lockedEntry = queueAfterLock.body.your_entry;
+  assert.equal(lockedEntry.driverId, firstJoin.body.entry.driverId);
   assert.equal(lockedEntry.availableSeats, 1, "Point C must reserve the requested seats");
   assert.equal(lockedEntry.currentOrderId, pointCOrder.id);
   assert.equal(lockedEntry.pendingOfferOrderId, undefined);
@@ -568,9 +571,12 @@ test("the real HTTP timer withdraws an expired offer, advances FIFO, and cancell
   const firstEntry = afterTimeout.body.queue.find(entry => entry.driverId === driverIds[0]);
   const nextEntry = afterTimeout.body.queue.find(entry => entry.driverId === driverIds[1]);
   assert.equal(firstEntry.availableSeats, 4);
-  assert.equal(firstEntry.pendingOfferOrderId, undefined);
+  assert.equal(afterTimeout.body.your_entry.pendingOfferOrderId, undefined);
   assert.equal(nextEntry.availableSeats, 2);
-  assert.equal(nextEntry.pendingOfferOrderId, order.id);
+  assert.equal(nextEntry.pendingOfferOrderId, undefined, "Other drivers must not receive this private pending order ID.");
+  const nextPrivate = await request("/queue", { token: nextDriver });
+  assert.equal(nextPrivate.body.your_entry.driverId, driverIds[1]);
+  assert.equal(nextPrivate.body.your_entry.pendingOfferOrderId, order.id);
   for (const action of ["accept", "reject"]) {
     const stale = await request(`/orders/${order.id}/${action}`, { method: "POST", token: firstDriver });
     assert.equal(stale.response.status, 409);
@@ -588,5 +594,7 @@ test("the real HTTP timer withdraws an expired offer, advances FIFO, and cancell
     const entry = finalQueue.body.queue.find(candidate => candidate.driverId === id);
     assert.equal(entry.availableSeats, 4, "The scheduled sweep cannot double-credit cancellation.");
     assert.equal(entry.pendingOfferOrderId, undefined);
+    const own = await request("/queue", { token: id === driverIds[0] ? firstDriver : nextDriver });
+    assert.equal(own.body.your_entry.pendingOfferOrderId, undefined, "The private reservation is actually cleared, not merely hidden by the public DTO.");
   }
 });
