@@ -1,0 +1,112 @@
+{
+  "task": "R06 isolated local test environment and existing-CI PostgreSQL restart verification",
+  "createdAt": "2026-11-17T17:11:41.113583+00:00",
+  "baseCommit": "d88895f3a36d5ed92bf8bcf2e768cc7d94eee0b8",
+  "sourceCommit": "c34696c8f3440856bc04df228aa3f6ce0eaba2bd",
+  "status": "PREPARED_FOR_REVIEWED_CI_NOT_RUNTIME_ACCEPTED",
+  "localRuntime": {
+    "node": "v24.22.1",
+    "node22Executed": false,
+    "dependenciesInstalled": false,
+    "checkedExistingApiDependenciesReused": true
+  },
+  "localChecks": {
+    "newPrivateStateAndRestartGuardSuite": {
+      "passed": 5,
+      "failed": 0,
+      "exitCode": 0,
+      "command": "node deploy/onay/test-environment-guards.test.mjs",
+      "node": "v24.22.1"
+    },
+    "historicalInputGuardCheck": {
+      "passed": 14,
+      "scope": "Earlier WIP input validation guards only; the real PostgreSQL integration case failed its missing DATABASE_URL prerequisite. Not a successful full test run."
+    },
+    "syntax": {
+      "status": "PASS",
+      "files": [
+        "deploy/onay/test-environment.mjs",
+        "deploy/onay/test-fixture.mjs",
+        "artifacts/api-server/test/local-test-environment.test.mjs"
+      ]
+    },
+    "ciYaml": {
+      "status": "PASS",
+      "fourR06StepsAdded": true,
+      "existingApiAndQueueLoadStepsPreserved": true
+    },
+    "testApiBundleBuild": {
+      "status": "BUILD_ONLY_PASS",
+      "node": "v24.22.1",
+      "target": "node22",
+      "inputCount": 451,
+      "sha256": "70d3e88ba9ab810243347836c9033a7eb7b9828ad38e83de09735dd7c5fbb98b",
+      "foreignApplicationSourceRejected": true,
+      "postgresExecuted": false
+    },
+    "gitDiffCheck": "PASS"
+  },
+  "runtimeProof": {
+    "actual18Migrations": "PENDING_CI",
+    "developmentOtpRoleBootstrap": "PENDING_CI",
+    "adminVehicleApproval": "PENDING_CI",
+    "fifoAcceptRejectBoardDepartComplete": "PENDING_CI",
+    "onceOnlySeatReturn": "PENDING_CI",
+    "exactOrderKeyHistoryAndVehicleRevision": "PENDING_CI",
+    "actualApiProcessRestart": "PENDING_CI",
+    "actualPostgresRestart": "PENDING_CI",
+    "node22Execution": "PENDING_CI"
+  },
+  "ciPlan": {
+    "workflow": ".github/workflows/ci.yml",
+    "job": "verify",
+    "newJobs": 0,
+    "newDatabaseServices": 0,
+    "serviceRestartTarget": "Only the validated 64-hex job.services.postgres.id from this existing job",
+    "postgresRestartProof": "SQL pg_postmaster_start_time must change; a mere restart command is not a passing receipt.",
+    "uploadAllowlist": [
+      "receipt.json",
+      "lifecycle-receipt.json",
+      "retained-state-receipt.json"
+    ],
+    "privateDirectoryOrEnvironmentUploaded": false,
+    "existingChecksDisabled": false,
+    "apkBuildAdded": false,
+    "productionDeployment": false
+  },
+  "guards": {
+    "localhostOnly": true,
+    "freshDatabasePrefix": "onay_r06_",
+    "existingDatabaseRefused": true,
+    "privateFilesMode": "600; private run directory 700 outside checkout",
+    "cleanup": "Explicit acknowledgment plus exact random ownership proof inside the owned isolated database",
+    "realPostgresNegativeAssertions": "Existing database, private directory overwrite, and wrong cleanup proof are included but await actual CI execution."
+  },
+  "price": {
+    "currency": "UZS",
+    "explicitParameterRequired": true,
+    "automatedFixtureValue": 12000,
+    "provenance": "Existing synthetic route-orders.test.mjs fixture; this is not a newly selected real price.",
+    "physicalBetaOwnerApproval": "PENDING",
+    "smsSent": false
+  },
+  "localBlockers": [
+    "Local disposable Docker VFS creation failed ENOSPC; no R06 container was created and attempts were stopped.",
+    "The old image and November 14 volume were not deleted; the failed new VFS init layer is inaccessible through current Unix permissions.",
+    "A read-only escalated Node 22 command was not executed because automatic approval review hit a usage limit; no bypass or retry loop was used.",
+    "Only scratch space for code/review was recovered. No local database or physical device proof is claimed."
+  ],
+  "reviews": {
+    "security": {
+      "status": "APPROVE_FOR_REVIEWED_CI",
+      "sourceCommit": "c34696c8f3440856bc04df228aa3f6ce0eaba2bd",
+      "runtimeAcceptance": false
+    },
+    "qa": {
+      "status": "APPROVE_FOR_REVIEWED_CI",
+      "sourceCommit": "c34696c8f3440856bc04df228aa3f6ce0eaba2bd",
+      "runtimeAcceptance": false
+    }
+  },
+  "sanitization": "No connection strings, OTPs, telephone values, authentication tokens, API keys, private JSON contents, or raw application payloads are included."
+}
