@@ -99,6 +99,23 @@ class ProvisionTests(unittest.TestCase):
         self.assertIsNone(local.find("archives"))
         self.assertEqual(len(transport.calls), 2)
 
+    def test_official_namespace_prefix_is_normalized_in_local_receipt(self):
+        raw = metadata(self.archive).replace(
+            b'xmlns:xsi=',
+            b'xmlns:ns3="http://schemas.android.com/repository/android/generic/02" xmlns:xsi=',
+        ).replace(b'generic:genericDetailsType', b'ns3:genericDetailsType')
+        transport = Transport(Response(raw, sdk.METADATA), Response(self.archive))
+        sdk.provision(self.root / "sdk", self.root / "receipt.json",
+                      opener=transport, sleep=lambda _: None)
+        receipt = self.root / "sdk/emulator/package.xml"
+        namespaces = {
+            prefix: uri for _, (prefix, uri) in ET.iterparse(receipt, events=["start-ns"])
+        }
+        details = ET.parse(receipt).getroot().find("localPackage/type-details")
+        prefix, local = details.get("{http://www.w3.org/2001/XMLSchema-instance}type").split(":")
+        self.assertEqual(local, "genericDetailsType")
+        self.assertEqual(namespaces[prefix], "http://schemas.android.com/repository/android/generic/02")
+
     def test_html_error_body_retries_fresh_and_recovers(self):
         report, transport = self.provision(Response(b"<html>gateway error</html>"), Response(self.archive))
         self.assertEqual(report["archiveAttempts"], 2)
