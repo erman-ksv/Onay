@@ -1,0 +1,132 @@
+{
+  "recordedAt": "2026-11-17T17:07:17.682643+00:00",
+  "publishedHead": "71b7964679b29e8f6fae65766fdf22922155ac11",
+  "status": "COMPLETE",
+  "apiVerifiedCounts": {
+    "tests": 682,
+    "pass": 682,
+    "fail": 0,
+    "skipped": 0,
+    "boundedLoadTests": 1,
+    "boundedLoadPass": 1
+  },
+  "apkBuild": "SKIPPED verified savedAPK119job",
+  "main": "UNCHANGED7dfc5b46",
+  "next": "Wait remainingCI beforeR05integration; no checkpoint-onlypush",
+  "verifiedBy": "Root actualrunreadback atresume; previouslocal runlist snapshot below retained historical",
+  "summary": {
+    "success": 9,
+    "skipped": 3,
+    "failed": 0
+  },
+  "historicalRuns": [
+    {
+      "conclusion": "success",
+      "databaseId": 44080806477,
+      "event": "pull_request",
+      "headSha": "71b7964679b29e8f6fae65766fdf22922155ac11",
+      "status": "completed",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/44080806477",
+      "workflowName": "Onay staging runtime smoke"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 44080806822,
+      "event": "pull_request",
+      "headSha": "71b7964679b29e8f6fae65766fdf22922155ac11",
+      "status": "completed",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/44080806822",
+      "workflowName": "Admin route layout browser QA"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 44080806574,
+      "event": "pull_request",
+      "headSha": "71b7964679b29e8f6fae65766fdf22922155ac11",
+      "status": "completed",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/44080806574",
+      "workflowName": ".github/workflows/onay-apk115-native-acceptance.yml"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 44080806535,
+      "event": "pull_request",
+      "headSha": "71b7964679b29e8f6fae65766fdf22922155ac11",
+      "status": "completed",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/44080806535",
+      "workflowName": "TezJet Mobile CI"
+    },
+    {
+      "conclusion": "skipped",
+      "databaseId": 44080806620,
+      "event": "pull_request",
+      "headSha": "71b7964679b29e8f6fae65766fdf22922155ac11",
+      "status": "completed",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/44080806620",
+      "workflowName": "Deliver existing APK118 as a direct Android download"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 44080806527,
+      "event": "pull_request",
+      "headSha": "71b7964679b29e8f6fae65766fdf22922155ac11",
+      "status": "completed",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/44080806527",
+      "workflowName": "CI"
+    },
+    {
+      "conclusion": "skipped",
+      "databaseId": 44080806614,
+      "event": "pull_request",
+      "headSha": "71b7964679b29e8f6fae65766fdf22922155ac11",
+      "status": "completed",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/44080806614",
+      "workflowName": "Onay final passenger details and driver overview APK116"
+    },
+    {
+      "conclusion": "skipped",
+      "databaseId": 44080806511,
+      "event": "pull_request",
+      "headSha": "71b7964679b29e8f6fae65766fdf22922155ac11",
+      "status": "completed",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/44080806511",
+      "workflowName": "Onay APK117 one build and Android About native acceptance"
+    },
+    {
+      "conclusion": "",
+      "databaseId": 44080806493,
+      "event": "pull_request",
+      "headSha": "71b7964679b29e8f6fae65766fdf22922155ac11",
+      "status": "in_progress",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/44080806493",
+      "workflowName": "Driver route planning browser QA"
+    },
+    {
+      "conclusion": "",
+      "databaseId": 44080806471,
+      "event": "pull_request",
+      "headSha": "71b7964679b29e8f6fae65766fdf22922155ac11",
+      "status": "in_progress",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/44080806471",
+      "workflowName": "Onay APK118 startup splash and source SHA single build"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 44080806539,
+      "event": "pull_request",
+      "headSha": "71b7964679b29e8f6fae65766fdf22922155ac11",
+      "status": "completed",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/44080806539",
+      "workflowName": "Onay APK113 Android device-path diagnosis"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 44080806496,
+      "event": "pull_request",
+      "headSha": "71b7964679b29e8f6fae65766fdf22922155ac11",
+      "status": "completed",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/44080806496",
+      "workflowName": "Onay APK116 native QA - already published artifact only"
+    }
+  ]
+}

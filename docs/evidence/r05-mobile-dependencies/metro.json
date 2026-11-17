@@ -1,0 +1,86 @@
+{
+  "sourceSha": "73104935ab588d833d2230cfa63218a4e0d1b2c1",
+  "entrySha256": "c631c8068984be51bef8a92430a0285d69a35dc006385b07d9f0f5f06454e510",
+  "patchSha256": "d0f039fe544c0a145d02cde51d4a686fca21cc455c29e5107be40a903c3d4aa2",
+  "lockSha256": "9bbd3a59356560376729c9c4d845d5b867aa10a5f62dc971c8bc6383af970080",
+  "queryFile": "node_modules/.pnpm/query-string@7.1.3_patch_hash=d0f039fe544c0a145d02cde51d4a686fca21cc455c29e5107be40a903c3d4aa2/node_modules/query-string/index.js",
+  "actualRouterFunctions": [
+    {
+      "filename": "node_modules/.pnpm/expo-router@6.0.24_@types+react@19.1.17_expo-constants@18.0.14_expo-linking@8.0.12_expo_73fd80a9fdf2f1f8df4b3fc5c3678eb2/node_modules/expo-router/build/fork/getStateFromPath-forks.js",
+      "name": "parseQueryParams",
+      "sha256": "6906ba85528eb37e2a72f5c57c2b01a3fae75ea43a037174875a87750243d25f"
+    },
+    {
+      "filename": "node_modules/.pnpm/expo-router@6.0.24_@types+react@19.1.17_expo-constants@18.0.14_expo-linking@8.0.12_expo_73fd80a9fdf2f1f8df4b3fc5c3678eb2/node_modules/expo-router/build/fork/getPathFromState-forks.js",
+      "name": "appendQueryAndHash",
+      "sha256": "8c384da1d979b0e7ac027ca929153ab04525e9051a02e7bc50f2991a04d83685"
+    }
+  ],
+  "nativeHermesRuntime": "UNVERIFIED",
+  "platforms": [
+    {
+      "platform": "android",
+      "bundleSha256": "8903f629dbcb8f815706abaee890cc83e06f3278d4bba41494856419ca11d1ff",
+      "bytes": 217652,
+      "execution": "PASS",
+      "result": {
+        "checks": 616,
+        "corpusCases": 300,
+        "malformedRescan": "%C2%FF",
+        "incoming": {
+          "#": "hello+world",
+          "x": [
+            "a b",
+            "a+b"
+          ],
+          "n": 2
+        },
+        "outgoing": "/home?x=a%2Bb&x=%D0%98%D0%BC%D1%8F#hello"
+      },
+      "hermesCompile": "PASS",
+      "bytecodeSha256": "7c1ebe4280e2d98fb8eb42271aa1fb4500a19e20a15bded239ea4d7283ea358a"
+    },
+    {
+      "platform": "ios",
+      "bundleSha256": "8903f629dbcb8f815706abaee890cc83e06f3278d4bba41494856419ca11d1ff",
+      "bytes": 217652,
+      "execution": "PASS",
+      "result": {
+        "checks": 616,
+        "corpusCases": 300,
+        "malformedRescan": "%C2%FF",
+        "incoming": {
+          "#": "hello+world",
+          "x": [
+            "a b",
+            "a+b"
+          ],
+          "n": 2
+        },
+        "outgoing": "/home?x=a%2Bb&x=%D0%98%D0%BC%D1%8F#hello"
+      },
+      "hermesCompile": "PASS",
+      "bytecodeSha256": "b336a44943b81e56e52f562bc9e1c2067098f00987e9daa7443cb1347b824db9"
+    },
+    {
+      "platform": "web",
+      "bundleSha256": "bf69a2343b1058000b80a13ab806541d71952b781f59489a5bfe05d792e9a9ca",
+      "bytes": 81546,
+      "execution": "PASS",
+      "result": {
+        "checks": 616,
+        "corpusCases": 300,
+        "malformedRescan": "%C2%FF",
+        "incoming": {
+          "#": "hello+world",
+          "x": [
+            "a b",
+            "a+b"
+          ],
+          "n": 2
+        },
+        "outgoing": "/home?x=a%2Bb&x=%D0%98%D0%BC%D1%8F#hello"
+      }
+    }
+  ]
+}

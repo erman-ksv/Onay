@@ -1,0 +1,65 @@
+{
+  "recordedAt": "2026-11-17T17:07:17.682070+00:00",
+  "candidate": "586b6a623bbdb5371d1df32b9b0973f88798c124",
+  "sourceOrigin": "73104935ab588d833d2230cfa63218a4e0d1b2c1",
+  "evidenceOrigin": "9b239cf7757e8aea4e0377f371920509b2fa7d10",
+  "checks": {
+    "implementation10FilesExact": true,
+    "evidence6FilesExact": true,
+    "mobileDeltaOnlyApproved10Paths": true,
+    "lockAndPatchHashes": "MATCH committed verification.json",
+    "UI/directDependencies/nativeConfig/rootLocks": "UNCHANGED",
+    "policy": "minimumReleaseAge1440; strictDepBuildstrue; onlyBuiltDependencies[]",
+    "boundedInstalledConsumers": {
+      "runtime": "Node24.22.1 (not Node22)",
+      "command": "node --test --test-isolation=none --test-concurrency=1 test/image-size-security.test.mjs test/onay-decoder-compatibility.test.mjs",
+      "tests": 26,
+      "pass": 26,
+      "fail": 0,
+      "skip": 0,
+      "exit": 0,
+      "durationMs": 476.415525,
+      "decoderCorpus": 300,
+      "logSha256": "9824a3f0690f2a8e5924f681ec7afd6aa0b63bafd0602c9f3af587175949b706"
+    }
+  },
+  "setupNotes": [
+    "Initial preflight used mobile cwd for repository-relative paths and stopped with FileNotFoundError; corrected cwd, no source edits. First isolated runner reported2file wrappers; final explicit Node24 isolation-none run counted26 actual cases."
+  ],
+  "reusedReviewedNode22Evidence": "393tests/frozeninstall/typecheck/Android+iOS HBCexports/3platformdecoder616checks/boundedREDGREEN/audit0C0H3M0L; exactsourceidentity verified; not independentlyrerun",
+  "notRun": [
+    "dependency install",
+    "exports",
+    "audit",
+    "Docker",
+    "APK",
+    "physical runtime"
+  ],
+  "cleanup": [
+    {
+      "path": "/workspace/onay-worktrees/phase2-android/mobile/tezjet-app/dist",
+      "allocatedKB": 7376,
+      "hashes": "MATCH Git receipts",
+      "trackedFiles": 0,
+      "activeConsumers": 0,
+      "action": "deleted only approved new generated output",
+      "freeBefore": 0,
+      "freeAfter": 0
+    },
+    {
+      "path": "/tmp/onay-r05-node22",
+      "allocatedKB": 121992,
+      "binaryHash": "MATCH Git runtime receipt",
+      "symlinksChecked": 24090,
+      "consumers": 0,
+      "action": "deleted only approved new generated runtime",
+      "freeBefore": 0,
+      "freeAfter": 116822016,
+      "normalSandbox": "RECOVERED",
+      "Node24": "retained"
+    }
+  ],
+  "publication": "HOLD until R06 batch reviews/root authorization; PR110 remains71b7964 verified9SUCCESS3SKIP byroot",
+  "remainingRisk": "3moderate advisories remain; no production/physical approval",
+  "limits": "UNKNOWN"
+}

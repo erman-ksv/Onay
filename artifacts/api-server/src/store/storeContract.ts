@@ -118,7 +118,7 @@ export interface Store {
   getUserByPhone(phoneNumber: string): MaybePromise<User | undefined>;
   updateUser(
     userId: string,
-    patch: Partial<Pick<User, "locale" | "lastLocation">>,
+    patch: Partial<Pick<User, "locale" | "lastLocation" | "email">>,
   ): MaybePromise<User>;
   /** With an expected version, revoke only that still-current session atomically. */
   invalidateSessions(userId: string, expectedSessionVersion?: number): MaybePromise<User>;
@@ -140,6 +140,10 @@ export interface Store {
   /** Discard only this failed provider attempt; retain all send/failure budgets. */
   discardOtpDelivery(phoneNumber: string, deliveryId: string): MaybePromise<boolean>;
 
+  /** One current authority snapshot before sending precise ride telemetry. */
+  canReceiveDriverLocation(orderId: string, driverId: string, driverSessionVersion: number,
+    passengerId: string, passengerSessionVersion: number): MaybePromise<boolean>;
+
   getQueueEntry(driverId: string): MaybePromise<QueueEntry | undefined>;
   removeDriverFromFifo(driverId: string): MaybePromise<QueueEntry | undefined>;
   returnDriverToFifo(driverId: string): MaybePromise<QueueEntry | undefined>;
@@ -149,8 +153,9 @@ export interface Store {
   updateQueueEntry(
     driverId: string,
     patch: Partial<QueueEntry>,
+    expectedSessionVersion?: number,
   ): MaybePromise<QueueEntry | undefined>;
-  leaveQueue(driverId: string): MaybePromise<void>;
+  leaveQueue(driverId: string, expectedSessionVersion?: number): MaybePromise<void>;
   getQueue(): MaybePromise<QueueEntry[]>;
   getQueuePosition(driverId: string): MaybePromise<number | null>;
   getFirstEligibleDriver(seats: number): MaybePromise<QueueEntry | undefined>;

@@ -1,0 +1,64 @@
+{
+  "recordedAt": "2026-11-17T17:39:23.576332+00:00",
+  "sourceOrigin": "94dea2d02134950e14c1ccec618ded303f63a830",
+  "integratedSourceHead": "d9f23b41aea83122f4497a644e5c120c3a9fc95e",
+  "scope": "OnlyfixtureHTTPpitak snake_case keys +productionreader regression +safeerrorcode allowlist; no application/business/CI/migration/mobile change",
+  "authorEvidence": {
+    "runtime": "Node24.22.1",
+    "red": {
+      "tests": 8,
+      "pass": 7,
+      "fail": 1,
+      "skip": 0,
+      "cause": "Actual production readRouteLayoutInput rejects camelCase pitak fields: radius_meters validation HTTP400"
+    },
+    "green": {
+      "tests": 9,
+      "pass": 9,
+      "fail": 0,
+      "skip": 0
+    },
+    "logs": {
+      "red": {
+        "localPath": "/tmp/onay-r06-layout-contract-red.log",
+        "sha256": "2d954b736e8a5b50d542912af9fd0591e67a621782f231e21fd829758bbca060"
+      },
+      "green": {
+        "localPath": "/tmp/onay-r06-layout-contract-green.log",
+        "sha256": "015010b387aa3f576daa89ba9ada20a7dd92586db7408c653a1a488cb0ad41b1"
+      }
+    }
+  },
+  "independentQA": {
+    "runtime": "Node24.22.1",
+    "tests": 9,
+    "pass": 9,
+    "fail": 0,
+    "skip": 0,
+    "exit": 0,
+    "durationMs": 67.556408,
+    "syntax": "PASS",
+    "fixDiffCheck": "PASS",
+    "source2FilesExact": true,
+    "initialSetupFailure": "Missing esbuild in candidate ignoreddeps; reused existing frozen externalAPIgraph with owncandidateworkspace links, noinstall; nineguards passed afterward"
+  },
+  "previousCI": {
+    "head": "fdeab7bafc874cb7e30a5572688acc164f4477f9",
+    "final": {
+      "success": 7,
+      "failure": 2,
+      "skipped": 3,
+      "running": 0
+    },
+    "apiFailure": "case251 fixturelayout HTTP400 expected200;697total696pass1fail0skip",
+    "publishedPRHeadUnchanged": "fdeab7b"
+  },
+  "status": "PENDING Security/root finalapproval and actual newNode22PostgreSQLCI; R06 NOTDONE",
+  "restrictions": [
+    "No merge/mainpush/newAPK/localDocker/install/export/fulltests/rerunloop",
+    "No R09+ work",
+    "R08 SDK implementation blocked ownerdecision"
+  ],
+  "knownArtifactWarning": "Approved query-string unifiedpatch literalcontext trailingblankline remains; no globaldiffcheckPASS claim",
+  "limits": "UNKNOWN"
+}

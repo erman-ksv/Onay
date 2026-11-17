@@ -1,0 +1,149 @@
+{
+  "base": "b2720c2e87c2ef2e4e2e0358c4f8b1af881ffbf1",
+  "command": "pnpm audit --prod --json --registry=https://registry.npmjs.org",
+  "invocations": 1,
+  "timeoutSeconds": 60,
+  "exitCode": 1,
+  "apiError": false,
+  "classification": "Measured PostCSS-only candidate graph; not a clean audit or production approval",
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 1,
+      "moderate": 4,
+      "high": 3,
+      "critical": 0
+    },
+    "dependencies": 697,
+    "devDependencies": 0,
+    "optionalDependencies": 0,
+    "totalDependencies": 697
+  },
+  "advisories": [
+    {
+      "id": 1147955,
+      "github_advisory_id": "GHSA-vcc3-ghjq-m6fr",
+      "module_name": "decode-uri-component",
+      "severity": "moderate",
+      "vulnerable_versions": "<=0.4.2",
+      "patched_versions": ">=0.5.0",
+      "url": "https://github.com/advisories/GHSA-vcc3-ghjq-m6fr",
+      "findings": [
+        {
+          "version": "0.2.2",
+          "paths": [
+            ".>expo-router>query-string>decode-uri-component"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1239765,
+      "github_advisory_id": "GHSA-5p2g-fcmc-qvqq",
+      "module_name": "image-size",
+      "severity": "high",
+      "vulnerable_versions": ">=1.2.0 <=2.0.2",
+      "patched_versions": ">=2.0.3",
+      "url": "https://github.com/advisories/GHSA-5p2g-fcmc-qvqq",
+      "findings": [
+        {
+          "version": "1.2.1",
+          "paths": [
+            ".>expo>@expo/metro>metro>image-size"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1239766,
+      "github_advisory_id": "GHSA-w3rx-r6r6-pgpr",
+      "module_name": "image-size",
+      "severity": "high",
+      "vulnerable_versions": ">=0.6.3 <=2.0.2",
+      "patched_versions": ">=2.0.3",
+      "url": "https://github.com/advisories/GHSA-w3rx-r6r6-pgpr",
+      "findings": [
+        {
+          "version": "1.2.1",
+          "paths": [
+            ".>expo>@expo/metro>metro>image-size"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1243505,
+      "github_advisory_id": "GHSA-gcqx-w48m-w2h4",
+      "module_name": "deepmerge",
+      "severity": "low",
+      "vulnerable_versions": ">=4.2.0 <=4.3.1",
+      "patched_versions": "<0.0.0",
+      "url": "https://github.com/advisories/GHSA-gcqx-w48m-w2h4",
+      "findings": [
+        {
+          "version": "4.3.1",
+          "paths": [
+            ".>expo>@expo/config>deepmerge"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1243857,
+      "github_advisory_id": "GHSA-qr28-fpjm-wq7f",
+      "module_name": "decode-uri-component",
+      "severity": "high",
+      "vulnerable_versions": "<=0.5.0",
+      "patched_versions": ">=0.5.1",
+      "url": "https://github.com/advisories/GHSA-qr28-fpjm-wq7f",
+      "findings": [
+        {
+          "version": "0.2.2",
+          "paths": [
+            ".>expo-router>query-string>decode-uri-component"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1244013,
+      "github_advisory_id": "GHSA-3g3m-2fjr-6pw4",
+      "module_name": "glob",
+      "severity": "moderate",
+      "vulnerable_versions": ">=9.0.0 <=14.0.1",
+      "patched_versions": ">=14.0.2",
+      "url": "https://github.com/advisories/GHSA-3g3m-2fjr-6pw4",
+      "findings": [
+        {
+          "version": "13.0.7",
+          "paths": [
+            ".>expo>@expo/cli>glob"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1244623,
+      "github_advisory_id": "GHSA-g3hv-75wg-m249",
+      "module_name": "minimatch",
+      "severity": "moderate",
+      "vulnerable_versions": ">=7.0.0 <11.0.1",
+      "patched_versions": ">=11.0.1",
+      "url": "https://github.com/advisories/GHSA-g3hv-75wg-m249",
+      "findings": [
+        {
+          "version": "10.2.6",
+          "paths": [
+            ".>expo>@expo/cli>glob>minimatch"
+          ]
+        },
+        {
+          "version": "9.0.9",
+          "paths": [
+            ".>expo>@expo/cli>minimatch"
+          ]
+        }
+      ]
+    }
+  ]
+}

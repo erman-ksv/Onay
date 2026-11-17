@@ -1,0 +1,63 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+const profile = readFileSync(new URL("../components/OnayPassengerProfile.tsx", import.meta.url), "utf8");
+const about = readFileSync(new URL("../components/OnayPassengerAbout.tsx", import.meta.url), "utf8");
+
+test("about opens a dedicated V2 page and returns to the existing passenger profile", () => {
+  assert.match(profile, /row\("about", "О приложении", \(\) => setAboutOpen\(true\)\)/);
+  assert.match(profile, /if \(aboutOpen\)/);
+  assert.match(profile, /<OnayPassengerAbout theme=\{theme\} mode=\{demoMode \? "demo" : "live"\} onBack=\{\(\) => setAboutOpen\(false\)\}/);
+  assert.match(about, /testID="onay-passenger-about-screen"/);
+  assert.match(about, /testID="onay-about-back"/);
+  assert.match(about, /onPress=\{onBack\}/);
+  assert.doesNotMatch(profile, /\{aboutOpen \? <View/);
+});
+
+test("about page uses the confirmed Onay logo, actual app version and company attribution", () => {
+  assert.match(about, /onay-original-logo\.png/);
+  assert.match(about, /Constants\.expoConfig\?\.version/);
+  assert.match(about, /Constants\.nativeAppVersion/);
+  assert.match(about, /<OnayBuildIdentity mode=\{mode\}/);
+  assert.match(about, /testID="onay-about-real-version"/);
+  assert.match(about, /ONAY OST E\.K\.K Technologies/);
+  assert.match(about, /One Founder\. Intelligent Systems\./);
+  assert.doesNotMatch(about, /2\.0\.0/);
+  assert.match(about, /Политика конфиденциальности/);
+  assert.match(about, /Условия использования/);
+  assert.match(about, /Документ не опубликован/);
+});
+
+test("both themes work while profile history, support, driver mode and logout stay connected", () => {
+  assert.match(about, /light && styles\.rootLight/);
+  assert.match(about, /light && styles\.companyCardLight/);
+  assert.match(profile, /row\("history", "История поездок", onHistory\)/);
+  assert.match(profile, /row\("driver", "Режим водителя", \(\) => setDriverModeOpen\(true\)\)/);
+  assert.match(profile, /row\("support", "Поддержка", \(\) => setSupportOpen\(true\)\)/);
+  assert.match(profile, /testID="onay-profile-logout"/);
+});
+
+test("About is full-screen with Safe Area and scroll, and legal document rows respond without fake links", () => {
+  assert.match(profile, /return <Modal visible animationType="slide" presentationStyle="fullScreen"/);
+  assert.match(about, /useSafeAreaInsets\(\)/);
+  assert.match(about, /paddingTop: insets\.top/);
+  assert.match(about, /testID="onay-about-scroll"/);
+  assert.match(about, /paddingBottom: Math\.max\(24, insets\.bottom \+ 20\)/);
+  assert.match(about, /accessibilityRole="button"/);
+  assert.match(about, /onPress=\{\(\) => setSelectedLegalDocument\(label\)\}/);
+  assert.match(about, /testID="onay-about-legal-feedback"/);
+  assert.match(about, /t\("Документ не опубликован"\)/);
+  assert.doesNotMatch(about, /Linking\.openURL|https?:\/\//);
+});
+
+test("About copy is available in Uzbek and Kazakh while legal status stays honest", () => {
+  const translations = readFileSync(new URL("../lib/onay-translations.ts", import.meta.url), "utf8");
+  for (const label of [
+    "Назад в профиль",
+    "Документ не опубликован",
+    "Политика конфиденциальности",
+    "Условия использования",
+    "Междугородние поездки на такси. Выберите маршрут и остановку, затем оформите заказ. Стоимость и доступность водителей подтверждаются сервером.",
+  ]) assert.ok(translations.includes(JSON.stringify(label) + ":"), label);
+});

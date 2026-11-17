@@ -1,1 +1,25 @@
+# The mobile app is an isolated workspace with its own committed lockfile.
 packages: []
+
+# Match the repository supply-chain delay; mobile needs no trusted exemptions.
+minimumReleaseAge: 1440
+autoInstallPeers: false
+strictPeerDependencies: false
+
+# Dependency lifecycle hooks require an explicit reviewed allowlist addition.
+onlyBuiltDependencies: []
+strictDepBuilds: true
+
+# Reviewed Metro-only compatibility exception: fixes four PostCSS advisories.
+# Expo declares ~8.4.32; preserve every other parent and package version.
+overrides:
+  "@expo/metro-config@54.0.17>postcss": "8.5.23"
+  # Reviewed parent API adapter is mandatory for the filename overload change.
+  "metro@0.83.3>image-size": "2.0.3"
+
+  # Reviewed query-string adapter preserves valid query semantics with fixed ESM decoder.
+  "query-string@7.1.3>decode-uri-component": "0.5.1"
+
+patchedDependencies:
+  "metro@0.83.3": "patches/metro@0.83.3.patch"
+  "query-string@7.1.3": "patches/query-string@7.1.3.patch"

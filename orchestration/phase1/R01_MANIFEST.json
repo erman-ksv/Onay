@@ -1,0 +1,130 @@
+{
+  "recordedAt": "2026-11-17T07:50:37.461303+00:00",
+  "scope": [
+    "R01",
+    "R02",
+    "R03",
+    "R04"
+  ],
+  "prohibited": [
+    "push",
+    "merge",
+    "new APK",
+    "R05–R34 transfer"
+  ],
+  "base": "135d849afeb6ee226a1531b822041cf13d6f5c36",
+  "refs": {
+    "feat/artifact-auth-ui-v1": "135d849afeb6ee226a1531b822041cf13d6f5c36",
+    "qa/apk120-offline-driver-e2e": "733cff8591c1e23103e8e20e6e5726388e516cad",
+    "qa/apk121-driver-decline-e2e": "6f6d51cb02cc81151de8ff028d9e7fb01a0569b8"
+  },
+  "qaMergeBase": "bdab7194989ed742451e46f929ee73386691acc6",
+  "qaPatchEquivalentToBase": false,
+  "qaExclusiveCommits": [
+    {
+      "sha": "bc7884fd6bee6aa334d7a083e0b06dad1904899f",
+      "subject": "chore(qa): increment offline demo APK to 120 for device E2E",
+      "paths": [
+        "mobile/tezjet-app/app.json"
+      ],
+      "decision": "EXCLUDED_CURRENT_SCOPE; future explicit review only"
+    },
+    {
+      "sha": "4036075c23072dda197ce51293ad974f45e3531f",
+      "subject": "test(qa): allow Android preview versionCode upgrades without weakening icon checks",
+      "paths": [
+        "mobile/tezjet-app/test/onay-app-icon.test.mjs"
+      ],
+      "decision": "EXCLUDED_CURRENT_SCOPE; future explicit review only"
+    },
+    {
+      "sha": "733cff8591c1e23103e8e20e6e5726388e516cad",
+      "subject": "test(qa): permit incremented Android versionCodes in native splash regression",
+      "paths": [
+        "mobile/tezjet-app/test/onay-startup-loading.test.mjs"
+      ],
+      "decision": "EXCLUDED_CURRENT_SCOPE; future explicit review only"
+    },
+    {
+      "sha": "01af87e6084211df784afaeb1cd1ee29ef064451",
+      "subject": "fix(demo): declining driver offer keeps passenger order searching",
+      "paths": [
+        "mobile/tezjet-app/lib/onay-demo.ts"
+      ],
+      "decision": "EXCLUDED_CURRENT_SCOPE; future explicit review only"
+    },
+    {
+      "sha": "77d41d0fc4413eb5b63393900b259242c4d94beb",
+      "subject": "fix(demo ui): separate driver decline from passenger cancel and show pending search",
+      "paths": [
+        "mobile/tezjet-app/components/OnayDemoApp.tsx"
+      ],
+      "decision": "EXCLUDED_CURRENT_SCOPE; future explicit review only"
+    },
+    {
+      "sha": "1942817183511eefb5c418620fe5bafe94cab241",
+      "subject": "test(demo): driver decline never cancels passenger ride; enforce no repeated offer",
+      "paths": [
+        "mobile/tezjet-app/test/onay-offline-demo.test.mjs"
+      ],
+      "decision": "EXCLUDED_CURRENT_SCOPE; future explicit review only"
+    },
+    {
+      "sha": "6f6d51cb02cc81151de8ff028d9e7fb01a0569b8",
+      "subject": "chore(qa): bump isolated driver-decline preview to APK121",
+      "paths": [
+        "mobile/tezjet-app/app.json"
+      ],
+      "decision": "EXCLUDED_CURRENT_SCOPE; future explicit review only"
+    }
+  ],
+  "worktrees": {
+    "integration": {
+      "path": "/workspace/onay-worktrees/phase1-integration",
+      "base": "135d849afeb6ee226a1531b822041cf13d6f5c36",
+      "owner": "integration"
+    },
+    "security": {
+      "path": "/workspace/onay-worktrees/phase1-security",
+      "base": "135d849afeb6ee226a1531b822041cf13d6f5c36",
+      "owner": "security"
+    },
+    "backend": {
+      "path": "/workspace/onay-worktrees/phase1-backend",
+      "base": "135d849afeb6ee226a1531b822041cf13d6f5c36",
+      "owner": "backend"
+    },
+    "android": {
+      "path": "/workspace/onay-worktrees/phase1-android",
+      "base": "135d849afeb6ee226a1531b822041cf13d6f5c36",
+      "owner": "android"
+    }
+  },
+  "preservedRoot": {
+    "head": "f415bafb5214ebdb19d7413d26bf0eba67db46e4",
+    "dirtyPaths": [
+      " M orchestration/RESUME.md",
+      " M orchestration/SESSION_HISTORY.md",
+      " M orchestration/TASKS.md",
+      " M orchestration/checkpoints/active-wave.json",
+      "M  orchestration/checkpoints/postcss-interrupted-2026-11-15.json",
+      "D  orchestration/checkpoints/postcss-interrupted-2026-11-15.patch",
+      "A  orchestration/checkpoints/postcss-interrupted-2026-11-15.patch.json",
+      " M orchestration/checkpoints/session-history-2026-11-15.json",
+      " M orchestration/state.json",
+      "?? orchestration/checkpoints/limit-2026-11-15T2047-map-html-contract/",
+      "?? orchestration/checkpoints/limit-2026-11-15T2047-mobile-combined/",
+      "?? orchestration/checkpoints/remote-ci-f415baf.json",
+      "?? orchestration/checkpoints/resume-2026-11-15-mobile-decoder/",
+      "?? orchestration/checkpoints/resume-2026-11-15-mobile-image-size/",
+      "?? orchestration/reports/OWNER_DIAGNOSTIC_2026-11-15.json",
+      "?? orchestration/reports/OWNER_DIAGNOSTIC_2026-11-15.md"
+    ],
+    "unmerged": [],
+    "dirtyPathsRecordedAt": "2026-11-17T07:51:36.776746+00:00"
+  },
+  "dependencyOwner": "Backend only; reuse checked filtered pinned10.34.9 graph; no concurrent installs",
+  "limits": "UNKNOWN",
+  "applicationTests": "NOT RUN (documentation-only R01)",
+  "journal": "Root owns OneNote; private queue excluded"
+}

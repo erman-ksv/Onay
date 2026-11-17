@@ -51,7 +51,7 @@ concurrency:
 jobs:
   browser-qa:
     name: Real admin route layout browser QA
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
       run:

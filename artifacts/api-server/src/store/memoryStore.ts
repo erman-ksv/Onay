@@ -1,3 +1,4 @@
+import { isActiveDriverLocationOrder } from "../utils/driverLocation";
 import { applyRoutePricingPatch, normalizeRoutePricing } from "../utils/routePricing";
 import { assertVehicleQueueCapacity, assertVehicleReview, createDriverVehicle, hasRequiredDriverApproval } from "../utils/driverVehicle";
 import { randomUUID } from "node:crypto";
@@ -135,7 +136,7 @@ class MemoryStore implements Store {
     return userId ? this.getUser(userId) : undefined;
   }
 
-  updateUser(userId: string, patch: Partial<Pick<User, "locale" | "lastLocation">>): User {
+  updateUser(userId: string, patch: Partial<Pick<User, "locale" | "lastLocation" | "email">>): User {
     const user = this.users.get(userId);
     if (!user) {
       throw new Error(`User ${userId} not found`);
@@ -340,6 +341,16 @@ class MemoryStore implements Store {
     return structuredClone(challenge);
   }
 
+  canReceiveDriverLocation(orderId: string, driverId: string, driverSessionVersion: number,
+    passengerId: string, passengerSessionVersion: number): boolean {
+    const driver = this.users.get(driverId);
+    const passenger = this.users.get(passengerId);
+    return !!driver && driver.role === "driver" && driver.sessionVersion === driverSessionVersion &&
+      hasRequiredDriverApproval(driver, REQUIRE_DRIVER_APPROVAL) &&
+      !!passenger && passenger.role === "passenger" && passenger.sessionVersion === passengerSessionVersion &&
+      isActiveDriverLocationOrder(this.orders.get(orderId), driverId, passengerId);
+  }
+
   getQueueEntry(driverId: string): QueueEntry | undefined {
     const entry = this.queueEntries.get(driverId);
     return entry?.routeContext ? structuredClone(entry) : entry;
@@ -402,7 +413,9 @@ class MemoryStore implements Store {
   updateQueueEntry(
     driverId: string,
     patch: Partial<QueueEntry>,
+    expectedSessionVersion?: number,
   ): QueueEntry | undefined {
+    if (expectedSessionVersion !== undefined) this.requireCurrentRole(driverId, "driver", expectedSessionVersion);
     const entry = this.queueEntries.get(driverId);
     if (!entry) {
       return undefined;
@@ -417,7 +430,8 @@ class MemoryStore implements Store {
     return entry.routeContext ? structuredClone(entry) : entry;
   }
 
-  leaveQueue(driverId: string): void {
+  leaveQueue(driverId: string, expectedSessionVersion?: number): void {
+    if (expectedSessionVersion !== undefined) this.requireCurrentRole(driverId, "driver", expectedSessionVersion);
     const current = this.queueEntries.get(driverId);
     if (current && (hasActiveOrders(current) || current.pendingOfferOrderId)) {
       throw new AppError(409, "Driver cannot leave the queue while an order is active", "ACTIVE_ORDER");

@@ -1,3 +1,4 @@
+import { alias } from "drizzle-orm/pg-core";
 import { applyRoutePricingPatch, normalizeRoutePricing, routePricePerStop } from "../utils/routePricing";
 import { assertVehicleQueueCapacity, assertVehicleReview, createDriverVehicle, hasRequiredDriverApproval } from "../utils/driverVehicle";
 import { createHmac, randomUUID } from "node:crypto";
@@ -62,6 +63,7 @@ function asUser(row: Record<string, unknown>): User {
     roles: (row.roles ?? [row.role]) as UserRole[],
     fullName: String(row.fullName),
     phoneNumber: String(row.phoneNumber),
+    email: typeof row.email === "string" ? row.email : null,
     locale: row.locale as Locale,
     profileLocked: Boolean(row.profileLocked),
     sessionVersion: Number(row.sessionVersion),
@@ -310,11 +312,12 @@ export class PostgresStore implements Store {
 
   async updateUser(
     userId: string,
-    patch: Partial<Pick<User, "locale" | "lastLocation">>,
+    patch: Partial<Pick<User, "locale" | "lastLocation" | "email">>,
   ): Promise<User> {
     const { db, usersTable } = await this.database();
-    const values: { locale?: Locale; lastLocation?: Record<string, unknown> | null } = {};
+    const values: { locale?: Locale; email?: string | null; lastLocation?: Record<string, unknown> | null } = {};
     if (patch.locale !== undefined) values.locale = patch.locale;
+    if (patch.email !== undefined) values.email = patch.email;
     if (patch.lastLocation !== undefined) values.lastLocation = patch.lastLocation as unknown as Record<string, unknown>;
     const [row] = await db.update(usersTable).set(values).where(eq(usersTable.id, userId)).returning();
     if (!row) throw new Error(`User ${userId} not found`);
@@ -661,6 +664,24 @@ export class PostgresStore implements Store {
     } : undefined;
   }
 
+  async canReceiveDriverLocation(orderId: string, driverId: string, driverSessionVersion: number,
+    passengerId: string, passengerSessionVersion: number): Promise<boolean> {
+    const { db, ordersTable, usersTable } = await this.database();
+    const passenger = alias(usersTable, "telemetry_passenger");
+    // One SQL statement observes order, sender, and recipient together. Separate
+    // awaited reads can combine a revoked session with an earlier assignment.
+    const [authorized] = await db.select({ driver: usersTable }).from(ordersTable)
+      .innerJoin(usersTable, eq(usersTable.id, ordersTable.driverId))
+      .innerJoin(passenger, eq(passenger.id, ordersTable.passengerId))
+      .where(and(eq(ordersTable.id, orderId), eq(ordersTable.driverId, driverId),
+        eq(ordersTable.passengerId, passengerId),
+        inArray(ordersTable.status, ["en_route_to_c", "arrived_at_c", "boarded_waiting", "in_transit"]),
+        eq(usersTable.role, "driver"), eq(usersTable.sessionVersion, driverSessionVersion),
+        eq(passenger.role, "passenger"), eq(passenger.sessionVersion, passengerSessionVersion)))
+      .limit(1);
+    return !!authorized && hasRequiredDriverApproval(authorized.driver, REQUIRE_DRIVER_APPROVAL);
+  }
+
   async getQueueEntry(driverId: string): Promise<QueueEntry | undefined> {
     const { db, driverQueueTable } = await this.database();
     const [row] = await db.select().from(driverQueueTable).where(eq(driverQueueTable.driverId, driverId)).limit(1);
@@ -749,8 +770,8 @@ export class PostgresStore implements Store {
     });
   }
 
-  async updateQueueEntry(driverId: string, patch: Partial<QueueEntry>): Promise<QueueEntry | undefined> {
-    const { db, driverQueueTable } = await this.database();
+  async updateQueueEntry(driverId: string, patch: Partial<QueueEntry>, expectedSessionVersion?: number): Promise<QueueEntry | undefined> {
+    const { db, driverQueueTable, usersTable } = await this.database();
     const values: {
       joinedAt?: number;
       status?: QueueEntry["status"];
@@ -777,6 +798,16 @@ export class PostgresStore implements Store {
     return db.transaction(async tx => {
       const [currentRow] = await tx.select().from(driverQueueTable)
         .where(eq(driverQueueTable.driverId, driverId)).for("update").limit(1);
+      // Match join/depart lock order: queue first, then current account. The
+      // authenticated session may have been revoked while this request waited.
+      if (expectedSessionVersion !== undefined) {
+        const [user] = await tx.select().from(usersTable)
+          .where(eq(usersTable.id, driverId)).for("share").limit(1);
+        if (!user || user.sessionVersion !== expectedSessionVersion) {
+          throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+        }
+        if (user.role !== "driver") throw new AppError(403, "driver mode is required", "FORBIDDEN");
+      }
       if (!currentRow) return undefined;
       const current = asQueueEntry(currentRow as unknown as Record<string, unknown>);
       assertQueueOfferPatch(current, patch);
@@ -863,11 +894,19 @@ export class PostgresStore implements Store {
     throw new AppError(409, "Line passengers changed; reload the queue before departure", "QUEUE_BUSY");
   }
 
-  async leaveQueue(driverId: string): Promise<void> {
-    const { db, driverQueueTable } = await this.database();
+  async leaveQueue(driverId: string, expectedSessionVersion?: number): Promise<void> {
+    const { db, driverQueueTable, usersTable } = await this.database();
     await db.transaction(async tx => {
       const [row] = await tx.select().from(driverQueueTable)
         .where(eq(driverQueueTable.driverId, driverId)).for("update").limit(1);
+      if (expectedSessionVersion !== undefined) {
+        const [user] = await tx.select().from(usersTable)
+          .where(eq(usersTable.id, driverId)).for("share").limit(1);
+        if (!user || user.sessionVersion !== expectedSessionVersion) {
+          throw new AppError(401, "Session is no longer valid", "UNAUTHORIZED");
+        }
+        if (user.role !== "driver") throw new AppError(403, "driver mode is required", "FORBIDDEN");
+      }
       if (!row) return;
       const entry = asQueueEntry(row as unknown as Record<string, unknown>);
       if (hasActiveOrders(entry) || entry.pendingOfferOrderId) {

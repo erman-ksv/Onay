@@ -370,6 +370,50 @@ for (const adapterName of ["MemoryStore", "PostgresStore"]) {
     }
   });
 
+  test(`${adapterName} queue mutations reject revoked sessions without changing the enrollment`, async t => {
+    const adapter = adapterName === "MemoryStore" ? new production.MemoryStore() : store;
+    const f = await fixture(t, adapter);
+    const driver = await f.approvedDriver();
+    await adapter.joinQueue(f.queueInput(driver), driver.sessionVersion);
+    const before = structuredClone(await adapter.getQueueEntry(driver.id));
+    const current = await adapter.invalidateSessions(driver.id, driver.sessionVersion);
+    for (const operation of [
+      () => adapter.leaveQueue(driver.id, driver.sessionVersion),
+      () => adapter.updateQueueEntry(driver.id, { status: "in_transit", inFifo: false }, driver.sessionVersion),
+      () => adapter.updateQueueEntry(driver.id, { lastLocation: { ...location, timestamp: Date.now() } }, driver.sessionVersion),
+    ]) {
+      await assert.rejects(async () => operation(), { statusCode: 401, code: "UNAUTHORIZED" });
+      assert.deepEqual(await adapter.getQueueEntry(driver.id), before);
+    }
+    // The replacement session keeps its normal queue authority.
+    assert.ok(await adapter.updateQueueEntry(driver.id, { lastLocation: { ...location, timestamp: Date.now() } }, current.sessionVersion));
+    await adapter.leaveQueue(driver.id, current.sessionVersion);
+    assert.equal(await adapter.getQueueEntry(driver.id), undefined);
+  });
+
+  test(`${adapterName} driver telemetry requires one active assignment and both current sessions`, async t => {
+    const adapter = adapterName === "MemoryStore" ? new production.MemoryStore() : store;
+    const f = await fixture(t, adapter);
+    const driver = await f.approvedDriver();
+    const passenger = await f.createUser();
+    const unrelated = await f.createUser();
+    for (const status of ["searching", "en_route_to_c", "arrived_at_c", "boarded_waiting", "in_transit", "completed", "cancelled"]) {
+      const order = await adapter.createOrder(f.orderInput(passenger, { driverId: driver.id, status }));
+      const expected = ["en_route_to_c", "arrived_at_c", "boarded_waiting", "in_transit"].includes(status);
+      assert.equal(await adapter.canReceiveDriverLocation(order.id, driver.id, driver.sessionVersion, passenger.id, passenger.sessionVersion), expected);
+      assert.equal(await adapter.canReceiveDriverLocation(order.id, driver.id, driver.sessionVersion, unrelated.id, unrelated.sessionVersion), false);
+      assert.equal(await adapter.canReceiveDriverLocation(order.id, driver.id, driver.sessionVersion + 1, passenger.id, passenger.sessionVersion), false);
+      assert.equal(await adapter.canReceiveDriverLocation(order.id, driver.id, driver.sessionVersion, passenger.id, passenger.sessionVersion + 1), false);
+    }
+    const order = await adapter.createOrder(f.orderInput(passenger, { driverId: driver.id, status: "in_transit" }));
+    await adapter.invalidateSessions(passenger.id, passenger.sessionVersion);
+    assert.equal(await adapter.canReceiveDriverLocation(order.id, driver.id, driver.sessionVersion, passenger.id, passenger.sessionVersion), false);
+    const currentPassenger = await adapter.getUser(passenger.id);
+    assert.equal(await adapter.canReceiveDriverLocation(order.id, driver.id, driver.sessionVersion, passenger.id, currentPassenger.sessionVersion), true);
+    await adapter.setDriverApproval(driver.id, "rejected");
+    assert.equal(await adapter.canReceiveDriverLocation(order.id, driver.id, driver.sessionVersion, passenger.id, currentPassenger.sessionVersion), false);
+  });
+
   test(`${adapterName} refuses stale sessions and current-role violations in writes`, async t => {
     const adapter = adapterName === "MemoryStore" ? new production.MemoryStore() : store;
     const f = await fixture(t, adapter);
@@ -907,4 +951,71 @@ test("HTTP logout revokes its current JWT while an old JWT cannot log out a newe
   assert.equal((await request("/auth/logout", { method: "POST", token: newLogin.body.access_token })).status, 204);
   assert.equal((await request("/auth/me", { token: newLogin.body.access_token })).status, 401);
   assert.equal((await store.getUser(user.id)).sessionVersion, current.sessionVersion + 1);
+});
+
+
+test("POSTGRES authenticated email contact persists across login and never unlocks identity", async t => {
+  const f = await fixture(t);
+  const user = await f.createUser("passenger");
+  const initial = await login(user.phoneNumber, "passenger");
+  assert.equal(initial.status, 200);
+  let token = initial.body.access_token;
+
+  const first = await request("/auth/me", { token });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.user.email, null);
+  const before = await snapshot(store, user.id);
+
+  for (const invalid of ["not-an-email", "a@@example.com", 12, { address: "x@y.com" }]) {
+    const answer = await request("/auth/profile", { token, method: "PATCH", body: { email: invalid } });
+    assert.equal(answer.status, 400, JSON.stringify(answer.body));
+    assert.equal(answer.body.error.code, "INVALID_EMAIL");
+    assert.equal((await store.getUser(user.id)).email ?? null, null);
+  }
+  const locked = await request("/auth/profile", { token, method: "PATCH", body: {
+    full_name: "Injected change", phone_number: user.phoneNumber, email: "bad@example.com"
+  } });
+  assert.equal(locked.status, 409);
+  assert.equal(locked.body.error.code, "PROFILE_LOCKED");
+  assert.equal((await store.getUser(user.id)).email ?? null, null);
+
+  const saved = await request("/auth/profile", { token, method: "PATCH", body: { email: "  NEW.Contact@Example.COM " } });
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  assert.equal(saved.body.user.email, "new.contact@example.com");
+  for (const field of ["fullName", "phoneNumber", "profileLocked", "sessionVersion"]) {
+    assert.equal((await snapshot(store, user.id))[field], before[field], field + " must stay unchanged");
+  }
+  assert.equal((await otherStore.getUser(user.id)).email, "new.contact@example.com");
+  assert.equal((await request("/auth/me", { token })).body.user.email, "new.contact@example.com");
+
+  const reLogin = await login(user.phoneNumber, "passenger");
+  assert.equal(reLogin.status, 200);
+  token = reLogin.body.access_token;
+  assert.equal((await request("/auth/me", { token })).body.user.email, "new.contact@example.com");
+
+  const localeOnly = await request("/auth/profile", { token, method: "PATCH", body: { locale: "kk" } });
+  assert.equal(localeOnly.status, 200);
+  assert.equal(localeOnly.body.user.email, "new.contact@example.com");
+  const cleared = await request("/auth/profile", { token, method: "PATCH", body: { email: "" } });
+  assert.equal(cleared.status, 200);
+  assert.equal(cleared.body.user.email, null);
+  assert.equal((await otherStore.getUser(user.id)).email, null);
+});
+
+test("Own driver vehicle GET works in passenger mode without switching role or allowing writes", async t => {
+  const f = await fixture(t);
+  const user = await f.createUser("passenger");
+  const current = await login(user.phoneNumber, "passenger");
+  assert.equal(current.status, 200);
+  const token = current.body.access_token;
+  const before = await snapshot(store, user.id);
+  const own = await request("/auth/driver-overview", { token });
+  assert.equal(own.status, 200, JSON.stringify(own.body));
+  assert.deepEqual(own.body.driver_vehicle, null);
+  assert.equal(own.body.approval_status, null);
+  assert.equal(own.body.route_name, null);
+  const forbidden = await request("/driver/vehicle", { token, method: "PUT", body: { make:"Fictional", model:"X" } });
+  assert.equal(forbidden.status, 403);
+  const after = await snapshot(store, user.id);
+  assert.deepEqual(after, before);
 });

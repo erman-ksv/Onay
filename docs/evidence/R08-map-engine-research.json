@@ -1,0 +1,33 @@
+{
+  "measuredAtUtc": "2026-11-17T12:10:28Z",
+  "task": "R08_TECHNICAL_RESEARCH_ONLY",
+  "researchStatus": "COMPLETE_REVIEWABLE",
+  "taskStatus": "BLOCKED_OWNER_DECISION_NOT_DONE",
+  "baseSha": "135d849afeb6ee226a1531b822041cf13d6f5c36",
+  "actualStack": { "expo": "54.0.38", "reactNative": "0.81.5", "react": "19.1.0", "ciNodeMajor": 22, "pnpm": "10.34.9" },
+  "expoBundledVersions": { "react-native-maps": "1.20.1", "expo-maps": "~0.12.10", "react-native-webview": "13.15.0" },
+  "registryLatestMeasured": { "@maplibre/maplibre-react-native": "11.5.1", "react-native-maps": "1.29.11", "expo-maps": "58.0.11", "@rnmapbox/maps": "10.3.18", "@2gis/dgis-mobile-sdk-map": "14.2.1" },
+  "versionBoundary": "Latest is an observation, not a recommendation to install or evidence of Expo54 native compatibility",
+  "nodeEvidence": {
+    "react-native-maps1.20.1": ">=18",
+    "react-native-maps1.29.11": ">=20.19.4",
+    "maplibre11.5.1": "No engines restriction declared; full Node22 transitive/native compilation NOT RUN",
+    "twoGis14.2.1": "No engines restriction declared; full Node22 transitive/native compilation NOT RUN"
+  },
+  "inspectedAdditionalAars": [
+    { "coordinate": "com.google.android.gms:play-services-maps:18.2.0", "url": "https://dl.google.com/dl/android/maven2/com/google/android/gms/play-services-maps/18.2.0/play-services-maps-18.2.0.aar", "sha256": "44f50655578a21c579e1bb2dacaec4c545ec4df81393d6fd7236d664268056a9", "minSdk": 19, "permissions": ["android.permission.ACCESS_NETWORK_STATE", "android.permission.INTERNET"], "requiredGles": "0x00020000" },
+    { "coordinate": "com.google.android.gms:play-services-maps:19.1.0", "url": "https://dl.google.com/dl/android/maven2/com/google/android/gms/play-services-maps/19.1.0/play-services-maps-19.1.0.aar", "sha256": "ac20afb27b528c439aad7de867108505e70e4afbf1d2a6122b876350b096d7b7", "minSdk": 21, "permissions": ["android.permission.ACCESS_NETWORK_STATE", "android.permission.INTERNET"], "requiredGles": "0x00020000" },
+    { "coordinate": "com.google.android.gms:play-services-location:21.3.0", "url": "https://dl.google.com/dl/android/maven2/com/google/android/gms/play-services-location/21.3.0/play-services-location-21.3.0.aar", "sha256": "d5024384d5bf66c75edf353d95eb8e7b5bf64483138474c6e2e93e2c2394f842", "minSdk": 21, "permissions": [] },
+    { "coordinate": "androidx.work:work-runtime:2.7.1", "url": "https://dl.google.com/dl/android/maven2/androidx/work/work-runtime/2.7.1/work-runtime-2.7.1.aar", "sha256": "757f9fcbf67f38be80c3026af907bcf15559f83bb0e35cc21d4178831970075b", "minSdk": 14, "permissions": ["android.permission.WAKE_LOCK", "android.permission.ACCESS_NETWORK_STATE", "android.permission.RECEIVE_BOOT_COMPLETED", "android.permission.FOREGROUND_SERVICE"] },
+    { "coordinate": "androidx.work:work-runtime:2.9.1", "url": "https://dl.google.com/dl/android/maven2/androidx/work/work-runtime/2.9.1/work-runtime-2.9.1.aar", "sha256": "1be76486b894af179462941a39cab242b00d7235c3aeb4d756f45262b0c2e4a3", "minSdk": 14, "permissions": ["android.permission.WAKE_LOCK", "android.permission.ACCESS_NETWORK_STATE", "android.permission.RECEIVE_BOOT_COMPLETED", "android.permission.FOREGROUND_SERVICE"] }
+  ],
+  "allFutureMergedGraphs": "UNVERIFIED_NOT_INSTALLED",
+  "tileSourceProbe": { "url": "https://tiles.openfreemap.org/styles/liberty", "method": "GET_style_metadata_only", "result": "HTTP_403_in_current_execution_environment", "runtimeSdkAvailability": "UNVERIFIED", "retriesOrBypass": false },
+  "googleCostBoundary": "Official global list Maps SDK SKU unlimited free usage; enabled billing/restricted key still required; Routes/Places and account-specific totals separate UNKNOWN",
+  "twoGisCostBoundary": "Official dgissdk.key/subscription requirement; no account/key created, price UNKNOWN",
+  "maplibrePermissionDecision": "PENDING_NOT_APPROVED",
+  "nativeAcceptance": "NOT_RUN",
+  "overallReadiness": "UNKNOWN",
+  "budget": "UNKNOWN",
+  "actions": { "engineSelected": false, "sdkInstalled": false, "newPermissionGranted": false, "paidServiceActivated": false, "keyCreated": false, "appOrWorkflowChanged": false, "apkBuilt": false, "R09Started": false, "R10Started": false }
+}

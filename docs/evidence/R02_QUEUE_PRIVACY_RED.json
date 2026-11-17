@@ -1,0 +1,91 @@
+{
+  "task": "R02 / S1 queue privacy baseline reproduction",
+  "baselineSha": "135d849afeb6ee226a1531b822041cf13d6f5c36",
+  "observedAtUtc": "2026-11-17T10:08:49Z",
+  "observedAtAsiaTashkent": "2026-11-17T15:08:49+05:00",
+  "testPath": "artifacts/api-server/test/queue-privacy.test.mjs",
+  "testSha256": "f51b0c050603db7d6edb018b1eace50230ffc7eb90a3243ac2e7248a3d5bee7f",
+  "command": "node --test --test-reporter=spec test/queue-privacy.test.mjs (cwd artifacts/api-server; DATABASE_URL supplied by private test environment)",
+  "result": {
+    "exitCode": 1,
+    "tests": 22,
+    "passed": 3,
+    "failed": 19,
+    "skipped": 0,
+    "cancelled": 0,
+    "durationMs": 12043.151541,
+    "classification": "EXPECTED_BASELINE_RED_CONFIRMED_PRIVACY_ASSERTIONS"
+  },
+  "environment": {
+    "storageAdapter": "actual production PostgresStore",
+    "postgres": "disposable PostgreSQL16, isolated private schema",
+    "http": "actual production Express app and authentication",
+    "socket": "actual production Socket.IO websocket transport",
+    "node": "24.22.1",
+    "dependencyManager": "Backend verified frozen pnpm10.34.9 filtered API graph, four explicit same-manifest symlinks",
+    "setupErrors": 0,
+    "databaseSkips": false,
+    "sourceImplementationModified": false
+  },
+  "confirmedFailures": [
+    {
+      "surface": "GET /api/queue",
+      "cases": 5,
+      "finding": "passenger, legacy driver, forward configured driver, reverse configured driver and admin generic rows contain raw GPS/internal fields instead of the four-field public DTO"
+    },
+    {
+      "surface": "initial queue:snapshot",
+      "cases": 3,
+      "finding": "passenger/configured driver/admin receive raw queue rows"
+    },
+    {
+      "surface": "queue:update and related room events",
+      "cases": 4,
+      "finding": "passenger receives raw queue rows; configured/reverse recipients receive legacy driver identifiers; admin event view is not the authorized all-lane projection"
+    },
+    {
+      "surface": "GET /api/queue after real queued snapshot read",
+      "cases": 3,
+      "finding": "revoked admin, real HTTP logout and role-switch session still get HTTP200 rather than401"
+    },
+    {
+      "surface": "initial queue:snapshot after real queued snapshot read",
+      "cases": 2,
+      "finding": "revoked admin and role-switched driver still receive snapshot rather than disconnect"
+    },
+    {
+      "surface": "queue events after real queued snapshot read",
+      "cases": 2,
+      "finding": "revoked enrolled driver receives queue:update/location/position; role-switched observer receives queue:update/location"
+    }
+  ],
+  "passingControls": [
+    "own configured driver enrollment, current admin monitoring DTO and ordinary authentication guards remain usable",
+    "real HTTP logout disconnects a pending initial socket",
+    "real HTTP logout disconnects a broadcast recipient"
+  ],
+  "requiredContract": {
+    "publicRows": [
+      "driverId",
+      "position",
+      "availableSeats",
+      "status"
+    ],
+    "genericAdminView": "all existing lanes, same four-field projection",
+    "ownEntry": "full existing entry permitted only for current owning driver; preserve enrollment, seats, route context and position",
+    "adminEndpoint": "preserve existing /api/admin/queue DTO/include_lanes and current role/session checks",
+    "changeId": "no cross-lane changed_driver_id",
+    "delivery": "HTTP, initial snapshots, queue events and own positions recheck current role/session after awaited reads"
+  },
+  "isolationAndLimits": [
+    "real production reservation creates the private pending order ID; no fabricated SQL response",
+    "read gates delay original durable queueSnapshot results; no memory adapter or SQL result substitution",
+    "private tables clone migrated public columns/indexes/checks with LIKE INCLUDING ALL; no public rows copied/changed; not a trigger/migration acceptance test",
+    "private schema, sockets, pools and generated module directory cleaned after run",
+    "earlier ENOSPC and unapproved pnpm11 build-policy failure were environment blockers, resolved before the recorded run; not counted as product RED",
+    "no application implementation, FIFO, seat matching, reservation, permissions, CI, APK or external deployment changed",
+    "no tokens, connection string, OTP, user data or raw GPS values retained in committed evidence"
+  ],
+  "status": "R02 baseline reproduction complete; implementation fix and GREEN regression/integration remain pending R03",
+  "budget": "UNKNOWN"
+}

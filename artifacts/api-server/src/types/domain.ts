@@ -214,6 +214,8 @@ export interface User {
   roles: UserRole[];
   fullName: string;
   phoneNumber: string;
+  /** Optional contact address, never used for login. */
+  email?: string | null;
   locale: Locale;
   profileLocked: boolean;
   sessionVersion: number;

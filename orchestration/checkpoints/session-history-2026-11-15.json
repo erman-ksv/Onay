@@ -1,0 +1,420 @@
+{
+  "recordedAt": "2026-11-15T09:01:06.694936+00:00",
+  "repository": "erman-ksv/Onay",
+  "branch": "feat/artifact-auth-ui-v1",
+  "pr": "https://github.com/erman-ksv/Onay/pull/110",
+  "baseline": "2cd511526bf66559be05cfd486c038a6e5cbe449",
+  "head": "b2720c2e87c2ef2e4e2e0358c4f8b1af881ffbf1",
+  "commits": [
+    {
+      "sha": "f9f5e789dbacb2531bda62bc037e3ffdbda66524",
+      "gitCommitterTime": "2026-11-14T17:55:41Z",
+      "subject": "docs(orchestration): establish isolated team checkpoint and session reports",
+      "files": [
+        "orchestration/RESUME.md",
+        "orchestration/TASKS.md",
+        "orchestration/checkpoints/initial.json",
+        "orchestration/report_snapshot.py",
+        "orchestration/reports/2026-11-14T17-55-19Z.md",
+        "orchestration/reports/2026-11-14T17-55-41Z.md",
+        "orchestration/state.json"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/f9f5e789dbacb2531bda62bc037e3ffdbda66524",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "04a8fe00a533d9147ac30afe44ecad8436513c50",
+      "gitCommitterTime": "2026-11-14T18:12:39Z",
+      "subject": "fix(ci): keep APK119 release delivery outside pull request QA",
+      "files": [
+        ".github/workflows/onay-apk118-startup-release.yml",
+        "mobile/tezjet-app/test/onay-apk119-workflow-boundary.test.mjs"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/04a8fe00a533d9147ac30afe44ecad8436513c50",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "ee1820c04b6927840ab910db2c8a4771bf07931f",
+      "gitCommitterTime": "2026-11-14T18:12:39Z",
+      "subject": "fix(mobile): bound passenger GPS wait before route booking",
+      "files": [
+        "mobile/tezjet-app/components/PassengerRouteOrder.tsx",
+        "mobile/tezjet-app/lib/passenger-location.ts",
+        "mobile/tezjet-app/test/passenger-location.test.mjs"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/ee1820c04b6927840ab910db2c8a4771bf07931f",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "3ae05c06bf768f450a7a21f1a1cee545619172b9",
+      "gitCommitterTime": "2026-11-14T18:12:39Z",
+      "subject": "fix(mobile): preserve pasted international phone recipients",
+      "files": [
+        "mobile/tezjet-app/components/OnayAuthScreen.tsx",
+        "mobile/tezjet-app/lib/onay-auth-ui.ts",
+        "mobile/tezjet-app/test/onay-auth-ui.test.mjs"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/3ae05c06bf768f450a7a21f1a1cee545619172b9",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "8809123bd31f3451049cbdb3a36110432a41bc30",
+      "gitCommitterTime": "2026-11-14T18:12:39Z",
+      "subject": "fix(mobile): localize native navigation accessibility labels",
+      "files": [
+        "mobile/tezjet-app/components/OnayPassengerTabBar.tsx",
+        "mobile/tezjet-app/components/OnayScreenFrame.tsx",
+        "mobile/tezjet-app/test/onay-navigation-a11y-language.test.mjs"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/8809123bd31f3451049cbdb3a36110432a41bc30",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "d1c7d96410dd2527b03e6bd387f43995c20a5803",
+      "gitCommitterTime": "2026-11-14T18:12:39Z",
+      "subject": "docs: record passenger frontend acceptance evidence",
+      "files": [
+        "docs/onay-passenger-readiness.md"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/d1c7d96410dd2527b03e6bd387f43995c20a5803",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "3e895442f3595b92e30ccb2da9632ea7efc84e22",
+      "gitCommitterTime": "2026-11-14T18:12:39Z",
+      "subject": "docs(onay): record grounded interactive map delivery plan",
+      "files": [
+        "docs/onay-map-readiness.md"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/3e895442f3595b92e30ccb2da9632ea7efc84e22",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "59819a697f6c7dd807a10d3546590ea52e8a0f0e",
+      "gitCommitterTime": "2026-11-14T18:12:39Z",
+      "subject": "fix(api): reject revoked sessions in queue mutations",
+      "files": [
+        "artifacts/api-server/src/controllers/queueController.ts",
+        "artifacts/api-server/src/store/memoryStore.ts",
+        "artifacts/api-server/src/store/postgresStore.ts",
+        "artifacts/api-server/src/store/storeContract.ts",
+        "artifacts/api-server/test/account-roles.test.mjs",
+        "artifacts/api-server/test/queue-session.test.mjs"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/59819a697f6c7dd807a10d3546590ea52e8a0f0e",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "94b5e015366baf9eaff8486a26ecdfc00da23c16",
+      "gitCommitterTime": "2026-11-14T18:12:39Z",
+      "subject": "test(mobile): retain layout guards with localized navigation labels",
+      "files": [
+        "mobile/tezjet-app/test/onay-navigation-reference-v2.test.mjs",
+        "mobile/tezjet-app/test/onay-tabbar-floating-layout.test.mjs",
+        "mobile/tezjet-app/test/onay-tabbar-responsive-reference-regression.test.mjs"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/94b5e015366baf9eaff8486a26ecdfc00da23c16",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "2c60a83f328e9445a58e05b47d7d3361039a7650",
+      "gitCommitterTime": "2026-11-14T18:12:39Z",
+      "subject": "fix(mobile): preserve validated optional route stop geometry",
+      "files": [
+        "mobile/tezjet-app/lib/driver-routes.ts",
+        "mobile/tezjet-app/test/driver-route-geometry.test.mjs"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/2c60a83f328e9445a58e05b47d7d3361039a7650",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "552be94560449617e404c77e6f927ccde1c85e82",
+      "gitCommitterTime": "2026-11-14T18:12:39Z",
+      "subject": "fix(mobile): localize personal details without translating account values",
+      "files": [
+        "mobile/tezjet-app/components/OnayPersonalDetails.tsx",
+        "mobile/tezjet-app/lib/onay-translations.ts",
+        "mobile/tezjet-app/test/onay-personal-details-language.test.mjs",
+        "mobile/tezjet-app/test/onay-profile-personal-details.test.mjs"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/552be94560449617e404c77e6f927ccde1c85e82",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "e55c4c40e1a2d1b1fe6c81249bde4c6ee7d423fb",
+      "gitCommitterTime": "2026-11-14T18:12:39Z",
+      "subject": "fix(api): validate driver socket location payloads",
+      "files": [
+        "artifacts/api-server/src/socket.ts",
+        "artifacts/api-server/src/utils/driverLocation.ts",
+        "artifacts/api-server/test/driver-location.test.mjs",
+        "artifacts/api-server/test/socket-errors.test.mjs"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/e55c4c40e1a2d1b1fe6c81249bde4c6ee7d423fb",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "d0eca38a5be3c8f8c809c30f57f7c7dcb2946a0b",
+      "gitCommitterTime": "2026-11-14T18:12:39Z",
+      "subject": "fix(api): scope driver telemetry to current ride passengers",
+      "files": [
+        "artifacts/api-server/src/socket.ts",
+        "artifacts/api-server/src/store/memoryStore.ts",
+        "artifacts/api-server/src/store/postgresStore.ts",
+        "artifacts/api-server/src/store/storeContract.ts",
+        "artifacts/api-server/src/utils/driverLocation.ts",
+        "artifacts/api-server/test/account-roles.test.mjs",
+        "artifacts/api-server/test/socket-errors.test.mjs"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/d0eca38a5be3c8f8c809c30f57f7c7dcb2946a0b",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "194dbdfbeaa680306f60dabc3e07208e5681b3ca",
+      "gitCommitterTime": "2026-11-14T18:12:39Z",
+      "subject": "fix(ci): quote Android acceptance step name containing colon",
+      "files": [
+        ".github/workflows/onay-apk115-native-acceptance.yml"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/194dbdfbeaa680306f60dabc3e07208e5681b3ca",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "c63323b272e1b20a263b39f0619096bc14f0d1ed",
+      "gitCommitterTime": "2026-11-14T18:12:39Z",
+      "subject": "docs(onay): verify MapLibre native renderer candidate and gates",
+      "files": [
+        "docs/onay-maplibre-compatibility.md"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/c63323b272e1b20a263b39f0619096bc14f0d1ed",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "87ba4b922c288bec7370db2e248aa749a9427d62",
+      "gitCommitterTime": "2026-11-14T18:12:39Z",
+      "subject": "docs(onay): clarify mobile dependency lock strategy prerequisite",
+      "files": [
+        "docs/onay-maplibre-compatibility.md"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/87ba4b922c288bec7370db2e248aa749a9427d62",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "d77e509d08d2f7cca8ba7f11419caa76a72abad8",
+      "gitCommitterTime": "2026-11-14T18:12:39Z",
+      "subject": "docs(onay): preserve independent integration QA and review evidence",
+      "files": [
+        "docs/onay-queue-load-verification.json",
+        "docs/onay-team-qa.md",
+        "docs/onay-team-review.md"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/d77e509d08d2f7cca8ba7f11419caa76a72abad8",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "71ecf1aa66838d5ac6a4ca5a48d7871b4115ba44",
+      "gitCommitterTime": "2026-11-15T03:55:16Z",
+      "subject": "docs(orchestration): checkpoint verified integration and private journal boundary",
+      "files": [
+        ".gitignore",
+        "orchestration/RESUME.md",
+        "orchestration/TASKS.md",
+        "orchestration/checkpoints/active-wave.json",
+        "orchestration/reports/2026-11-14T17-58-30Z.md",
+        "orchestration/reports/2026-11-14T18-03-30Z.md",
+        "orchestration/reports/2026-11-14T18-08-49Z.md",
+        "orchestration/reports/2026-11-15T03-54-team.md",
+        "orchestration/state.json"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/71ecf1aa66838d5ac6a4ca5a48d7871b4115ba44",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "180d2cf7a65858ebf8c5e870fce638d2d957b1aa",
+      "gitCommitterTime": "2026-11-15T04:00:43Z",
+      "subject": "fix(ci): pin browser QA to Playwright-supported Ubuntu 24.04",
+      "files": [
+        ".github/workflows/admin-layout-qa.yml",
+        ".github/workflows/driver-route-qa.yml"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/180d2cf7a65858ebf8c5e870fce638d2d957b1aa",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "1c426fcd0dcd5e4566885ba15d60b6004a70b788",
+      "gitCommitterTime": "2026-11-15T04:05:43Z",
+      "subject": "test(android): verify personal details against pinned APK version",
+      "files": [
+        "docs/onay-team-qa.md",
+        "scripts/onay-driver-mode-chats-android-qa.py",
+        "scripts/onay_driver_personal_contract_test.py"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/1c426fcd0dcd5e4566885ba15d60b6004a70b788",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "c44b1248a61d1a8c405fa3fc015c2c0b233b05eb",
+      "gitCommitterTime": "2026-11-15T04:06:07Z",
+      "subject": "docs(orchestration): record CI diagnoses and reviewed follow-up gates",
+      "files": [
+        "orchestration/RESUME.md",
+        "orchestration/checkpoints/active-wave.json",
+        "orchestration/checkpoints/remote-ci-71ecf1a.json",
+        "orchestration/reports/2026-11-15T04-00-team.md",
+        "orchestration/state.json"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/c44b1248a61d1a8c405fa3fc015c2c0b233b05eb",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "6090b8c995e762acd00653c562a71d020e49b7a2",
+      "gitCommitterTime": "2026-11-15T04:24:41Z",
+      "subject": "build(mobile): freeze isolated dependencies with explicit supply-chain policy",
+      "files": [
+        ".github/workflows/driver-route-qa.yml",
+        ".github/workflows/mobile-ci.yml",
+        "docs/onay-mobile-dependencies.md",
+        "mobile/tezjet-app/README.md",
+        "mobile/tezjet-app/package.json",
+        "mobile/tezjet-app/pnpm-lock.yaml",
+        "mobile/tezjet-app/pnpm-workspace.yaml"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/6090b8c995e762acd00653c562a71d020e49b7a2",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    },
+    {
+      "sha": "b2720c2e87c2ef2e4e2e0358c4f8b1af881ffbf1",
+      "gitCommitterTime": "2026-11-15T04:25:22Z",
+      "subject": "docs(onay): retain dependency review, audit inventory and verified checkpoint",
+      "files": [
+        "docs/onay-mobile-audit-inventory.json",
+        "docs/onay-mobile-lock-review.md",
+        "orchestration/RESUME.md",
+        "orchestration/checkpoints/active-wave.json",
+        "orchestration/checkpoints/remote-ci-c44b124.json",
+        "orchestration/reports/2026-11-15T04-05-team.md",
+        "orchestration/reports/2026-11-15T04-10-team.md",
+        "orchestration/reports/2026-11-15T04-15-team.md",
+        "orchestration/state.json"
+      ],
+      "url": "https://github.com/erman-ksv/Onay/commit/b2720c2e87c2ef2e4e2e0358c4f8b1af881ffbf1",
+      "agent": "Integration integration commits; original roles in docs/onay-team-review.md",
+      "executionTimeCaveat": "Git committer time, not reconstructed original task execution time"
+    }
+  ],
+  "ci": [
+    {
+      "id": 43676735075,
+      "name": "Onay APK115 native UI acceptance from published artifact only",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676735075"
+    },
+    {
+      "id": 43676735123,
+      "name": "Admin route layout browser QA",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676735123"
+    },
+    {
+      "id": 43676735119,
+      "name": "Onay final passenger details and driver overview APK116",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676735119"
+    },
+    {
+      "id": 43676735104,
+      "name": "Deliver existing APK118 as a direct Android download",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676735104"
+    },
+    {
+      "id": 43676735014,
+      "name": "Onay APK113 -> APK114 Android reproduction (existing artifacts only)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676735014"
+    },
+    {
+      "id": 43676735032,
+      "name": "Onay APK116 native QA - already published artifact only",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676735032"
+    },
+    {
+      "id": 43676734995,
+      "name": "TezJet Mobile CI",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676734995"
+    },
+    {
+      "id": 43676735012,
+      "name": "Onay APK119 compiled resources and Android acceptance (reuse original Gradle APK)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676735012"
+    },
+    {
+      "id": 43676735031,
+      "name": "Driver route planning browser QA",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676735031"
+    },
+    {
+      "id": 43676734992,
+      "name": "Onay APK117 one build and Android About native acceptance",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676734992"
+    },
+    {
+      "id": 43676735013,
+      "name": "Onay staging runtime smoke",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676735013"
+    },
+    {
+      "id": 43676735022,
+      "name": "CI",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/erman-ksv/Onay/actions/runs/43676735022"
+    }
+  ],
+  "evidence": [
+    "docs/onay-team-qa.md",
+    "docs/onay-team-review.md",
+    "docs/onay-mobile-dependencies.md",
+    "docs/onay-mobile-lock-review.md"
+  ],
+  "missingData": "Original per-agent timestamps and complete past process continuity unavailable; not invented. Historical OTP child failure cause UNKNOWN. No current readiness percentage can be calculated from confirmed acceptance evidence."
+}

@@ -83,12 +83,22 @@ class LineRideQA(shared.DriverRouteQA):
             timeout=20_000)
 
     def shot(self, page, name):
+        # Evidence names must match the actual browser viewport, not a test
+        # description that only claims to exercise a mobile/desktop layout.
+        viewport = page.viewport_size
+        if "mobile-390" in name:
+            require(viewport is not None and viewport["width"] == 390,
+                "Mobile QA screenshot " + name + " was not captured at 390px")
+        if "desktop" in name:
+            require(viewport is not None and viewport["width"] == 1440,
+                "Desktop QA screenshot " + name + " was not captured at 1440px")
         page.screenshot(path=str(self.args.output_dir / (name + ".png")), full_page=True,
             mask=[page.get_by_placeholder("Код подтверждения", exact=True),
                   page.get_by_text(re.compile(r"Тестовый код:")),
                   page.get_by_test_id("passenger-driver-phone")])
 
     def screenshot(self, name):
+        self.page.wait_for_timeout(400)  # V2 page transition duration; capture settled UI.
         self.shot(self.page, name + "-driver")
         self.shot(self.passenger_page, name + "-passenger")
 
@@ -151,7 +161,7 @@ class LineRideQA(shared.DriverRouteQA):
         page.get_by_test_id("auth-signup-mode").click()
         page.get_by_placeholder("Имя", exact=True).fill("CI line ride")
         page.get_by_placeholder("Фамилия", exact=True).fill(role)
-        page.get_by_placeholder("+998 90 123 45 67", exact=True).fill(
+        page.get_by_test_id("onay-auth-phone").fill(
             "+77776" + str(uuid.uuid4().int % 1_000_000).zfill(6))
         with self.response(page, "/auth/request-otp", "POST") as pending:
             page.get_by_role("button", name="Получить код", exact=True).click()
@@ -160,13 +170,19 @@ class LineRideQA(shared.DriverRouteQA):
         require(bool(re.fullmatch(r"\d{6}", code)), "Actual local UI must receive its development OTP")
         page.get_by_placeholder("Код подтверждения", exact=True).fill(code)
         with self.response(page, "/auth/verify-otp", "POST") as pending:
-            page.get_by_role("button", name="Продолжить как водитель" if role == "driver" else "Войти как пассажир", exact=True).click()
+            page.get_by_test_id("onay-auth-submit").click()
         require(pending.value.status == 200, "Actual " + role + " screen must verify OTP")
         session = pending.value.json()
         token = self.remember(session["access_token"])
         user = session["user"]
         require(user.get("active_role", user.get("role")) == role, "UI must authenticate the selected role")
         return token, user
+
+    def open_passenger_booking(self):
+        if not self.passenger_page.get_by_test_id("onay-passenger-booking-page").count():
+            self.passenger_page.get_by_test_id("onay-tab-home").click()
+            self.passenger_page.get_by_test_id("onay-home-to-city").click()
+        self.expect(self.passenger_page.get_by_test_id("onay-passenger-booking-page")).to_be_visible()
 
     def authenticate(self):
         self.driver_token, driver = self.ui_login(self.page, "driver")
@@ -193,22 +209,38 @@ class LineRideQA(shared.DriverRouteQA):
         self.expect(self.control("driver-route-picker")).to_be_visible()
         self.identity()
         self.passenger_token, _ = self.ui_login(self.passenger_page, "passenger")
-        self.expect(self.passenger_page.get_by_test_id("configured-route-passenger")).to_be_visible()
+        self.expect(self.passenger_page.get_by_test_id("configured-route-passenger")).to_have_count(0)
+        for tab in ("trips", "chats", "profile", "home"):
+            self.passenger_page.get_by_test_id("onay-tab-" + tab).click()
+            self.expect(self.passenger_page.get_by_test_id("onay-screen-" + tab)).to_be_visible()
+            if tab != "home":
+                self.expect(self.passenger_page.get_by_test_id("onay-screen-home")).to_be_hidden()
+        self.expect(self.passenger_page.get_by_test_id("configured-route-passenger")).to_have_count(0)
         require(self.context != self.passenger_context, "Driver and passenger must have isolated browser sessions")
         self.passed("Two isolated Expo sessions perform actual OTP login and driver administrator approval")
         with self.response_for("/orders", "GET") as pending:
-            self.control("driver-history-toggle").click()
+            self.page.get_by_test_id("onay-driver-tab-history").click()
         require(pending.value.status == 200, "History must use an actual authorized order read")
         self.expect(self.control("driver-history-empty")).to_be_visible()
+        self.expect(self.page.get_by_test_id("driver-history-toggle")).to_have_count(0)
         self.expect(self.control("driver-history-totals")).to_contain_text("Завершено поездок: 0")
         self.expect(self.passenger_page.get_by_test_id("driver-history")).to_have_count(0)
         self.passed("Task4.14 real empty driver history stays separate from passenger UI")
+        # Enter Trips, then explicitly request its server-backed history.
+        # The V2 screen no longer exposes archive controls on the home page.
+        self.passenger_page.get_by_test_id("onay-tab-trips").click()
+        self.expect(self.passenger_page.get_by_test_id("onay-trips-open-history")).to_have_count(0)
         with self.response(self.passenger_page, "/orders", "GET") as pending:
-            self.passenger_page.get_by_test_id("passenger-history-toggle").click()
+            self.passenger_page.get_by_test_id("onay-tab-profile").click()
+            self.passenger_page.get_by_test_id("onay-profile-history").click()
         require(pending.value.status == 200, "Passenger history must read the real authorized API")
         self.expect(self.passenger_page.get_by_test_id("passenger-history-empty")).to_be_visible()
+        self.expect(self.passenger_page.get_by_test_id("passenger-history-toggle")).to_have_count(0)
         self.expect(self.control("passenger-history")).to_have_count(0)
-        self.passenger_page.get_by_test_id("passenger-history-toggle").click()
+        self.passenger_page.get_by_test_id("onay-trips-back-to-active").click()
+        self.passenger_page.get_by_test_id("onay-tab-home").click()
+        self.open_passenger_booking()
+        self.expect(self.passenger_page.get_by_test_id("configured-route-passenger")).to_be_visible()
         self.passed("Task3.14 genuine empty passenger history is distinct and absent from driver mode")
 
     def queue(self, label=None, seats=None, phase=None):
@@ -271,7 +303,10 @@ class LineRideQA(shared.DriverRouteQA):
     def book_and_offer(self):
         page = self.passenger_page
         self.gps(self.passenger_context, "A")
+        page.get_by_test_id("onay-booking-route-open").click()
         page.get_by_test_id("passenger-route-" + self.route["id"]).click()
+        page.get_by_test_id("onay-booking-route-done").click()
+        self.expect(page.get_by_test_id("onay-booking-route-picker")).to_have_count(0)
         self.expect(page.get_by_test_id("passenger-pickup-open")).to_contain_text(self.stop("A")["name"])
         self.expect(page.get_by_test_id("passenger-destination-open")).to_contain_text(self.stop("B")["name"])
         with self.response(page, "/orders/route/availability", "GET") as pending:
@@ -291,6 +326,7 @@ class LineRideQA(shared.DriverRouteQA):
             "Actual passenger booking must bind the quoted A/B stops and one seat")
         require(order.get("offered_driver_id") == self.driver_id and order["status"] == "searching", "Real FIFO must offer the booking to the line driver")
         self.expect(self.control("driver-incoming-order")).to_be_visible()
+        page.get_by_test_id("onay-tab-trips").click()
         self.expect(page.get_by_test_id("passenger-trip-" + self.order_id)).to_contain_text("Ждём ответа водителя")
         self.expect(page.get_by_test_id("passenger-driver-card")).to_have_count(0)
         self.expected(api_request(self.args.api_url, "/orders/" + self.order_id + "/driver", token=self.passenger_token), 404, "Driver contact stays private before acceptance")
@@ -300,6 +336,10 @@ class LineRideQA(shared.DriverRouteQA):
 
     def passenger_status(self, label):
         self.expect(self.passenger_page.get_by_test_id("passenger-trip-" + self.order_id)).to_contain_text(label)
+        details = self.passenger_page.get_by_test_id("onay-ride-details-" + self.order_id)
+        if not (details.count() and details.is_visible()):
+            self.passenger_page.get_by_test_id("onay-ride-open-" + self.order_id).click()
+        self.expect(details).to_be_visible()
 
     def progress(self, status):
         with self.response_for("/orders/" + self.order_id + "/status", "PATCH") as pending:
@@ -372,7 +412,12 @@ class LineRideQA(shared.DriverRouteQA):
         self.progress("completed")
         self.expect(self.control("driver-trip-" + self.order_id)).to_have_count(0)
         self.expect(self.passenger_page.get_by_test_id("passenger-trip-" + self.order_id)).to_have_count(0)
-        self.expect(self.passenger_page.get_by_text(re.compile(r"QA линия A.*QA линия B: Поездка завершена"))).to_be_visible()
+        self.passenger_page.get_by_test_id("onay-tab-profile").click()
+        self.passenger_page.get_by_test_id("onay-profile-history").click()
+        completed_row = self.passenger_page.get_by_test_id("passenger-history-row-" + self.order_id)
+        self.expect(completed_row).to_be_visible()
+        self.expect(completed_row).to_contain_text(re.compile(r"QA линия A.*QA линия B"))
+        self.expect(completed_row).to_contain_text("Поездка завершена")
         self.expect(self.passenger_page.get_by_test_id("passenger-driver-card")).to_have_count(0)
         self.expected(api_request(self.args.api_url, "/orders/" + self.order_id + "/driver", token=self.passenger_token), 404, "Completed ride no longer exposes driver contact")
         snapshot = self.queue("completed-capacity-restored", 3, "departed")
@@ -395,6 +440,14 @@ class LineRideQA(shared.DriverRouteQA):
         row = self.control("driver-history-row-" + self.order_id)
         self.expect(row).to_contain_text("Поездка завершена")
         self.expect(row).to_contain_text("QA линия A → QA линия B")
+        row.click()
+        details = self.page.get_by_test_id("onay-driver-history-details-" + self.order_id)
+        self.expect(details).to_be_visible()
+        self.expect(details).to_contain_text(self.order_id)
+        self.expect(details).to_contain_text("Поездка завершена")
+        self.shot(self.page, "driver-history-order-details")
+        self.page.get_by_test_id("onay-screen-back").click()
+        self.expect(details).to_have_count(0)
         self.expect(self.control("driver-history-totals")).to_contain_text("Завершено поездок: 1")
         self.expect(self.control("driver-history-totals")).to_contain_text(re.compile(r"5\s000 сум"))
         self.expect(self.control("driver-history-empty")).to_have_count(0)
@@ -422,9 +475,14 @@ class LineRideQA(shared.DriverRouteQA):
         self.expect(self.control("driver-line-join")).to_have_count(0)
         self.expect(self.control("driver-route-save")).to_be_disabled()
         self.expect(self.control("driver-direction-b_to_a")).to_be_disabled()
+        self.control("driver-queue-leave")  # Return from route editor to the line before capturing it.
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        require(self.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"),
+            "Finished enrollment must fit 390px without horizontal overflow")
         self.shot(self.page, "mobile-390-finished-retained-enrollment")
+        self.page.set_viewport_size({"width": 1440, "height": 1000})
         with self.response_for("/queue/leave", "DELETE") as pending:
-            leave.click()
+            self.control("driver-queue-leave").click()
         require(pending.value.status == 204, "Actual close control must DELETE the finished enrollment")
         snapshot = self.queue()
         require(snapshot.get("your_entry") is None and snapshot.get("your_position") is None, "Only acknowledged DELETE must clear membership")
@@ -448,7 +506,12 @@ class LineRideQA(shared.DriverRouteQA):
         require(self.enrollment_id != previous, "Opposite-direction enrollment must receive a fresh server receipt")
         self.expect(self.control("driver-queue-status")).to_contain_text("позиция 1")
         self.assert_stops(self.route, "b_to_a")
+        self.control("driver-queue-context")
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        require(self.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"),
+            "Reverse enrollment must fit 390px without horizontal overflow")
         self.shot(self.page, "mobile-390-new-B-to-A-enrollment")
+        self.page.set_viewport_size({"width": 1440, "height": 1000})
         for page in (self.page, self.passenger_page):
             require(page.locator("vite-error-overlay, nextjs-portal, [data-nextjs-dialog-overlay]").count() == 0, "Actual app must have no framework error overlay")
         require(not [entry for entry in self.console if entry["type"] == "error"] and not self.page_errors,
@@ -456,8 +519,7 @@ class LineRideQA(shared.DriverRouteQA):
         self.passed("Actual driver saves B-to-A and joins pitak B with fresh FIFO receipt/capacity and healthy desktop/mobile apps")
 
     def history_recovery(self):
-        if self.control("driver-history-toggle").inner_text() == "Показать историю":
-            self.control("driver-history-toggle").click()
+        self.page.get_by_test_id("onay-driver-tab-history").click()
         self.expect(self.control("driver-history-totals")).to_contain_text("Завершено поездок: 1")
         self.expect(self.control("driver-history-totals")).to_contain_text(re.compile(r"5\s000 сум"))
         self.passed("Task4.14 real completed earnings survive app reload and new enrollment without double counting")
@@ -500,8 +562,12 @@ class LineRideQA(shared.DriverRouteQA):
         page = self.passenger_page
         for _ in range(4):
             self.cancelled_history_fixture()
+        # The preceding completed-ride view may leave the archive expanded.
+        # Refresh an open archive; explicitly open a collapsed one. Both actions
+        # must fetch the real user's orders from PostgreSQL.
+        history_action = "passenger-history-refresh" if page.get_by_test_id("passenger-history-refresh").count() else "passenger-history-toggle"
         with self.response(page, "/orders", "GET") as pending:
-            page.get_by_test_id("passenger-history-toggle").click()
+            page.get_by_test_id(history_action).click()
         require(pending.value.status == 200, "Full history must use real HTTP and PostgreSQL")
         expected_ids = [order["id"] for order in pending.value.json()["orders"]
                         if order.get("passenger_id") and order["status"] in {"completed", "cancelled"}]
@@ -514,6 +580,7 @@ class LineRideQA(shared.DriverRouteQA):
         actual_ids = page.locator('[data-testid^="passenger-history-row-"]').evaluate_all("nodes => nodes.map(n => n.getAttribute('data-testid').replace('passenger-history-row-', ''))")
         require(actual_ids == expected_ids, "Rendered history must retain server newest-first creation order beyond three records")
         self.expect(page.get_by_test_id("passenger-driver-card")).to_have_count(0)
+        page.set_viewport_size({"width": 1440, "height": 1000})
         self.shot(page, "task3-14-history-desktop")
         page.set_viewport_size({"width": 390, "height": 844})
         require(page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "Full passenger history must fit390px")
@@ -526,8 +593,12 @@ class LineRideQA(shared.DriverRouteQA):
         self.expect(page.get_by_test_id("passenger-history-row-" + new_id)).to_be_visible()
         self.expect(page.get_by_test_id("passenger-history-results")).to_contain_text("Закрытых поездок: 6")
         page.reload(wait_until="domcontentloaded")
-        self.expect(page.get_by_test_id("passenger-history-toggle")).to_be_visible()
-        page.get_by_test_id("passenger-history-toggle").click()
+        self.expect(page.get_by_test_id("onay-tab-trips")).to_be_visible()
+        page.get_by_test_id("onay-tab-trips").click()
+        with self.response(page, "/orders", "GET") as pending:
+            page.get_by_test_id("onay-tab-profile").click()
+            page.get_by_test_id("onay-profile-history").click()
+        require(pending.value.status == 200, "Reloaded Trips history must use the authorized API")
         self.expect(page.get_by_test_id("passenger-history-results")).to_contain_text("Закрытых поездок: 6")
         self.passed("Task3.14 explicit refresh and actual app reload retain all six persisted passenger rides")
         def fail_transport(route):
@@ -563,7 +634,11 @@ class LineRideQA(shared.DriverRouteQA):
         while not held and time.monotonic() < deadline:
             page.wait_for_timeout(20)
         require(bool(held), "The real history read must be held in flight")
-        page.get_by_text("Выйти", exact=True).click()
+        # Logout lives in a separate Profile screen; the hidden Trips tree
+        # remains mounted until the session is revoked, and must abort this read.
+        page.get_by_test_id("onay-tab-profile").click()
+        self.expect(page.get_by_test_id("onay-profile-logout")).to_be_visible()
+        page.get_by_test_id("onay-profile-logout").click()
         self.expect(page.get_by_test_id("passenger-history")).to_have_count(0)
         for route, response in held:
             try:
@@ -572,7 +647,7 @@ class LineRideQA(shared.DriverRouteQA):
                 require("cancel" in str(error).lower() or "closed" in str(error).lower() or "invalid interception" in str(error).lower(), "Only expected cancellation may prevent releasing a held response")
         page.unroute("**/api/orders", delay_read)
         self.expect(page.get_by_test_id("passenger-history-results")).to_have_count(0)
-        self.expect(page.get_by_placeholder("+998 90 123 45 67", exact=True)).to_be_visible()
+        self.expect(page.get_by_test_id("onay-auth-phone")).to_be_visible()
         require(not self.page_errors, "Logout must not produce a page exception")
         self.passed("Task3.14 logout discards an actual delayed history response and removes private rows")
 
@@ -709,11 +784,11 @@ class LineRideQA(shared.DriverRouteQA):
     def driver_seats_logout(self):
         self.hold_queue()
         try:
-            self.page.get_by_text("Выйти", exact=True).click()
+            self.logout_driver()
             self.expect(self.control("driver-free-seats")).to_have_count(0)
             self.release_queue()
             self.expect(self.control("driver-free-seats")).to_have_count(0)
-            self.expect(self.page.get_by_placeholder("+998 90 123 45 67", exact=True)).to_be_visible()
+            self.expect(self.page.get_by_test_id("onay-auth-phone")).to_be_visible()
             require(not self.page_errors, "A delayed old-session receipt must not cause a page error")
         finally:
             self.restore_queue()

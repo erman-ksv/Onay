@@ -92,7 +92,23 @@ class PassengerStopsQA:
         self.checks.append({"name": description, "status": "passed"})
         print("PASS:", description, flush=True)
 
+    def open_booking(self):
+        if not self.page.get_by_test_id("onay-passenger-booking-page").count():
+            self.page.get_by_test_id("onay-tab-home").click()
+            self.page.get_by_test_id("onay-home-to-city").click()
+        self.expect(self.page.get_by_test_id("onay-passenger-booking-page")).to_be_visible()
+
     def control(self, test_id):
+        if test_id.startswith(("configured-route", "passenger-route-", "passenger-direction-", "passenger-pickup-", "passenger-destination-", "passenger-stop-", "route-")):
+            self.open_booking()
+        selector = self.page.get_by_test_id("onay-booking-route-picker")
+        if test_id.startswith(("passenger-route-", "passenger-direction-")):
+            target = self.page.get_by_test_id(test_id)
+            if not (target.count() and target.is_visible()):
+                self.page.get_by_test_id("onay-booking-route-open").click()
+        elif selector.count() and selector.is_visible():
+            self.page.get_by_test_id("onay-booking-route-done").click()
+            self.expect(selector).to_have_count(0)
         return self.page.get_by_test_id(test_id)
 
     def response_for(self, path, method):
@@ -101,6 +117,7 @@ class PassengerStopsQA:
             timeout=20_000)
 
     def screenshot(self, name):
+        self.page.wait_for_timeout(400)  # V2 page transition duration; capture settled UI.
         self.page.screenshot(path=str(self.args.output_dir / (name + ".png")), full_page=True,
             mask=[self.page.get_by_placeholder("Код подтверждения", exact=True),
                   self.page.get_by_text(re.compile(r"Тестовый код:"))])
@@ -178,7 +195,7 @@ class PassengerStopsQA:
         self.control("auth-signup-mode").click()
         self.page.get_by_placeholder("Имя", exact=True).fill("CI stop selection")
         self.page.get_by_placeholder("Фамилия", exact=True).fill("passenger")
-        self.page.get_by_placeholder("+998 90 123 45 67", exact=True).fill(
+        self.page.get_by_test_id("onay-auth-phone").fill(
             "+77777" + str(uuid.uuid4().int % 1_000_000).zfill(6))
         with self.response_for("/auth/request-otp", "POST") as pending:
             self.page.get_by_role("button", name="Получить код", exact=True).click()
@@ -187,7 +204,7 @@ class PassengerStopsQA:
         require(bool(re.fullmatch(r"\d{6}", code)), "Actual passenger must receive local test OTP")
         self.page.get_by_placeholder("Код подтверждения", exact=True).fill(code)
         with self.response_for("/auth/verify-otp", "POST") as pending:
-            self.page.get_by_role("button", name="Войти как пассажир", exact=True).click()
+            self.page.get_by_test_id("onay-auth-submit").click()
         require(pending.value.status == 200, "Actual passenger screen must verify OTP")
         session = pending.value.json()
         self.passenger_token = self.remember(session["access_token"])
@@ -292,8 +309,15 @@ class PassengerStopsQA:
         require(order["fare"]["totalKzt"] == self.reverse_fare["totalKzt"], "Persisted fare must match server quote")
         fetched = self.expected(api_request(self.args.api_url, "/orders/" + self.order_id, token=self.passenger_token), 200, "Fetch durable selected-segment order")["order"]
         require(fetched["id"] == self.order_id and fetched["fare"] == order["fare"], "Order must be stored by the actual PostgreSQL runtime")
-        self.expect(self.page.get_by_text("Точка подачи: " + self.stop("D")["name"], exact=True)).to_be_visible()
-        self.expect(self.page.get_by_text("Куда: " + self.stop("C")["name"], exact=True)).to_be_visible()
+        # The booking form is Home-only; real active rides belong to Trips V2.
+        self.page.get_by_test_id("onay-tab-trips").click()
+        ride = self.page.get_by_test_id("passenger-trip-" + self.order_id)
+        self.expect(ride).to_be_visible()
+        self.page.get_by_test_id("onay-ride-open-" + self.order_id).click()
+        ride = self.page.get_by_test_id("onay-ride-details-" + self.order_id)
+        self.expect(ride).to_be_visible()
+        self.expect(ride.get_by_text("Точка подачи: " + self.stop("D")["name"], exact=True)).to_be_visible()
+        self.expect(ride.get_by_text("Куда: " + self.stop("C")["name"], exact=True)).to_be_visible()
         self.screenshot("mobile-390-booked-D-to-C")
         self.passed("Actual passenger POST persists D-to-C GPS, fare and FIFO assignment and displays the real stop names")
 

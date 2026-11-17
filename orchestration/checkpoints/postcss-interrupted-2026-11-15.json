@@ -1,0 +1,10 @@
+{
+  "recordedAt": "2026-11-15T08:56:31.772450+00:00",
+  "worktree": "/workspace/onay-worktrees/mobile-postcss",
+  "base": "b2720c2e87c2ef2e4e2e0358c4f8b1af881ffbf1",
+  "status": " M mobile/tezjet-app/pnpm-lock.yaml\n M mobile/tezjet-app/pnpm-workspace.yaml\n",
+  "patch": "orchestration/checkpoints/postcss-interrupted-2026-11-15.patch",
+  "reason": "Integration usage-limit termination; no tests or completion claimed for WIP",
+  "tests": "NOT RUN for interrupted WIP",
+  "resume": "Keep existing worktree, compare patch/current diff, continue actualMetro and security regressions; do not reapply patch if changes already present."
+}

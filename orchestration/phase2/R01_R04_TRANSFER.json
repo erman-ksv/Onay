@@ -1,0 +1,86 @@
+{
+  "recordedAt": "2026-11-17T12:08:36.320840+00:00",
+  "base": "135d849afeb6ee226a1531b822041cf13d6f5c36",
+  "sourceCandidate": "b3ff28b609076a6ad883f6ec768e97fc68de11bc",
+  "priorValidatedSource": "86dfaf54396a1a82e81ae4abf992b284b8fdccce",
+  "treeIdentity": "cd6eabcd20b8668ea4226261e6bdcab1702e8986",
+  "priorTreeIdentity": "cd6eabcd20b8668ea4226261e6bdcab1702e8986",
+  "mobileTree": "ccde338a0e339657b13dd61ce8d05cd4ecd96875",
+  "baselineMobileTree": "ccde338a0e339657b13dd61ce8d05cd4ecd96875",
+  "commits": [
+    {
+      "origin": "f97426428ee265d57e4005c75426a42064e77982",
+      "candidate": "be24e1b597104c26a8dd81702d66ab2f922d6e08"
+    },
+    {
+      "origin": "e83881423ee21c3f2c01b1e331eb968aa398819d",
+      "candidate": "74cae99984e96523c7a9977b24c0d098ea250f3a"
+    },
+    {
+      "origin": "d2a56cfc5b430ecdaefe2800964b12c71d52b24a",
+      "candidate": "2498a45c84d51a1fefb9a07701ca905fa42dfaa5"
+    },
+    {
+      "origin": "858e9b50859bb6158c4e188874cf477d34ff9494",
+      "candidate": "7f77a8b91ff383a7b2a97e8c6939c3c7397f0041"
+    },
+    {
+      "origin": "d395db2d64d866dbab3ccdf3475713562e86e93d",
+      "candidate": "b76aa9948b986781b57e8e4502143a9605a60007"
+    },
+    {
+      "origin": "c8127ed53ea9e1f4ee228ac00e582dc79f36a7da",
+      "candidate": "f09b9ccf36ce9363bca4ab4578b9c5e6163263ce"
+    },
+    {
+      "origin": "0bb95c46bb11f3807564b6c89bc56b7833457a67",
+      "candidate": "385cd59ff7b2fdd5e13d9729f846da9bc303c765"
+    },
+    {
+      "origin": "3a86f6e4d9a942f3ce8114bae23b18414cd4add4",
+      "candidate": "0bdca46fba2d8858a3d584da2a15a7c67b91ff8e"
+    },
+    {
+      "origin": "454edd934eeaf879fc2cfd22f5b94e8802e93f06",
+      "candidate": "956c5f6603e3313eb061ba9f9c51ba4a0957eac3"
+    },
+    {
+      "origin": "86dfaf54396a1a82e81ae4abf992b284b8fdccce",
+      "candidate": "b3ff28b609076a6ad883f6ec768e97fc68de11bc"
+    }
+  ],
+  "excluded": "f643188 manual validation-only workflow enable; no R05+ source in incorporation",
+  "newWorktrees": {
+    "integration": "b3ff28b609076a6ad883f6ec768e97fc68de11bc",
+    "backend": "d88895f3a36d5ed92bf8bcf2e768cc7d94eee0b8",
+    "android": "d88895f3a36d5ed92bf8bcf2e768cc7d94eee0b8",
+    "maps": "135d849afeb6ee226a1531b822041cf13d6f5c36"
+  },
+  "validationCI": {
+    "sha": "f6431882cb5f3b0b13a06c660e47db634562b82a",
+    "apiRun": 44077010422,
+    "apiConclusion": "success",
+    "apiTests": 682,
+    "loadTests": 1,
+    "nativeRun": 44077017223,
+    "nativeConclusion": "success",
+    "apkBuild": "skipped",
+    "nativeScope": "Saved original APK118/119; no current full-app physical readiness claim"
+  },
+  "publication": "PR110 push PENDING root exact review; no push/main/merge/newAPK performed in phase2",
+  "limits": "UNKNOWN",
+  "localChecks": {
+    "offlineAndroidTests": {
+      "tests": 18,
+      "pass": 18,
+      "exit": 0
+    },
+    "workflowYAML": {
+      "files": 13,
+      "status": "PASS"
+    },
+    "diffCheck": "PASS",
+    "sourceIdentity": "Exact source tree identity to validated86dfaf5; unchanged mobile subtree135d849",
+    "reusedEvidence": "Prior independent161 tests plus actualNode22remote682 tests and1boundedload test; no unchangedfullPGsuite repeated"
+  }
+}

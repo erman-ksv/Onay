@@ -3,6 +3,9 @@ import type { Order } from "../types/domain";
 import { store } from "../store";
 import { serializeOrder } from "./serialize";
 import { PYATAK_ZONE } from "./config";
+import { queueSocketStatusView } from "../services/queueView";
+import { AppError } from "./errors";
+import { logger } from "../lib/logger";
 
 export type QueueEventType =
   | "joined"
@@ -27,44 +30,40 @@ export async function emitQueueUpdate(io: Server | undefined, change: QueueChang
     return;
   }
   const allQueue = await store.queueSnapshot();
-  const queue = allQueue.filter(entry => !entry.routeContext);
-  const payload = {
-    zone: {
-      id: PYATAK_ZONE.id,
-      name: PYATAK_ZONE.name,
-      center: PYATAK_ZONE.center,
-      geofence_meters: PYATAK_ZONE.radiusMeters,
-    },
-    event: change.type,
-    changed_driver_id: change.driverId,
-    queue,
-    updated_at: new Date().toISOString(),
-  };
-  io.to(`queue:${PYATAK_ZONE.id}`).emit("queue:update", payload);
-  io.to(`queue:${PYATAK_ZONE.id}`).emit(`queue:${change.type}`, payload);
-  if (
-    change.type !== "reordered" &&
-    change.type !== "location"
-  ) {
-    io.to(`queue:${PYATAK_ZONE.id}`).emit("queue:reordered", payload);
-  }
-  for (const entry of allQueue) {
-    io.to(`user:${entry.driverId}`).emit("queue:position", {
-      zone_id: entry.routeContext ? `route:${entry.routeContext.routeId}:${entry.routeContext.pitak}` : PYATAK_ZONE.id,
-      route_context: entry.routeContext ?? null,
-      position: entry.position,
-      status: entry.status,
-      updated_at: payload.updated_at,
-    });
-  }
-  if (change.driverId && !allQueue.some((entry) => entry.driverId === change.driverId)) {
-    io.to(`user:${change.driverId}`).emit("queue:position", {
-      zone_id: PYATAK_ZONE.id,
-      position: null,
-      route_context: null,
-      status: "not_in_queue",
-      updated_at: payload.updated_at,
-    });
+  const recipients = await io.fetchSockets();
+  const updatedAt = new Date().toISOString();
+  for (const recipient of recipients) {
+    try {
+      const view = await queueSocketStatusView(recipient.data, allQueue);
+      const visibleChange = change.driverId &&
+        (change.driverId === recipient.data.userId || view.queue.some(entry => entry.driverId === change.driverId));
+      const payload = {
+        ...view,
+        event: change.type,
+        ...(visibleChange ? { changed_driver_id: change.driverId } : {}),
+        updated_at: updatedAt,
+      };
+      recipient.emit("queue:update", payload);
+      recipient.emit(`queue:${change.type}`, payload);
+      if (change.type !== "reordered" && change.type !== "location") {
+        recipient.emit("queue:reordered", payload);
+      }
+      if (recipient.data.role === "driver") {
+        recipient.emit("queue:position", {
+          zone_id: view.zone?.id ?? PYATAK_ZONE.id,
+          route_context: view.your_entry?.routeContext ?? null,
+          position: view.your_position,
+          status: view.your_entry?.status ?? "not_in_queue",
+          updated_at: updatedAt,
+        });
+      }
+    } catch (err) {
+      if (err instanceof AppError && (err.statusCode === 401 || err.statusCode === 403)) {
+        recipient.disconnect(true);
+      } else if (!(err instanceof AppError && err.statusCode === 409 && err.code === "ROUTE_CHANGED")) {
+        logger.error({ err, socketId: recipient.id }, "Socket queue notification failed");
+      }
+    }
   }
 }
 

@@ -1,0 +1,45 @@
+{
+  "reviewedAtUtc": "2026-11-17T10:13:34Z",
+  "reviewedAtAsiaTashkent": "2026-11-17T15:13:34+05:00",
+  "requiredCommits": [
+    "b8c73e92c57c8e531c8dbda6159bb154679a159d",
+    "d65cfd460cd18c9f0245243fa2299c769d69cc10"
+  ],
+  "decision": "APPROVE_BOTH_SOURCE_COMMITS_TOGETHER_PENDING_ACTUAL_SDK_AND_CI_VERIFICATION",
+  "finding": "base generated package.xml lost a namespace declaration referenced only in xsi:type QName; valid ns3:genericDetailsType input produced unbound ns3 prefix",
+  "findingResolution": "follow-up normalizes local genericDetailsType QName to explicitly declared Android generic/02 namespace",
+  "independentChecks": {
+    "originalOfflineSuite": "17PASS did not catch namespace issue",
+    "namespaceCounterexample": "RED on base; GREEN with follow-up",
+    "finalOfflineSuite": {
+      "tests": 18,
+      "passed": 18,
+      "failed": 0
+    },
+    "diffCheck": "PASS",
+    "yaml": "all13workflow YAML parse",
+    "workflowSemanticDiff": "only one emulator provisioning run and two added PR path filters"
+  },
+  "sourceReview": [
+    "verified default TLS context and official HTTPS host/path redirect restriction",
+    "published metadata archive size/SHA checksum plus complete ZIP CRC/path/symlink/expansion validation",
+    "required executable binaries and source.properties revision checked before staged replacement",
+    "only emulator package changed; original APK/source/signature/artifact and publication/permission guards retained",
+    "sdkmanager --list_installed revision recognition gate retained after installation"
+  ],
+  "notProven": [
+    "actual full SDK archive download/install",
+    "actual sdkmanager recognition of generated receipt",
+    "native emulator acceptance of source fix",
+    "remote exact-source CI while no push is authorized"
+  ],
+  "status": "source review approved; R04 is NOT DONE until authorized actual verification passes",
+  "actions": {
+    "sdkDownloadByReviewer": false,
+    "apkBuild": false,
+    "push": false,
+    "merge": false,
+    "securityCheckBypass": false
+  },
+  "budget": "UNKNOWN"
+}

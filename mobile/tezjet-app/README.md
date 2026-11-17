@@ -10,7 +10,30 @@ For a build-time default, copy `.env.example` to `.env` and set `EXPO_PUBLIC_API
 
 ## Run locally
 
-From this directory, run `pnpm install` and then `pnpm start`. Scan the Expo QR code with Expo Go for early UI testing. The API must be running and reachable from the device.
+This directory is an isolated pnpm workspace with its own committed lockfile.
+Run commands **from this directory**, so Corepack reads its pinned pnpm version:
+
+```sh
+corepack pnpm install --frozen-lockfile
+corepack pnpm start
+```
+
+The package manager is pinned to pnpm 10.34.9. The root workspace install does
+not install this app. Do not use `--ignore-workspace`: the local workspace also
+defines the 1440-minute minimum release age and blocks unreviewed dependency
+build hooks. `strictDepBuilds` makes an unapproved hook fail installation;
+review exact package/version hooks before adding any allowlist entry.
+
+For an intentional dependency change, review the manifest diff, generate the
+mobile lockfile with `corepack pnpm install --lockfile-only --ignore-scripts`,
+then verify a fresh `corepack pnpm install --frozen-lockfile`, TypeScript, tests
+and platform JS exports. Lock generation does not authorize dependency hooks or
+native builds. Commit the manifest and mobile lockfile together. Do not copy the
+root workspace's Linux-only platform overrides into the mobile workspace.
+
+Scan the Expo QR code with Expo Go for early UI testing. The API must be running
+and reachable from the device. Native modules that Expo Go does not include need
+separate approved development-build validation.
 
 ## Passenger mode
 

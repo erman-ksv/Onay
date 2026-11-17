@@ -11,6 +11,7 @@ export function serializeUser(user: User) {
     roles: user.roles,
     full_name: user.fullName,
     phone_number: user.phoneNumber,
+    email: user.email ?? null,
     locale: user.locale,
     profile_locked: user.profileLocked,
     driver_approval_status: user.driverApprovalStatus,
