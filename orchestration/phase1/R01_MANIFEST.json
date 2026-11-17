@@ -103,7 +103,7 @@
   "preservedRoot": {
     "head": "f415bafb5214ebdb19d7413d26bf0eba67db46e4",
     "dirtyPaths": [
-      "M orchestration/RESUME.md",
+      " M orchestration/RESUME.md",
       " M orchestration/SESSION_HISTORY.md",
       " M orchestration/TASKS.md",
       " M orchestration/checkpoints/active-wave.json",
@@ -120,7 +120,8 @@
       "?? orchestration/reports/OWNER_DIAGNOSTIC_2026-11-15.json",
       "?? orchestration/reports/OWNER_DIAGNOSTIC_2026-11-15.md"
     ],
-    "unmerged": []
+    "unmerged": [],
+    "dirtyPathsRecordedAt": "2026-11-17T07:51:36.776746+00:00"
   },
   "dependencyOwner": "Backend only; reuse checked filtered pinned10.34.9 graph; no concurrent installs",
   "limits": "UNKNOWN",
