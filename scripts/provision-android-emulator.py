@@ -182,6 +182,13 @@ def install_archive(archive, sdk_root, root, package, revision):
             repo.append(copy.deepcopy(license))
         local = copy.deepcopy(package)
         local.tag = "localPackage"
+        # ElementTree does not preserve namespace declarations referenced only
+        # inside QName attribute values. Normalize the official generic package
+        # type to the explicit generic namespace declared on this receipt.
+        details = local.find("type-details")
+        if details is not None:
+            details.set("{http://www.w3.org/2001/XMLSchema-instance}type",
+                        "generic:genericDetailsType")
         for child in list(local):
             if child.tag in ("archives", "channelRef"):
                 local.remove(child)

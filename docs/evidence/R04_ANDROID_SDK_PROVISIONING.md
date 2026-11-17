@@ -76,3 +76,13 @@ bounded retries, pre-install checksum/CRC/path/revision checks and staged rollba
 during this continuation. The live metadata/range observations above are retained
 Android-author evidence, not independently repeated here. Full SDK recognition
 and native acceptance remain UNVERIFIED; no push is authorized.
+
+## Security-requested receipt namespace correction
+
+Security found that official metadata using `xsi:type="ns3:genericDetailsType"`
+loses the `ns3` declaration when ElementTree copies its package. The local receipt
+now normalizes that generic type to its explicitly declared generic namespace.
+A real provision/install fixture with the official-style namespace prefix fails
+on b8c73e9 with an unbound-prefix lookup and passes on the correction. All18
+offline tests PASS; diff check PASS. Actual sdkmanager recognition remains
+UNVERIFIED and its workflow assertion is retained unchanged.
