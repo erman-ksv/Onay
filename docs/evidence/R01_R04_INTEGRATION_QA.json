@@ -1,0 +1,155 @@
+{
+  "recordedAt": "2026-11-17T10:23:54.779538+00:00",
+  "task": "R01\u2013R04 independent integrated QA",
+  "candidateHead": "454edd934eeaf879fc2cfd22f5b94e8802e93f06",
+  "base": "135d849afeb6ee226a1531b822041cf13d6f5c36",
+  "branch": "phase1-integration",
+  "scope": "R01docs + R02test/followup + R03fix/evidence + R04provisioning/namespacefix + securityreviewdocs only",
+  "checks": {
+    "apiBuild": {
+      "command": "node artifacts/api-server/build.mjs",
+      "exit": 0
+    },
+    "workspaceTypes": {
+      "command": "node node_modules/typescript/bin/tsc --build lib/db lib/api-zod",
+      "exit": 0
+    },
+    "apiTypecheck": {
+      "command": "node node_modules/typescript/bin/tsc -p artifacts/api-server/tsconfig.json --noEmit",
+      "exit": 0
+    },
+    "targetedAPI": {
+      "command": "node --test --test-concurrency=1 artifacts/api-server/test/queue-privacy.test.mjs artifacts/api-server/test/route-queue.test.mjs artifacts/api-server/test/postgres-offers.test.mjs artifacts/api-server/test/postgres-seat-lock.test.mjs artifacts/api-server/test/socket-errors.test.mjs artifacts/api-server/test/assigned-driver.test.mjs artifacts/api-server/test/scenarios.test.mjs artifacts/api-server/test/line-collection.test.mjs",
+      "privateEnvironment": "DATABASE_URL supplied from private local env; never stored in Git",
+      "exit": 0,
+      "tests": 161,
+      "pass": 161,
+      "fail": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "privacyIncluded": 25,
+      "durationMs": 21778.581315
+    },
+    "androidOffline": {
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p test_provision_android_emulator.py -q",
+      "exit": 0,
+      "tests": 18,
+      "pass": 18
+    },
+    "workflowYAML": {
+      "exit": 0,
+      "parsedFiles": 13,
+      "semanticComparison": "base vs candidate: only provisioning run +2PRpaths; all otherjobs/steps/permissions/concurrency identical"
+    },
+    "sourceIsolation": {
+      "exit": 0,
+      "esbuildMetafileInputs": 450,
+      "candidateSources": [
+        "app",
+        "store",
+        "lib/db",
+        "lib/api-zod"
+      ],
+      "foreignBackendApplicationSources": 0
+    },
+    "diffCheck": {
+      "command": "git diff 135d849 HEAD --check",
+      "exit": 0
+    }
+  },
+  "resolvedSetupFailure": {
+    "initialAPITypecheckExit": 2,
+    "cause": "Candidate workspace declaration outputs had not been built; initial tsc missing module declarations and cascading implicit-any errors",
+    "resolution": "Build candidate lib/db and lib/api-zod declarations, rerun API typecheck successfully; no source edits or dependency installs"
+  },
+  "environment": {
+    "node": "v24.22.1",
+    "database": "Disposable PostgreSQL16; real HTTP/Socket.IO and isolated random schemas",
+    "dependencyReuse": "Backend frozen10.34.9 filteredgraph; ignored symlinkfarm, candidate-owned workspace source targets validated by actual esbuild metafile",
+    "limits": "UNKNOWN"
+  },
+  "limits": [
+    "Actual SDK download/install/sdkmanager recognition and native acceptance UNVERIFIED",
+    "No push/merge/APK/R05+ performed",
+    "Remote CI on unpublished candidate NOT RUN",
+    "Not a production/security-readiness approval"
+  ],
+  "logs": {
+    "build": {
+      "localPath": "/tmp/onay-phase1-integration-build.log",
+      "sha256": "122d8b3502706b39088b34bd116e937c663b0cb998605b3457aa75768b60947c"
+    },
+    "libs": {
+      "localPath": "/tmp/onay-phase1-integration-libs.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tsc": {
+      "localPath": "/tmp/onay-phase1-integration-tsc.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "regression": {
+      "localPath": "/tmp/onay-phase1-integration-regression.log",
+      "sha256": "bcf25d1f2080609a2c5c60621f7de8d09c9bb95205fc527ec19d0c7c018ed270"
+    },
+    "python": {
+      "localPath": "/tmp/onay-phase1-integration-python.log",
+      "sha256": "8d5e8613ea42637e8537133fbf9f499149936b79265b37008f2bdc80716636ea"
+    }
+  },
+  "databaseCleanup": {
+    "recordedAt": "2026-11-17T10:24:18.950677+00:00",
+    "container": "onay-phase1-regression-pg",
+    "action": "stop only; not removed",
+    "beforeRunning": true,
+    "afterRunning": false,
+    "lastUsers": "Root confirmed Backend/Security/Integration tests finished",
+    "restart": "docker start onay-phase1-regression-pg; private environment outsideGit retained; never print connection credentials"
+  },
+  "commitMap": [
+    {
+      "role": "R01",
+      "origin": "f97426428ee265d57e4005c75426a42064e77982",
+      "integrated": "f97426428ee265d57e4005c75426a42064e77982"
+    },
+    {
+      "role": "R01 status precision",
+      "origin": "e83881423ee21c3f2c01b1e331eb968aa398819d",
+      "integrated": "e83881423ee21c3f2c01b1e331eb968aa398819d"
+    },
+    {
+      "role": "R04",
+      "origin": "b8c73e92c57c8e531c8dbda6159bb154679a159d",
+      "integrated": "d2a56cfc5b430ecdaefe2800964b12c71d52b24a"
+    },
+    {
+      "role": "R04namespace",
+      "origin": "d65cfd460cd18c9f0245243fa2299c769d69cc10",
+      "integrated": "858e9b50859bb6158c4e188874cf477d34ff9494"
+    },
+    {
+      "role": "R02",
+      "origin": "0828257f1333095ff461f3b11c6deddb47198d0c",
+      "integrated": "d395db2d64d866dbab3ccdf3475713562e86e93d"
+    },
+    {
+      "role": "R02lanefence",
+      "origin": "a78e25c7098880fa1f3dca7eb8bc1295a09ebdbc",
+      "integrated": "c8127ed53ea9e1f4ee228ac00e582dc79f36a7da"
+    },
+    {
+      "role": "R03source",
+      "origin": "47064307fcaa4923e8f7becb69fd262838f25641",
+      "integrated": "0bb95c46bb11f3807564b6c89bc56b7833457a67"
+    },
+    {
+      "role": "R03evidence",
+      "origin": "05162dc6cd1c38d9780d43a2573c1553c21a0110",
+      "integrated": "3a86f6e4d9a942f3ce8114bae23b18414cd4add4"
+    },
+    {
+      "role": "Securityevidence",
+      "origin": "a0ffc21fc16f0ab23db91806c27d18a9e958eb51",
+      "integrated": "454edd934eeaf879fc2cfd22f5b94e8802e93f06"
+    }
+  ]
+}
