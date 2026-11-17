@@ -4,6 +4,8 @@ import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
 import { mkdtemp, writeFile, chmod, rm } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { syntheticRouteLayout, fixtureErrorCode } from "./test-fixture.mjs";
 import os from "node:os";
 import { postgresRestartObserved, verifyTestEnvironment, destroyTestEnvironment, assertMigrationJournalRows, createR06Connection } from "./test-environment.mjs";
 
@@ -73,4 +75,33 @@ test("R06 owned connection end waits for the transport close before database cle
   transport.emit("end");
   await ending;
   assert.equal(shutdownFinished, true);
+});
+
+
+test("R06 layout HTTP payload passes the actual production snake-case route layout reader", async () => {
+  const require = createRequire(new URL("../../artifacts/api-server/package.json", import.meta.url));
+  const { build } = require("esbuild");
+  const directory = await mkdtemp(path.join(os.tmpdir(), "onay-r06-layout-contract-"));
+  const output = path.join(directory, "layout.mjs");
+  try {
+    await build({ entryPoints: [new URL("../../artifacts/api-server/src/utils/routeLayout.ts", import.meta.url).pathname],
+      outfile: output, bundle: true, platform: "node", format: "esm", target: "node22", logLevel: "silent" });
+    const { readRouteLayoutInput } = await import(pathToFileURL(output).href);
+    const expectedUpdatedAt = "2026-11-17T17:00:00.000Z";
+    const payload = syntheticRouteLayout(expectedUpdatedAt);
+    const actual = readRouteLayoutInput(payload);
+    assert.equal(actual.expectedUpdatedAt, expectedUpdatedAt);
+    assert.deepEqual(actual.stops.map(stop => stop.code), ["A", "C", "B"]);
+    assert.deepEqual(actual.pitaks, { aStopCode: "A", bStopCode: "B", radiusMeters: 175 });
+    assert.throws(() => readRouteLayoutInput({ ...payload, pitaks: { aStopCode: "A", bStopCode: "B", radiusMeters: 175 } }),
+      { code: "VALIDATION_ERROR", statusCode: 400 }, "production validation must continue rejecting the wrong camel-case HTTP fields");
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+
+test("R06 failure diagnostics expose only known error codes and never server messages or arbitrary code values", () => {
+  assert.equal(fixtureErrorCode({ error: { code: "VALIDATION_ERROR", message: "PRIVATE_RESPONSE_MUST_NOT_BE_ECHOED" } }), "VALIDATION_ERROR");
+  assert.equal(fixtureErrorCode({ error: { code: "PRIVATE_TOKEN_MUST_NOT_BE_ECHOED" } }), "UNCLASSIFIED");
+  assert.equal(fixtureErrorCode({ error: { code: { private: "PRIVATE_OBJECT" } } }), "UNCLASSIFIED");
+  assert.equal(fixtureErrorCode(undefined), "UNCLASSIFIED");
 });

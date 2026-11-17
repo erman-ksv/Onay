@@ -4,6 +4,13 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 
 function check(condition, label) { assert.ok(condition, "R06_INVARIANT:" + label); }
+const safeErrorCodes = new Set(["VALIDATION_ERROR", "INVALID_ROUTE_LAYOUT", "INVALID_COORDINATES", "ROUTE_CHANGED",
+  "UNAUTHORIZED", "FORBIDDEN", "NO_DRIVERS", "DRIVER_APPROVAL_REQUIRED", "INTERNAL_SERVER_ERROR",
+  "VEHICLE_REVIEW_CHANGED", "INVALID_STATUS_TRANSITION", "ORDER_UNAVAILABLE", "QUEUE_BUSY"]);
+export function fixtureErrorCode(payload) {
+  const code = payload?.error?.code;
+  return typeof code === "string" && safeErrorCodes.has(code) ? code : "UNCLASSIFIED";
+}
 async function api(origin, pathname, { token, method = "GET", body, status = 200, key } = {}) {
   const response = await fetch(origin + "/api" + pathname, {
     method, signal: AbortSignal.timeout(10_000), headers: { "content-type": "application/json",
@@ -11,8 +18,10 @@ async function api(origin, pathname, { token, method = "GET", body, status = 200
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await response.text();
-  check(response.status === status, pathname.split("?")[0] + ":HTTP_" + response.status + "_EXPECTED_" + status);
-  return text ? JSON.parse(text) : undefined;
+  let parsed;
+  try { parsed = text ? JSON.parse(text) : undefined; } catch { throw new Error("R06_INVALID_API_JSON"); }
+  check(response.status === status, pathname.split("?")[0] + ":HTTP_" + response.status + "_EXPECTED_" + status + ":" + fixtureErrorCode(parsed));
+  return parsed;
 }
 async function login(origin, phoneNumber, role) {
   const challenge = await api(origin, "/auth/request-otp", { method: "POST", status: 202,
@@ -31,6 +40,17 @@ async function ownQueue(origin, driver) { return (await api(origin, "/queue", { 
 function fare(frozen, price) {
   check(frozen.currency === "UZS" && frozen.pricePerStop === price && frozen.total === price * 2 &&
     !Object.hasOwn(frozen, "totalKzt") && !Object.hasOwn(frozen, "pricePerStopKzt"), "explicit_uzs_canonical_fare");
+}
+
+export function syntheticRouteLayout(expectedUpdatedAt) {
+  return {
+    expected_updated_at: expectedUpdatedAt,
+    stops: [
+      { code: "A", name: "SYNTHETIC R06 A", location: { lat: 41.3111, lng: 69.2797 } },
+      { code: "C", name: "SYNTHETIC R06 C", location: { lat: 41.3121, lng: 69.2807 } },
+      { code: "B", name: "SYNTHETIC R06 B", location: { lat: 41.3131, lng: 69.2817 } },
+    ], pitaks: { a_stop_code: "A", b_stop_code: "B", radius_meters: 175 },
+  };
 }
 
 export async function bootstrapFixture(origin, { price, adminPhone, phone }) {
@@ -59,14 +79,8 @@ export async function bootstrapFixture(origin, { price, adminPhone, phone }) {
   await api(origin, "/admin/queue", { token: drivers[0].token, status: 403 });
   const empty = await api(origin, "/admin/routes", { token: admin.token, method: "POST", status: 201,
     body: { route_id: "r06-" + randomUUID(), name: "SYNTHETIC R06 A/C/B - NOT A REAL TARIFF", currency: "UZS", price_per_stop: price, active: true } });
-  const configured = await api(origin, `/admin/routes/${empty.route.id}/layout`, { token: admin.token, method: "PUT", body: {
-    expected_updated_at: empty.route.updatedAt,
-    stops: [
-      { code: "A", name: "SYNTHETIC R06 A", location: { lat: 41.3111, lng: 69.2797 } },
-      { code: "C", name: "SYNTHETIC R06 C", location: { lat: 41.3121, lng: 69.2807 } },
-      { code: "B", name: "SYNTHETIC R06 B", location: { lat: 41.3131, lng: 69.2817 } },
-    ], pitaks: { aStopCode: "A", bStopCode: "B", radiusMeters: 175 },
-  } });
+  const configured = await api(origin, `/admin/routes/${empty.route.id}/layout`, { token: admin.token, method: "PUT",
+    body: syntheticRouteLayout(empty.route.updatedAt) });
   const route = configured.route;
   check(route.currency === "UZS" && route.pricePerStop === price, "no_currency_relabelling_or_default_price");
   for (const [index, driver] of drivers.entries()) {
