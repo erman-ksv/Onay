@@ -1,0 +1,88 @@
+{
+  "task": "R06 actual CI failure diagnosis and scoped fixture-helper fix",
+  "createdAt": "2026-11-17T17:22:56.152751+00:00",
+  "sourceCommit": "8077e7d85f10e36a2041c4d1fe32dd4b68cd8cb7",
+  "status": "REVIEWED_FIX_PENDING_ACTUAL_NODE22_POSTGRES_CI",
+  "observedCiFailures": [
+    {
+      "runId": 44134579824,
+      "jobId": 134220512401,
+      "suiteTests": 697,
+      "passed": 696,
+      "failed": 1,
+      "failedCase": 251,
+      "message": "terminating connection due to administrator command",
+      "failureType": "uncaughtException"
+    },
+    {
+      "runId": 44134579517,
+      "suiteTests": 697,
+      "passed": 696,
+      "failed": 1,
+      "failedCase": 251,
+      "message": "MIGRATION_JOURNAL_MISMATCH",
+      "failureType": "testCodeFailure"
+    }
+  ],
+  "causes": [
+    {
+      "kind": "migration journal ordering",
+      "officialEntry12When": 1792915200000,
+      "officialEntry13When": 1792886640000,
+      "explanation": "ORDER BY created_at reordered the existing historical migration entries relative to Drizzle insertion order. All migration timestamps and SQL files remain unchanged.",
+      "fix": "SELECT id, hash ORDER BY id; require exactly 18 rows, sequential insertion IDs 1..18, and every corresponding source migration hash. Reapplication count check retained."
+    },
+    {
+      "kind": "owned connection shutdown race",
+      "dependency": "pg-pool 3.14.0 / pg 8.23.0",
+      "explanation": "Pool._remove removes the client from its tracked array before the client.end callback. Pool.end can therefore resolve before the idle socket closes; immediate forced removal of the owned test database can mask the original migration assertion.",
+      "fix": "Only sequential R06 administrative/fixture/test connections now use pg.Client with explicit connect/end. Client.end awaits the transport end before owned cleanup. Production application pools and business behavior are untouched."
+    }
+  ],
+  "localVerification": {
+    "node": "v24.22.1",
+    "red": {
+      "passed": 5,
+      "failed": 2,
+      "skipped": 0,
+      "exitCode": 1,
+      "scope": "Extracted original chronological comparison and original Pool constructor policy; actual official migration metadata and a transport-only resource test."
+    },
+    "green": {
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "exitCode": 0,
+      "command": "node deploy/onay/test-environment-guards.test.mjs"
+    },
+    "syntax": "PASS",
+    "gitDiffCheck": "PASS",
+    "unitLimit": "Transport lifecycle regression sends no SQL and claims no database, HTTP, migration execution, FIFO or application-state success."
+  },
+  "logs": {
+    "red": {
+      "localPath": "/tmp/onay-r06-journal-cleanup-red.log",
+      "sha256": "c82018b5a37f4f6aa42d75671b750440555b4f19aff0e353f58b5ee98fe988bb"
+    },
+    "green": {
+      "localPath": "/tmp/onay-r06-journal-cleanup-green.log",
+      "sha256": "d3f4a20bd7a0172380aa13c85aebd6bb5587a2f9cd0ee6f7fd6f220726091006"
+    }
+  },
+  "sourceScope": [
+    "deploy/onay/test-environment.mjs",
+    "deploy/onay/test-environment-guards.test.mjs",
+    "artifacts/api-server/test/local-test-environment.test.mjs"
+  ],
+  "unchanged": [
+    "Application runtime/store/FIFO/reservations/geofences",
+    "All historical migration files and timestamps",
+    "Existing CI steps and security gates",
+    "Synthetic-only UZS price policy"
+  ],
+  "independentSecurity": "APPROVE_FOR_CI on exact source commit; actual runtime acceptance pending.",
+  "actualNode22PostgresVerification": "PENDING new reviewed-source CI execution; previous failing runs were not blindly rerun.",
+  "localDocker": "NOT RUN; no retry or cleanup of old image/volume performed.",
+  "sanitization": "No database URL, private JSON, telephone, OTP, authentication token, API key or raw SQL result is included."
+}
