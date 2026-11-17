@@ -1,0 +1,63 @@
+{
+  "reviewedAtUtc": "2026-11-17T10:21:19Z",
+  "reviewedAtAsiaTashkent": "2026-11-17T15:21:19+05:00",
+  "implementationSha": "47064307fcaa4923e8f7becb69fd262838f25641",
+  "decision": "APPROVE_SOURCE_PENDING_INTEGRATION_AND_CI",
+  "reviewedFiles": [
+    "artifacts/api-server/src/services/queueView.ts",
+    "artifacts/api-server/src/socket.ts",
+    "artifacts/api-server/src/utils/realtime.ts",
+    "artifacts/api-server/test/route-queue.test.mjs",
+    "artifacts/api-server/test/scenarios.test.mjs"
+  ],
+  "independentChecks": {
+    "exactSourcePrivacyTests": {
+      "tests": 25,
+      "passed": 25,
+      "failed": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "exitCode": 0,
+      "durationMs": 2010.975028,
+      "transport": "real HTTP and Socket.IO with private-schema PostgreSQL16"
+    },
+    "diffCheck": "PASS",
+    "scenarioAssertionReview": "reservation/current/pending/active-order and FIFO/seat checks retained through authenticated owning entry; public seat and omission assertions retained/added"
+  },
+  "originalReproduction": [
+    "cf7b2dc79fb902fc19cd48afaa264793c3556343: original22 tests3PASS19privacyFAIL",
+    "203b2422daf7c8528f1fe5104b34f6a38efe84af: three same-session lane tests3privacyFAIL against unchanged application baseline"
+  ],
+  "reviewFindingClosed": "intermediate implementation passed original22 tests but retained an earlier lane when saved route choice changed within the same role/session; final capture-before-await and current-choice fence resolves this; do not conflate session identity with lane authority",
+  "verifiedContract": [
+    "all generic queue rows are exactly driverId/position/availableSeats/status, including admin generic view",
+    "own full entry only current owning driver; private enrollment/free-seat context retained",
+    "authenticated per-recipient HTTP/initial/event/position views recheck current role and session after durable reads",
+    "socket token expiry and driver approval are rechecked",
+    "saved choice scalars captured before awaited work; changed choice yields retryable409 ROUTE_CHANGED; initial socket disconnects; notification skips stale view and recovers",
+    "foreign-lane changed_driver_id omitted; no global legacy raw queue room broadcast",
+    "existing admin-only queue DTO and lane-monitor endpoint unchanged; positive privilege/authentication control passes",
+    "saved choice alone is not queue enrollment; own-position route_context remains null without actual own entry"
+  ],
+  "businessBoundary": "store, allocation, FIFO/reservation/seat mutation rules and adminController unchanged",
+  "authorReportedAdditionalChecks": {
+    "targetedPostgresSuites": 161,
+    "passed": 161,
+    "typecheck": "PASS",
+    "apiBuild": "PASS",
+    "notIndependentlyRepeated": "reviewer reran privacy25 and reviewed test changes rather than duplicating all161"
+  },
+  "remainingGates": [
+    "integrated exact-source verification",
+    "remote CI PENDING under no-push instruction"
+  ],
+  "actions": {
+    "reviewerApplicationEdits": false,
+    "push": false,
+    "merge": false,
+    "apkOrNativeAction": false,
+    "disposablePgStopped": false,
+    "secretOrRawGpsInEvidence": false
+  },
+  "budget": "UNKNOWN"
+}
