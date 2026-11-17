@@ -317,3 +317,70 @@ for (const action of ["revoke", "logout", "switch-role"]) {
     assert.deepEqual(events, [], "revoked recipients must receive neither queue payloads nor own-position metadata");
   });
 }
+
+async function observingDriver(f) {
+  const actor = await f.user();
+  await store.setDriverRouteChoice(actor.user.id, {
+    routeId: f.route.id, direction: "a_to_b", expectedUpdatedAt: f.route.updatedAt,
+  }, actor.user.sessionVersion);
+  return actor;
+}
+async function changeObservedLane(f, actor) {
+  await store.setDriverRouteChoice(actor.user.id, {
+    routeId: f.route.id, direction: "b_to_a", expectedUpdatedAt: f.route.updatedAt,
+  }, actor.user.sessionVersion);
+  assert.equal((await store.getUser(actor.user.id)).sessionVersion, actor.user.sessionVersion,
+    "a legitimate saved route change keeps the same authenticated session");
+}
+
+test("HTTP does not publish an earlier lane after a same-session route choice changes during the read", async t => {
+  const f = await fixture(t), actor = await observingDriver(f);
+  const barrier = pauseRealSnapshot(t), pending = request(actor);
+  try { await barrier.started; await changeObservedLane(f, actor); }
+  finally { barrier.release(); }
+  const response = await pending;
+  assert.equal(response.status, 409, "stale lane authority requires an explicit retry rather than the old lane payload");
+  assert.equal(response.body?.error?.code, "ROUTE_CHANGED");
+  assert.equal(response.body.queue, undefined);
+});
+
+test("initial socket snapshot rejects a same-session lane change while its durable read is pending", async t => {
+  const f = await fixture(t), actor = await observingDriver(f);
+  const socket = client(t, actor), barrier = pauseRealSnapshot(t);
+  const first = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Initial lane outcome unavailable")), 5_000);
+    socket.once("queue:snapshot", () => { clearTimeout(timer); resolve("snapshot"); });
+    socket.once("disconnect", () => { clearTimeout(timer); resolve("disconnect"); });
+  });
+  socket.connect();
+  try { await barrier.started; await changeObservedLane(f, actor); }
+  finally { barrier.release(); }
+  assert.equal(await first, "disconnect", "initial queue view must not retain old-lane visibility");
+});
+
+test("socket events after a same-session lane change expose only the current lane and remain usable", async t => {
+  const f = await fixture(t), actor = await observingDriver(f), socket = client(t, actor);
+  await connect(socket);
+  const received = [];
+  socket.onAny((event, payload) => { if (event.startsWith("queue:")) received.push({ event, payload }); });
+  const barrier = pauseRealSnapshot(t);
+  const pending = production.emitQueueUpdate(io, { type: "location", driverId: f.legacyDriver.user.id });
+  try { await barrier.started; await changeObservedLane(f, actor); }
+  finally { barrier.release(); }
+  await pending;
+  await fence(socket);
+  // The recipient may be resolved after the shared read (current lane data is
+  // safe), or a stale per-recipient read may be rejected. Neither may disclose
+  // the earlier lane. Do not require a particular notification implementation.
+  for (const { event, payload } of received) {
+    if (event !== "queue:position") publicQueue(payload, f.visible("reverseDriver"));
+  }
+  assert.equal(socket.connected, true, "a retryable view change must not revoke this valid session");
+  received.length = 0;
+  await production.emitQueueUpdate(io, { type: "location", driverId: f.legacyDriver.user.id });
+  await fence(socket);
+  const current = received.find(item => item.event === "queue:update");
+  assert.ok(current, "next notification must recover without reconnecting");
+  publicQueue(current.payload, f.visible("reverseDriver"));
+  assert.equal(current.payload.changed_driver_id, undefined);
+});
