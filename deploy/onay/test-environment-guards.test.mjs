@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { EventEmitter } from "node:events";
+import { createRequire } from "node:module";
 import { mkdtemp, writeFile, chmod, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { postgresRestartObserved, verifyTestEnvironment, destroyTestEnvironment } from "./test-environment.mjs";
+import { postgresRestartObserved, verifyTestEnvironment, destroyTestEnvironment, assertMigrationJournalRows, createR06Connection } from "./test-environment.mjs";
 
 test("R06 required PostgreSQL restart rejects an unchanged actual start-time receipt", () => {
   assert.throws(() => postgresRestartObserved("2026-11-17T10:00:00Z", "2026-11-17T10:00:00Z", true), { code: "POSTGRES_RESTART_NOT_OBSERVED" });
@@ -38,4 +40,37 @@ test("R06 private state permissions and explicit destructive acknowledgment are 
     await assert.rejects(verifyTestEnvironment(directory), { code: "PRIVATE_FILE_PERMISSIONS_REQUIRED" });
     await assert.rejects(destroyTestEnvironment(directory), { code: "EXPLICIT_TEST_CLEANUP_ACK_REQUIRED" });
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+
+test("R06 verifies all 18 actual migration hashes by insertion identity despite historical timestamp order", () => {
+  const require = createRequire(new URL("../../lib/db/package.json", import.meta.url));
+  const { readMigrationFiles } = require("drizzle-orm/migrator");
+  const migrations = readMigrationFiles({ migrationsFolder: new URL("../../lib/db/drizzle", import.meta.url).pathname });
+  assert.equal(migrations.length, 18);
+  assert.ok(migrations[12].folderMillis > migrations[13].folderMillis, "exercise the actual historical nonmonotonic metadata, not invented migration fixtures");
+  const rows = migrations.map((migration, index) => ({ id: index + 1, hash: migration.hash, created_at: migration.folderMillis }));
+  assert.doesNotThrow(() => assertMigrationJournalRows(rows, migrations));
+  for (const invalid of [rows.slice(1), [...rows, rows[0]], rows.map((row, index) => index === 12 ? { ...row, hash: rows[13].hash } : row),
+    rows.map((row, index) => index === 0 ? { ...row, id: 2 } : row)]) {
+    assert.throws(() => assertMigrationJournalRows(invalid, migrations), { code: "MIGRATION_JOURNAL_MISMATCH" });
+  }
+});
+
+test("R06 owned connection end waits for the transport close before database cleanup can proceed", async () => {
+  // Transport-only resource regression: no SQL responses, application behavior,
+  // PostgreSQL migration success or business state are simulated by this test.
+  const transport = new EventEmitter();
+  transport._connecting = true;
+  let endRequested = false;
+  transport.end = () => { endRequested = true; };
+  const connection = createR06Connection({ connection: transport });
+  let shutdownFinished = false;
+  const ending = connection.end().then(() => { shutdownFinished = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(shutdownFinished, false, "Pool.end can resolve before an idle client's socket closes; the owned connection must await its actual end event");
+  assert.equal(endRequested, true);
+  transport.emit("end");
+  await ending;
+  assert.equal(shutdownFinished, true);
 });

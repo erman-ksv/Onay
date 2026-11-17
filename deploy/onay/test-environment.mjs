@@ -15,6 +15,21 @@ const digest = value => createHash("sha256").update(value).digest("hex");
 const privateOptions = { mode: 0o600, flag: "wx" };
 export const testOnlyAcknowledgment = "ONAY_R06_TEST_ONLY";
 
+export function createR06Connection(options) {
+  // These administrative/fixture connections are sequential and individually
+  // owned. Client.end waits for its socket; Pool.end may finish before idle
+  // client sockets close, racing a subsequent DROP DATABASE WITH (FORCE).
+  const { Client } = dbRequire("pg");
+  return new Client(options);
+}
+
+export function assertMigrationJournalRows(rows, migrations) {
+  // Migration timestamps are historical metadata, not insertion order: the
+  // unchanged official entries 12/13 have nonmonotonic times.
+  if (rows.length !== 18 || migrations.length !== 18 ||
+      rows.some((row, index) => row.id !== index + 1 || row.hash !== migrations[index].hash)) deny("MIGRATION_JOURNAL_MISMATCH");
+}
+
 /** Reject unsafe inputs before opening any connection or creating any file. */
 export function validateTestOptions(options) {
   if (options.acknowledgment !== testOnlyAcknowledgment) deny("TEST_ONLY_ACK_REQUIRED");
@@ -74,17 +89,18 @@ export async function prepareTestEnvironment(options) {
   const parent = await realpath(path.dirname(options.runDirectory));
   const runDirectory = path.join(parent, path.basename(options.runDirectory));
   if (runDirectory === root || runDirectory.startsWith(root + path.sep)) deny("RUN_DIRECTORY_MUST_BE_OUTSIDE_CHECKOUT");
-  const { Pool } = dbRequire("pg");
-  const administrative = new Pool({ connectionString: admin.href, max: 1 });
+  const administrative = createR06Connection({ connectionString: admin.href });
   let created = false, connection, server;
   try {
+    await administrative.connect();
     const existing = await administrative.query("SELECT 1 FROM pg_database WHERE datname=$1", [databaseName]);
     if (existing.rowCount) deny("EXISTING_DATABASE_REFUSED");
     await mkdir(runDirectory, { mode: 0o700 }); // never reuse or overwrite another run
     await administrative.query(`CREATE DATABASE "${databaseName}" TEMPLATE template0`);
     created = true;
     const database = new URL(admin.href); database.pathname = "/" + databaseName;
-    connection = new Pool({ connectionString: database.href, max: 3 });
+    connection = createR06Connection({ connectionString: database.href });
+    await connection.connect();
     const { drizzle } = dbRequire("drizzle-orm/node-postgres");
     const { migrate } = dbRequire("drizzle-orm/node-postgres/migrator");
     const { readMigrationFiles } = dbRequire("drizzle-orm/migrator");
@@ -92,8 +108,8 @@ export async function prepareTestEnvironment(options) {
     const migrations = readMigrationFiles(migrationOptions);
     if (migrations.length !== 18) deny("MIGRATION_SET_REVIEW_REQUIRED");
     await migrate(drizzle(connection), migrationOptions);
-    const journal = await connection.query("SELECT hash FROM drizzle.__drizzle_migrations ORDER BY created_at");
-    if (JSON.stringify(journal.rows.map(row => row.hash)) !== JSON.stringify(migrations.map(migration => migration.hash))) deny("MIGRATION_JOURNAL_MISMATCH");
+    const journal = await connection.query("SELECT id, hash FROM drizzle.__drizzle_migrations ORDER BY id");
+    assertMigrationJournalRows(journal.rows, migrations);
     await migrate(drizzle(connection), migrationOptions);
     if ((await connection.query("SELECT count(*)::int AS total FROM drizzle.__drizzle_migrations")).rows[0].total !== 18) deny("MIGRATIONS_NOT_IDEMPOTENT");
     const runId = randomUUID(), cleanupProof = randomBytes(32).toString("hex");
@@ -157,10 +173,10 @@ export function postgresRestartObserved(previous, current, required = false) {
 export async function verifyTestEnvironment(runDirectory, { exercise = false, requirePostgresRestart = false } = {}) {
   const state = await readPrivateState(runDirectory);
   if (digest(await readFile(state.bundle)) !== state.bundleSha256) deny("TEST_RUNTIME_BUNDLE_CHANGED");
-  const { Pool } = dbRequire("pg");
-  const connection = new Pool({ connectionString: state.environment.DATABASE_URL, max: 2 });
+  const connection = createR06Connection({ connectionString: state.environment.DATABASE_URL });
   let server;
   try {
+    await connection.connect();
     const marker = await connection.query("SELECT run_id FROM onay_r06_environment WHERE run_id=$1 AND cleanup_proof=$2", [state.runId, state.cleanupProof]);
     if (marker.rowCount !== 1) deny("TEST_DATABASE_OWNERSHIP_REQUIRED");
     server = await startTestApi(state.bundle, state.environment);
@@ -182,15 +198,14 @@ export async function verifyTestEnvironment(runDirectory, { exercise = false, re
 export async function destroyTestEnvironment(runDirectory, acknowledgment) {
   if (acknowledgment !== "DROP_OWNED_R06_TEST_DATABASE") deny("EXPLICIT_TEST_CLEANUP_ACK_REQUIRED");
   const state = await readPrivateState(runDirectory);
-  const { Pool } = dbRequire("pg");
-  const own = new Pool({ connectionString: state.environment.DATABASE_URL, max: 1 });
+  const own = createR06Connection({ connectionString: state.environment.DATABASE_URL });
   let authorized = false;
-  try { authorized = (await own.query("SELECT run_id FROM onay_r06_environment WHERE run_id=$1 AND cleanup_proof=$2", [state.runId, state.cleanupProof])).rowCount === 1; }
+  try { await own.connect(); authorized = (await own.query("SELECT run_id FROM onay_r06_environment WHERE run_id=$1 AND cleanup_proof=$2", [state.runId, state.cleanupProof])).rowCount === 1; }
   finally { await own.end(); }
   if (!authorized) deny("TEST_DATABASE_OWNERSHIP_REQUIRED");
   const admin = new URL(state.environment.DATABASE_URL); admin.pathname = "/postgres";
-  const connection = new Pool({ connectionString: admin.href, max: 1 });
-  try { await connection.query(`DROP DATABASE "${state.databaseName}" WITH (FORCE)`); }
+  const connection = createR06Connection({ connectionString: admin.href });
+  try { await connection.connect(); await connection.query(`DROP DATABASE "${state.databaseName}" WITH (FORCE)`); }
   finally { await connection.end(); }
 }
 

@@ -52,9 +52,10 @@ test("R06 fresh isolated database executes all 18 migrations, real HTTP lifecycl
   const privatePath = path.join(runDirectory, "environment.private.json");
   assert.equal((await stat(privatePath)).mode & 0o077, 0);
   const privateState = JSON.parse(await readFile(privatePath, "utf8"));
-  const { Pool } = createRequire(new URL("../../../lib/db/package.json", import.meta.url))("pg");
-  const database = new Pool({ connectionString: privateState.environment.DATABASE_URL, max: 1 });
+  const { Client } = createRequire(new URL("../../../lib/db/package.json", import.meta.url))("pg");
+  const database = new Client({ connectionString: privateState.environment.DATABASE_URL });
   try {
+    await database.connect();
     const hashes = (await database.query("SELECT hash FROM drizzle.__drizzle_migrations")).rows;
     assert.equal(hashes.length, 18);
     assert.equal(new Set(hashes.map(row => row.hash)).size, 18);
